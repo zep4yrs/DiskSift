@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Folder, ScanLine, Settings as SettingsIcon, Play } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { api } from './api';
+import { isTauri } from './env';
 import { useStore, buildWalkQueue } from './store';
 import { TreeView } from './components/TreeView';
 import { Treemap } from './components/Treemap';
@@ -40,6 +41,11 @@ export default function App() {
   }, []);
 
   const pickDirectory = async () => {
+    if (!isTauri) {
+      const p = window.prompt('浏览器预览模式：输入一个路径（任意值都可以）', 'C:\\');
+      if (p) setPickedPath(p);
+      return;
+    }
     const picked = await open({ directory: true, multiple: false });
     if (typeof picked === 'string') setPickedPath(picked);
   };
@@ -104,6 +110,11 @@ export default function App() {
         </button>
       </header>
 
+      {!isTauri && (
+        <div className="banner" style={{ background: 'rgba(91,141,239,0.15)', color: '#9bb6f5' }}>
+          浏览器预览模式 · 数据是模拟的（C 盘的样子参考你截图） · 真实扫描需要在 Tauri 桌面 app 里跑
+        </div>
+      )}
       {err && <div className="banner error">{err}</div>}
 
       <main>
