@@ -43,3 +43,9 @@ out/
 # Diskwise local data
 .diskwise/
 diskwise.local.json
+
+# Generated icon source (produced by scripts/generate-icon.ps1)
+apps/desktop/src-tauri/icon-source.png
+
+# Cargo registry overrides aren't checked in by default but keep config explicit
+# .cargo/ stays committed; target/ already excluded above

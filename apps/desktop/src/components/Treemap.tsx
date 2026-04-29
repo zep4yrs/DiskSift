@@ -29,8 +29,12 @@ export function Treemap({ node, width, height, onSelect, selectedPath }: Props) 
     )
       .sum((d) => (d.children && d.children.length ? 0 : Math.max(1, d.size)))
       .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
-    treemap<Node>().size([width, height]).tile(treemapSquarify).paddingOuter(2).paddingInner(1)(root);
-    return root.descendants().filter((n) => n.depth >= 1 && n.depth <= 2);
+    const laidOut = treemap<Node>()
+      .size([width, height])
+      .tile(treemapSquarify)
+      .paddingOuter(2)
+      .paddingInner(1)(root);
+    return laidOut.descendants().filter((n) => n.depth >= 1 && n.depth <= 2);
   }, [node, width, height]);
 
   return (
