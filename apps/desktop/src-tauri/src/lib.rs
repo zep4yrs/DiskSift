@@ -133,24 +133,35 @@ pub fn run() {
 }
 
 fn load_all_scaffolds(handle: &AppHandle) -> Vec<Scaffold> {
-    let mut out = Vec::new();
+    use std::collections::HashMap;
+    let mut by_id: HashMap<String, Scaffold> = HashMap::new();
     let mut candidates: Vec<PathBuf> = Vec::new();
+    // Resource dir takes precedence — packaged scaffolds. Then user override
+    // (app_data_dir) — community-contributed scaffolds win over bundled ones
+    // with the same id.
     if let Ok(p) = handle.path().resource_dir() {
-        candidates.push(p.join("scaffolds"));
-    }
-    if let Ok(p) = handle.path().app_data_dir() {
         candidates.push(p.join("scaffolds"));
     }
     candidates.push(PathBuf::from("scaffolds"));
     candidates.push(PathBuf::from("../../scaffolds"));
     candidates.push(PathBuf::from("../../../scaffolds"));
+    if let Ok(p) = handle.path().app_data_dir() {
+        candidates.push(p.join("scaffolds"));
+    }
     for p in &candidates {
-        if p.exists() {
-            match load_dir(p) {
-                Ok(v) => out.extend(v),
-                Err(e) => tracing::warn!("could not load scaffolds from {:?}: {}", p, e),
+        if !p.exists() {
+            continue;
+        }
+        match load_dir(p) {
+            Ok(v) => {
+                for s in v {
+                    by_id.insert(s.id.clone(), s);
+                }
             }
+            Err(e) => tracing::warn!("could not load scaffolds from {:?}: {}", p, e),
         }
     }
+    let mut out: Vec<Scaffold> = by_id.into_values().collect();
+    out.sort_by(|a, b| a.id.cmp(&b.id));
     out
 }

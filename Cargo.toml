@@ -12,7 +12,7 @@ members = [
 [workspace.package]
 edition    = "2021"
 license    = "MIT"
-repository = "https://github.com/OWNER/diskwise"
+repository = "https://github.com/jtlyu/what-is-on-my-disk"
 version    = "0.1.0"
 
 [workspace.dependencies]
