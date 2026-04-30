@@ -39,6 +39,9 @@ Thumbs.db
 *.dmp
 release/
 out/
+apps/desktop/vite.config.js
+apps/desktop/vite.config.d.ts
+**/tsconfig.tsbuildinfo
 
 # Diskwise local data
 .diskwise/
