@@ -73,9 +73,9 @@ export function ScaffoldPanel({ node, scaffold, onComplete, onSkip }: Props) {
       </div>
 
       <div className="card-meta">
-        <span><strong>{formatBytes(total)}</strong></span>
-        <span>· {node.file_count.toLocaleString()} files</span>
-        <span className="badge">scaffold: {scaffold.id}</span>
+        <strong>{formatBytes(total)}</strong>
+        <span>· {node.file_count.toLocaleString()} 个文件</span>
+        <span className="badge">脚本 · {scaffold.id}</span>
       </div>
 
       <div className="card-disclaimer">{scaffold.disclaimer}</div>
@@ -122,12 +122,12 @@ export function ScaffoldPanel({ node, scaffold, onComplete, onSkip }: Props) {
 
       <div className="card-actions">
         <button className="primary" disabled={busy} onClick={sweep}>
-          <Trash2 size={14} /> Sweep selected scopes
+          <Trash2 size={14} /> 清理选中范围
         </button>
         <button className="secondary" disabled={busy} onClick={() => api.execute({ action: 'quarantine', paths: [node.path], reason: 'manual quarantine' }, false).then(() => onComplete(total)).catch((e) => setErr(String(e)))}>
-          <FolderInput size={14} /> Quarantine whole folder
+          <FolderInput size={14} /> 隔离整个文件夹
         </button>
-        <button className="ghost" disabled={busy} onClick={onSkip}>Keep</button>
+        <button className="ghost" disabled={busy} onClick={onSkip}>保留</button>
       </div>
     </div>
   );

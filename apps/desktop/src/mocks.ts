@@ -1,4 +1,5 @@
 import type { Node, Scaffold, AdvisorRequest, AdvisorResponse, UndoEntry, Plan } from './types';
+import { callAdvisor, isConfigured, loadSettings } from './advisorClient';
 
 const GB = 1024 ** 3;
 const MB = 1024 ** 2;
@@ -48,7 +49,7 @@ const MOCK_TREE: Node = {
                   children: [
                     leaf('Microsoft', 'C:\\Users\\demo-user\\AppData\\Local\\Microsoft', 14.8 * GB, 88_400, null),
                     {
-                      name: 'Microsoft', path: 'C:\\Users\\demo-user\\AppData\\Local\\Microsoft\\Edge', is_dir: true,
+                      name: 'Edge', path: 'C:\\Users\\demo-user\\AppData\\Local\\Microsoft\\Edge', is_dir: true,
                       size: 12.8 * GB, file_count: 41_320, scaffold_id: 'edge',
                       top_extensions: [{ ext: '(none)', bytes: 6 * GB, count: 12_000 }],
                       children: [
@@ -257,6 +258,20 @@ export async function inspect(path: string, n: number): Promise<string[]> {
 }
 
 export async function advise(req: AdvisorRequest): Promise<AdvisorResponse> {
+  // Try the real API first if the user has configured one in Settings.
+  const settings = loadSettings();
+  if (isConfigured(settings)) {
+    try {
+      return await callAdvisor(settings, req);
+    } catch (e) {
+      console.warn('[diskwise] real advisor failed, falling back to canned response:', e);
+      // fall through to canned mock
+    }
+  }
+  return cannedAdvice(req);
+}
+
+async function cannedAdvice(req: AdvisorRequest): Promise<AdvisorResponse> {
   await wait(900);
   const p = req.path.toLowerCase();
   if (p.includes('windows\\winsxs')) {
@@ -274,10 +289,10 @@ export async function advise(req: AdvisorRequest): Promise<AdvisorResponse> {
   if (p.includes('eastmoney')) {
     return { what: '东方财富 Choice 数据', category: 'app_cache', safe_to_delete: true, risk: 'medium', action: 'recycle', reasoning: '看起来是金融客户端的本地数据库；如果你不再用 Choice 终端可清，否则保留。', needs_inspection: true };
   }
-  if (p.includes('localllow')) {
+  if (p.includes('locallow')) {
     return { what: '低权限 App 数据', category: 'app_cache', safe_to_delete: true, risk: 'low', action: 'recycle', reasoning: '通常是 Edge/IE 沙盒数据，可清。', needs_inspection: false };
   }
-  return { what: '未识别的目录', category: 'unknown', safe_to_delete: false, risk: 'medium', action: 'keep', reasoning: '没有特征匹配；建议保留或手工查看。', needs_inspection: true };
+  return { what: '（演示数据）未配置 AI Key 时使用预设回答', category: 'unknown', safe_to_delete: false, risk: 'medium', action: 'keep', reasoning: '在右上角设置里填 OpenAI / Anthropic / Ollama 的 key 后，就能拿到真正的 AI 判断。', needs_inspection: true };
 }
 
 export async function execute(plan: Plan, _dryRun: boolean): Promise<UndoEntry[]> {

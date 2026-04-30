@@ -51,8 +51,8 @@ export function AutoWalk() {
   if (!item) {
     return (
       <div className="walk empty">
-        <div className="empty-title">Auto-Walk idle</div>
-        <div className="empty-sub">Run a scan and press <strong>Start Auto-Walk</strong>.</div>
+        <div className="empty-title">巡查待启动</div>
+        <div className="empty-sub">先扫描，然后点 <strong>开始巡查</strong>。</div>
       </div>
     );
   }
@@ -62,10 +62,10 @@ export function AutoWalk() {
   return (
     <div className="walk">
       <div className="walk-bar">
-        <div>Reviewing folder <strong>{progress}</strong></div>
-        <div>Reclaimed <strong>{formatBytes(reclaimed)}</strong></div>
+        <div>正在审阅 <strong>{progress}</strong></div>
+        <div>已释放 <strong>{formatBytes(reclaimed)}</strong></div>
         <button className="ghost" onClick={() => advance()} title="Skip">
-          <Pause size={14} /> Skip
+          <Pause size={14} /> 跳过
         </button>
       </div>
 
@@ -101,7 +101,7 @@ export function AutoWalk() {
 
       <div className="walk-foot">
         <button className="ghost" onClick={() => advance()}>
-          Next <ChevronRight size={14} />
+          下一个 <ChevronRight size={14} />
         </button>
       </div>
     </div>

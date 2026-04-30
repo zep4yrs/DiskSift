@@ -57,19 +57,19 @@ export function AdvisorCard({ node, advice, onComplete, onSkip, onInspect }: Pro
       </div>
 
       <div className="card-meta">
-        <span><strong>{formatBytes(node.size)}</strong></span>
-        <span>· {node.file_count.toLocaleString()} files</span>
-        {advice?.suggested_scaffold && <span>· scaffold: <code>{advice.suggested_scaffold}</code></span>}
+        <strong>{formatBytes(node.size)}</strong>
+        <span>· {node.file_count.toLocaleString()} 个文件</span>
+        {advice?.suggested_scaffold && <span>· 建议脚本：<code>{advice.suggested_scaffold}</code></span>}
       </div>
 
       {!advice ? (
-        <div className="card-body muted">Asking the advisor…</div>
+        <div className="card-body muted">AI 思考中…</div>
       ) : (
         <>
-          <div className="card-what"><strong>What:</strong> {advice.what}</div>
+          <div className="card-what"><strong>这是什么：</strong> {advice.what}</div>
           <div className="card-reason">{advice.reasoning}</div>
           {advice.needs_inspection && (
-            <button className="ghost full" onClick={onInspect}>Inspect deeper (let the advisor look at sample paths)</button>
+            <button className="ghost full" onClick={onInspect}>让 AI 看更深（抽样子路径再判一次）</button>
           )}
         </>
       )}
@@ -78,12 +78,12 @@ export function AdvisorCard({ node, advice, onComplete, onSkip, onInspect }: Pro
 
       <div className="card-actions">
         <button className="primary" disabled={busy || !advice} onClick={() => act('recycle')}>
-          <Trash2 size={14} /> Recycle ({formatBytes(node.size)})
+          <Trash2 size={14} /> 进回收站（{formatBytes(node.size)}）
         </button>
         <button className="secondary" disabled={busy || !advice} onClick={() => act('quarantine')}>
-          <FolderInput size={14} /> Quarantine
+          <FolderInput size={14} /> 隔离
         </button>
-        <button className="ghost" disabled={busy} onClick={onSkip}>Keep</button>
+        <button className="ghost" disabled={busy} onClick={onSkip}>保留</button>
       </div>
     </div>
   );

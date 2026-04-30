@@ -90,20 +90,21 @@ export default function App() {
   return (
     <div className="app">
       <header>
+        <span className="brand"><span className="dot" /> Diskwise</span>
         <button className="ghost" onClick={pickDirectory}>
-          <Folder size={14} /> {pickedPath || 'Pick a drive or folder'}
+          <Folder size={14} /> {pickedPath || '选择磁盘或文件夹'}
         </button>
         <button className="primary" onClick={scan} disabled={!pickedPath || scanning}>
-          <ScanLine size={14} /> {scanning ? 'Scanning…' : 'Scan'}
+          <ScanLine size={14} /> {scanning ? '扫描中…' : '扫描'}
         </button>
         <div className="grow" />
         <label className="threshold">
-          Auto-walk threshold:
+          阈值
           <input type="number" min={0.05} step={0.05} value={threshold} onChange={(e) => setThreshold(Number(e.target.value))} />
           GB
         </label>
         <button className="primary" onClick={startWalk} disabled={!root}>
-          <Play size={14} /> Start Auto-Walk
+          <Play size={14} /> 开始巡查
         </button>
         <button className="ghost icon" onClick={() => setShowSettings(true)}>
           <SettingsIcon size={16} />
@@ -111,8 +112,8 @@ export default function App() {
       </header>
 
       {!isTauri && (
-        <div className="banner" style={{ background: 'rgba(255, 111, 168, 0.10)', color: 'var(--accent-soft)', borderBottom: '1px solid rgba(255, 111, 168, 0.25)' }}>
-          浏览器预览模式 · 数据是模拟的（C 盘的样子参考你截图） · 真实扫描需要在 Tauri 桌面 app 里跑
+        <div className="banner preview">
+          浏览器预览模式 · 扫描数据是模拟的 · <strong>右上角设置里填 AI Key，AI 卡片就会调真实接口</strong>
         </div>
       )}
       {err && <div className="banner error">{err}</div>}
@@ -146,8 +147,8 @@ export default function App() {
       </main>
 
       <footer>
-        <span>Diskwise v0.1 · {scaffolds.length} scaffolds loaded</span>
-        <span>{root ? `${formatBytes(root.size)} scanned · ${root.file_count.toLocaleString()} files` : 'No scan yet'}</span>
+        <span>Diskwise v0.1 · 已加载 {scaffolds.length} 个清理脚本</span>
+        <span>{root ? `已扫描 ${formatBytes(root.size)} · ${root.file_count.toLocaleString()} 文件` : '还没扫描'}</span>
       </footer>
 
       {showSettings && <Settings onClose={() => setShowSettings(false)} />}
@@ -158,8 +159,8 @@ export default function App() {
 function Empty() {
   return (
     <div className="empty">
-      <div className="empty-title">No scan yet</div>
-      <div className="empty-sub">Pick a folder above and press Scan.</div>
+      <div className="empty-title">还没扫描</div>
+      <div className="empty-sub">在顶栏选一个文件夹，然后点「扫描」。</div>
     </div>
   );
 }
