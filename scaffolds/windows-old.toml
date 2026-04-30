@@ -1,0 +1,19 @@
+id          = "windows-old"
+name        = "Windows.old（升级残留）"
+risk        = "high"
+disclaimer  = "Windows 大版本升级（如 10→11）后保留的旧系统副本。10 天内可用来回滚到旧版。10 天后系统会自动清。手动清需要管理员权限——建议用『设置 → 系统 → 存储 → 临时文件 → 以前的 Windows 安装』。"
+
+detect = [
+  "C:/Windows.old",
+  "**/Windows.old",
+]
+
+[match]
+name_contains   = ["Windows.old"]
+
+[[scope]]
+id    = "all"
+label = "整个 Windows.old 文件夹"
+glob  = "**/Windows.old/**"
+mode  = "delete"
+prompt = { kind = "confirm", label = "我确认不再需要回滚到旧版 Windows，且系统当前稳定" }

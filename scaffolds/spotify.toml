@@ -1,0 +1,26 @@
+id          = "spotify"
+name        = "Spotify"
+homepage    = "https://www.spotify.com/"
+risk        = "low"
+disclaimer  = "本地下载的歌曲离线缓存。删除后离线模式失效，需要重新下载。"
+
+detect = [
+  "%LOCALAPPDATA%/Spotify",
+  "**/Spotify/Storage",
+  "**/Spotify/Data",
+]
+
+[match]
+name_contains   = ["Spotify"]
+
+[[scope]]
+id    = "data-cache"
+label = "音乐缓存（Storage / Data）"
+glob  = "**/Spotify/{Storage,Data}/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "browser-cache"
+label = "浏览器缓存（GPUCache）"
+glob  = "**/Spotify/{Cache,GPUCache}/**"
+mode  = "recycle"

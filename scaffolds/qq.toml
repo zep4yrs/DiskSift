@@ -1,0 +1,44 @@
+id          = "qq-pc"
+name        = "腾讯 QQ（PC 端）"
+homepage    = "https://im.qq.com/"
+risk        = "low"
+disclaimer  = "只清接收的图片/视频/文件缓存。聊天记录数据库保留。已删的媒体在旧聊天里会显示缺失。"
+
+detect = [
+  "**/Tencent Files/*/Image",
+  "**/Tencent Files/*/FileRecv",
+  "**/Tencent Files/*/Video",
+  "**/Tencent Files",
+]
+
+[match]
+name_contains   = ["Tencent Files"]
+must_have_child = ["Image"]
+
+[[scope]]
+id     = "image-c2c"
+label  = "私聊图片缓存（Image/C2C）"
+glob   = "**/Tencent Files/*/Image/C2C/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 30, label = "删除多少天前的图片" }
+
+[[scope]]
+id     = "image-group"
+label  = "群聊图片缓存（Image/Group2)）"
+glob   = "**/Tencent Files/*/Image/Group2/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 14 }
+
+[[scope]]
+id     = "video"
+label  = "视频缓存"
+glob   = "**/Tencent Files/*/Video/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 7 }
+
+[[scope]]
+id     = "filerecv"
+label  = "接收的文件（FileRecv）"
+glob   = "**/Tencent Files/*/FileRecv/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 30 }

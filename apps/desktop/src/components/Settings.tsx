@@ -13,8 +13,8 @@ const PROVIDER_DEFAULTS: Record<Provider, { model: string; baseUrl: string; help
 };
 
 export function Settings({ onClose }: Props) {
-  const [provider, setProvider] = useState<Provider>('openai');
-  const [model, setModel] = useState(PROVIDER_DEFAULTS.openai.model);
+  const [provider, setProvider] = useState<Provider>('anthropic');
+  const [model, setModel] = useState(PROVIDER_DEFAULTS.anthropic.model);
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
@@ -71,9 +71,9 @@ export function Settings({ onClose }: Props) {
         <label className="field">
           <span>Provider · 提供商</span>
           <select value={provider} onChange={(e) => onProviderChange(e.target.value as Provider)}>
+            <option value="anthropic">Anthropic Claude（推荐 · 文件判断准确，需要 sk-ant- key）</option>
             <option value="openai">OpenAI（gpt-4o-mini 等，需要 sk- 开头的 key）</option>
-            <option value="anthropic">Anthropic（Claude Haiku/Sonnet，需要 sk-ant- key）</option>
-            <option value="ollama">Ollama（本地运行，无需 key）</option>
+            <option value="ollama">Ollama（本地运行，无需 key，需先装 Ollama）</option>
           </select>
         </label>
 

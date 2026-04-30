@@ -1,0 +1,32 @@
+id          = "brave"
+name        = "Brave Browser"
+homepage    = "https://brave.com/"
+risk        = "low"
+disclaimer  = "只清浏览器缓存。书签、密码、奖励账户保留。"
+
+detect = [
+  "%LOCALAPPDATA%/BraveSoftware/Brave-Browser/User Data",
+  "**/BraveSoftware/Brave-Browser/User Data",
+]
+
+[match]
+name_contains   = ["Brave-Browser"]
+must_have_child = ["User Data"]
+
+[[scope]]
+id    = "http-cache"
+label = "HTTP cache"
+glob  = "**/User Data/*/Cache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "code-cache"
+label = "Code cache"
+glob  = "**/User Data/*/Code Cache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "gpu-cache"
+label = "GPU cache"
+glob  = "**/User Data/*/GPUCache/**"
+mode  = "recycle"

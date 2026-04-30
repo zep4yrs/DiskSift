@@ -1,0 +1,26 @@
+id          = "nuget"
+name        = "NuGet packages cache"
+homepage    = "https://learn.microsoft.com/en-us/nuget/consume-packages/managing-the-global-packages-and-cache-folders"
+risk        = "low"
+disclaimer  = ".NET 项目下次 restore 会重新下。"
+
+detect = [
+  "%USERPROFILE%/.nuget/packages",
+  "%LOCALAPPDATA%/NuGet/v3-cache",
+  "${HOME}/.nuget/packages",
+]
+
+[match]
+name_contains   = [".nuget", "NuGet"]
+
+[[scope]]
+id    = "global-packages"
+label = "全局 packages（~/.nuget/packages）"
+glob  = "**/.nuget/packages/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "v3-cache"
+label = "v3-cache"
+glob  = "**/NuGet/v3-cache/**"
+mode  = "recycle"

@@ -1,0 +1,33 @@
+id          = "discord"
+name        = "Discord"
+homepage    = "https://discord.com/"
+risk        = "low"
+disclaimer  = "Electron 浏览器内核缓存。可能要重新登录。"
+
+detect = [
+  "%APPDATA%/discord",
+  "%APPDATA%/Discord",
+  "**/discord",
+  "**/Discord",
+]
+
+[match]
+name_contains   = ["discord", "Discord"]
+
+[[scope]]
+id    = "http-cache"
+label = "Cache"
+glob  = "**/[Dd]iscord/Cache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "code-cache"
+label = "Code Cache"
+glob  = "**/[Dd]iscord/Code Cache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "gpu-cache"
+label = "GPU Cache"
+glob  = "**/[Dd]iscord/GPUCache/**"
+mode  = "recycle"

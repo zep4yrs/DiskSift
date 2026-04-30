@@ -1,0 +1,31 @@
+id          = "obs"
+name        = "OBS Studio"
+homepage    = "https://obsproject.com/"
+risk        = "medium"
+disclaimer  = "只清浏览器源插件缓存与日志，不动场景配置和录制文件。"
+
+detect = [
+  "%APPDATA%/obs-studio",
+  "**/obs-studio",
+]
+
+[match]
+name_contains   = ["obs-studio"]
+
+[[scope]]
+id    = "browser-cache"
+label = "Browser Source 缓存"
+glob  = "**/obs-studio/plugin_config/obs-browser/cache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "logs"
+label = "Logs"
+glob  = "**/obs-studio/logs/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "crashes"
+label = "崩溃日志"
+glob  = "**/obs-studio/crashes/**"
+mode  = "recycle"

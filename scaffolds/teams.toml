@@ -1,0 +1,38 @@
+id          = "teams"
+name        = "Microsoft Teams"
+homepage    = "https://www.microsoft.com/microsoft-teams"
+risk        = "low"
+disclaimer  = "清浏览器内核缓存。聊天历史保留。可能要重登。"
+
+detect = [
+  "%APPDATA%/Microsoft/Teams",
+  "%LOCALAPPDATA%/Packages/MSTeams_*",
+  "**/Microsoft/Teams",
+]
+
+[match]
+name_contains   = ["Teams"]
+
+[[scope]]
+id    = "http-cache"
+label = "Cache"
+glob  = "**/Teams/Cache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "code-cache"
+label = "Code Cache"
+glob  = "**/Teams/Code Cache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "gpu-cache"
+label = "GPU Cache"
+glob  = "**/Teams/GPUCache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "service-worker"
+label = "Service Worker"
+glob  = "**/Teams/Service Worker/CacheStorage/**"
+mode  = "recycle"

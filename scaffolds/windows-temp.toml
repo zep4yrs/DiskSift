@@ -1,0 +1,19 @@
+id          = "windows-temp"
+name        = "Windows 用户临时文件"
+risk        = "low"
+disclaimer  = "%TEMP% 下的临时文件。系统重启后大部分会自动清。正在使用的文件会被跳过。"
+
+detect = [
+  "%LOCALAPPDATA%/Temp",
+  "%USERPROFILE%/AppData/Local/Temp",
+]
+
+[match]
+name_contains   = ["Temp"]
+
+[[scope]]
+id     = "old-temp"
+label  = "30 天前的临时文件"
+glob   = "**/Temp/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 30 }

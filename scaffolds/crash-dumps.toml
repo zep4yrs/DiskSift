@@ -1,0 +1,18 @@
+id          = "crash-dumps"
+name        = "崩溃转储文件"
+risk        = "low"
+disclaimer  = "%LOCALAPPDATA%\\CrashDumps 是程序崩溃时的内存快照（.dmp 文件），主要给开发者调试用。普通用户可以全清。"
+
+detect = [
+  "%LOCALAPPDATA%/CrashDumps",
+  "**/CrashDumps",
+]
+
+[match]
+name_contains   = ["CrashDumps"]
+
+[[scope]]
+id    = "all"
+label = "全部崩溃转储"
+glob  = "**/CrashDumps/**"
+mode  = "recycle"

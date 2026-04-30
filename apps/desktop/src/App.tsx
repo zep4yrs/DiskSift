@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Folder, ScanLine, Settings as SettingsIcon, Play } from 'lucide-react';
+import { Folder, ScanLine, Settings as SettingsIcon, Play, LayoutGrid, BarChart3 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { api } from './api';
 import { isTauri } from './env';
@@ -8,7 +8,9 @@ import { TreeView } from './components/TreeView';
 import { Treemap } from './components/Treemap';
 import { AutoWalk } from './components/AutoWalk';
 import { Settings } from './components/Settings';
+import { TriageView } from './components/TriageView';
 import { formatBytes } from './format';
+import type { Triaged } from './triage';
 
 export default function App() {
   const root = useStore((s) => s.root);
@@ -25,6 +27,7 @@ export default function App() {
   const [err, setErr] = useState<string | null>(null);
   const [pickedPath, setPickedPath] = useState<string>('');
   const [showSettings, setShowSettings] = useState(false);
+  const [centerView, setCenterView] = useState<'triage' | 'treemap'>('triage');
   const treeWrap = useRef<HTMLDivElement>(null);
   const [treemapSize, setTreemapSize] = useState({ w: 800, h: 480 });
 
@@ -81,6 +84,10 @@ export default function App() {
     setWalk(items.map((it) => ({ node: it.node, scaffoldId: it.scaffoldId, status: 'pending' })));
   };
 
+  const jumpToWalkFromTriage = (it: Triaged) => {
+    setWalk([{ node: it.node, scaffoldId: it.scaffoldId, status: 'pending' }]);
+  };
+
   const selectedNode = useMemo(() => {
     if (!root || !selectedPath) return root;
     const dfs = (n: any): any => n.path === selectedPath ? n : (n.children ?? []).map(dfs).find(Boolean);
@@ -125,19 +132,41 @@ export default function App() {
 
         <section className="center">
           <div className="breadcrumb">
-            {selectedNode ? <><strong>{selectedNode.name}</strong> · {selectedNode.path}</> : 'No selection'}
+            <button className={'tab' + (centerView === 'triage' ? ' active' : '')} onClick={() => setCenterView('triage')}>
+              <LayoutGrid size={13} /> 诊断
+            </button>
+            <button className={'tab' + (centerView === 'treemap' ? ' active' : '')} onClick={() => setCenterView('treemap')}>
+              <BarChart3 size={13} /> 树图
+            </button>
+            <div className="grow" />
+            {selectedNode && (
+              <span style={{ color: 'var(--ink-2)', fontSize: 11, fontWeight: 600 }}>
+                {selectedNode.path}
+              </span>
+            )}
             {selectedNode && <span className="size">{formatBytes(selectedNode.size)}</span>}
           </div>
-          <div className="treemap-wrap" ref={treeWrap}>
-            {selectedNode && selectedNode.children?.length > 0 && (
-              <Treemap
-                node={selectedNode}
-                width={treemapSize.w}
-                height={treemapSize.h}
+          <div className="center-body" ref={treeWrap}>
+            {centerView === 'triage' && root && (
+              <TriageView
+                root={root}
+                thresholdBytes={threshold * 1024 ** 3}
+                onJumpToWalk={jumpToWalkFromTriage}
                 onSelect={select}
-                selectedPath={selectedPath}
               />
             )}
+            {centerView === 'treemap' && selectedNode && selectedNode.children?.length > 0 && (
+              <div className="treemap-wrap">
+                <Treemap
+                  node={selectedNode}
+                  width={treemapSize.w}
+                  height={treemapSize.h}
+                  onSelect={select}
+                  selectedPath={selectedPath}
+                />
+              </div>
+            )}
+            {!root && <Empty />}
           </div>
         </section>
 

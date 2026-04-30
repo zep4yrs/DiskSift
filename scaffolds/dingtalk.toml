@@ -1,0 +1,40 @@
+id          = "dingtalk"
+name        = "钉钉 DingTalk"
+homepage    = "https://www.dingtalk.com/"
+risk        = "low"
+disclaimer  = "只清缓存与下载的图片/视频。文档/工作笔记保留。"
+
+detect = [
+  "%APPDATA%/DingTalk",
+  "%LOCALAPPDATA%/DingTalk",
+  "**/DingTalk",
+]
+
+[match]
+name_contains   = ["DingTalk"]
+
+[[scope]]
+id     = "image-cache"
+label  = "图片缓存"
+glob   = "**/ImageFiles/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 30 }
+
+[[scope]]
+id     = "video-cache"
+label  = "视频缓存"
+glob   = "**/VideoFiles/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 7 }
+
+[[scope]]
+id     = "blink-cache"
+label  = "内置浏览器缓存（GPUCache / Cache）"
+glob   = "**/Cache/**"
+mode   = "recycle"
+
+[[scope]]
+id     = "logs"
+label  = "日志"
+glob   = "**/log/**"
+mode   = "recycle"

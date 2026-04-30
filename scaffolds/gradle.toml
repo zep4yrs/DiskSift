@@ -1,0 +1,39 @@
+id          = "gradle"
+name        = "Gradle cache"
+homepage    = "https://docs.gradle.org/current/userguide/directory_layout.html"
+risk        = "low"
+disclaimer  = "Gradle 下次 build 会重新下依赖与构建产物。"
+
+detect = [
+  "%USERPROFILE%/.gradle/caches",
+  "${HOME}/.gradle/caches",
+  "**/.gradle/caches",
+]
+
+[match]
+name_contains   = [".gradle"]
+must_have_child = ["caches"]
+
+[[scope]]
+id    = "modules-cache"
+label = "依赖模块（modules-2）"
+glob  = "**/.gradle/caches/modules-*/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "build-cache"
+label = "构建缓存（build-cache-*）"
+glob  = "**/.gradle/caches/build-cache-*/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "transforms"
+label = "依赖变换（transforms-*）"
+glob  = "**/.gradle/caches/transforms-*/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "daemon"
+label = "Daemon 日志"
+glob  = "**/.gradle/daemon/*/daemon-*.log"
+mode  = "recycle"

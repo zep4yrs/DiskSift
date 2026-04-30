@@ -1,0 +1,25 @@
+id          = "epicgames"
+name        = "Epic Games Launcher"
+homepage    = "https://store.epicgames.com/"
+risk        = "low"
+disclaimer  = "清启动器 webcache 可修常见登录、商店白屏问题。游戏不动。"
+
+detect = [
+  "%LOCALAPPDATA%/EpicGamesLauncher/Saved/webcache",
+  "**/EpicGamesLauncher/Saved",
+]
+
+[match]
+name_contains   = ["EpicGamesLauncher"]
+
+[[scope]]
+id    = "webcache"
+label = "Webcache（启动器内核缓存）"
+glob  = "**/EpicGamesLauncher/Saved/webcache*/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "logs"
+label = "Logs"
+glob  = "**/EpicGamesLauncher/Saved/Logs/**"
+mode  = "recycle"

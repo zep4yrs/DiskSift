@@ -1,0 +1,43 @@
+id          = "feishu"
+name        = "飞书 / Lark"
+homepage    = "https://www.feishu.cn/"
+risk        = "low"
+disclaimer  = "只清缓存与下载的媒体。文档、工作台数据保留。"
+
+detect = [
+  "%APPDATA%/Feishu",
+  "%APPDATA%/Lark",
+  "%LOCALAPPDATA%/Feishu",
+  "%LOCALAPPDATA%/Lark",
+  "**/Feishu",
+  "**/Lark",
+]
+
+[match]
+name_contains   = ["Feishu", "Lark"]
+
+[[scope]]
+id     = "media-cache"
+label  = "媒体缓存（图片/视频/语音）"
+glob   = "**/storage/{image,video,audio}/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 14 }
+
+[[scope]]
+id     = "blink-cache"
+label  = "内置浏览器缓存"
+glob   = "**/Cache/**"
+mode   = "recycle"
+
+[[scope]]
+id     = "logs"
+label  = "日志"
+glob   = "**/log/**"
+mode   = "recycle"
+
+[[scope]]
+id     = "downloads"
+label  = "下载文件夹"
+glob   = "**/storage/download/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 60 }

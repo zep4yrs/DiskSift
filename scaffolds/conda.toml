@@ -1,0 +1,30 @@
+id          = "conda"
+name        = "Conda packages cache"
+homepage    = "https://docs.conda.io/"
+risk        = "medium"
+disclaimer  = "等同 `conda clean --all`。已激活的 env 不动；只清下载的 tarball 与未引用的包。"
+
+detect = [
+  "%USERPROFILE%/anaconda3/pkgs",
+  "%USERPROFILE%/miniconda3/pkgs",
+  "%USERPROFILE%/.conda/pkgs",
+  "${HOME}/anaconda3/pkgs",
+  "${HOME}/miniconda3/pkgs",
+  "${HOME}/.conda/pkgs",
+]
+
+[match]
+name_contains   = ["pkgs"]
+
+[[scope]]
+id    = "tarballs"
+label = "下载的 tarball（cache）"
+glob  = "**/pkgs/cache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "unused-packages"
+label = "未引用的包（按 mtime > 30 天）"
+glob  = "**/pkgs/**"
+mode  = "recycle"
+prompt = { kind = "days", default = 30 }

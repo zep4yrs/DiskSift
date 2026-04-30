@@ -1,0 +1,33 @@
+id          = "battlenet"
+name        = "Battle.net"
+homepage    = "https://battle.net/"
+risk        = "medium"
+disclaimer  = "清缓存可解决登录/启动问题。游戏存档不动。Battle.net 重启后会重建。"
+
+detect = [
+  "C:/ProgramData/Blizzard Entertainment",
+  "%LOCALAPPDATA%/Battle.net",
+  "**/Battle.net",
+  "**/Blizzard Entertainment",
+]
+
+[match]
+name_contains   = ["Battle.net", "Blizzard Entertainment"]
+
+[[scope]]
+id    = "client-cache"
+label = "客户端缓存"
+glob  = "**/Battle.net/Cache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "agent-cache"
+label = "Battle.net Agent 缓存"
+glob  = "**/Blizzard Entertainment/Battle.net/Cache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "logs"
+label = "Logs"
+glob  = "**/Battle.net/Logs/**"
+mode  = "recycle"

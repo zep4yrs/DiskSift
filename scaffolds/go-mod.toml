@@ -1,0 +1,27 @@
+id          = "go-mod"
+name        = "Go module cache"
+homepage    = "https://go.dev/ref/mod"
+risk        = "low"
+disclaimer  = "go 下次 build 会重新下载依赖。等同于 `go clean -modcache`。"
+
+detect = [
+  "%USERPROFILE%/go/pkg/mod",
+  "${HOME}/go/pkg/mod",
+  "**/go/pkg/mod",
+]
+
+[match]
+name_contains   = ["go"]
+must_have_child = ["pkg"]
+
+[[scope]]
+id    = "module-cache"
+label = "Module download cache（pkg/mod）"
+glob  = "**/pkg/mod/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "build-cache"
+label = "Build cache（pkg/sumdb / cache）"
+glob  = "**/pkg/{sumdb,cache}/**"
+mode  = "recycle"

@@ -1,0 +1,21 @@
+id          = "recycle-bin"
+name        = "回收站（每个磁盘根目录的 $Recycle.Bin）"
+risk        = "medium"
+disclaimer  = "已经在回收站里的文件。清空后不可恢复（除非用数据恢复软件）。"
+
+detect = [
+  "C:/$Recycle.Bin",
+  "D:/$Recycle.Bin",
+  "E:/$Recycle.Bin",
+  "**/$Recycle.Bin",
+]
+
+[match]
+name_contains   = ["$Recycle.Bin"]
+
+[[scope]]
+id    = "empty"
+label = "清空回收站"
+glob  = "**/$Recycle.Bin/**"
+mode  = "delete"
+prompt = { kind = "confirm", label = "我确认要永久清空回收站" }

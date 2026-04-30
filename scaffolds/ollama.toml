@@ -1,0 +1,23 @@
+id          = "ollama"
+name        = "Ollama 模型库"
+homepage    = "https://ollama.com/"
+risk        = "high"
+disclaimer  = "这是已下载的模型权重（GGUF）。删了重下经常需要几 GB 流量。建议先 `ollama list` 确认哪些不再需要，再用 `ollama rm` 删指定模型。"
+
+detect = [
+  "%USERPROFILE%/.ollama/models",
+  "%LOCALAPPDATA%/Ollama/models",
+  "${HOME}/.ollama/models",
+  "**/.ollama/models",
+]
+
+[match]
+name_contains   = [".ollama"]
+must_have_child = ["models"]
+
+[[scope]]
+id    = "blobs"
+label = "模型 blob（按需手动选）"
+glob  = "**/models/blobs/**"
+mode  = "recycle"
+prompt = { kind = "confirm", label = "我已用 ollama list 确认这些模型可删" }

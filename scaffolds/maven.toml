@@ -1,0 +1,21 @@
+id          = "maven"
+name        = "Maven local repository"
+homepage    = "https://maven.apache.org/"
+risk        = "low"
+disclaimer  = "Maven 下次 build 会重新下 jar。等同于删 `~/.m2/repository`。"
+
+detect = [
+  "%USERPROFILE%/.m2/repository",
+  "${HOME}/.m2/repository",
+  "**/.m2/repository",
+]
+
+[match]
+name_contains   = [".m2"]
+must_have_child = ["repository"]
+
+[[scope]]
+id    = "all"
+label = "本地仓库全部 jar"
+glob  = "**/.m2/repository/**"
+mode  = "recycle"

@@ -1,0 +1,18 @@
+id          = "node-modules"
+name        = "node_modules（项目级，慎清）"
+risk        = "high"
+disclaimer  = "项目里的 node_modules 文件夹。只清你已不再开发的旧项目；删了之后那个项目要 `npm/pnpm install` 才能跑。建议手动选具体哪个项目。"
+
+detect = [
+  "**/node_modules",
+]
+
+[match]
+name_contains   = ["node_modules"]
+
+[[scope]]
+id     = "stale"
+label  = "180 天没改的 node_modules"
+glob   = "**/node_modules/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 180, label = "目录最后修改超过多少天才清理" }

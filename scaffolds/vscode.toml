@@ -1,0 +1,51 @@
+id          = "vscode"
+name        = "Visual Studio Code"
+homepage    = "https://code.visualstudio.com/"
+risk        = "low"
+disclaimer  = "清缓存、日志、Service Worker。设置、扩展、键位、快照保留。下次启动会重建索引。"
+
+detect = [
+  "%APPDATA%/Code",
+  "**/Code/User",
+]
+
+[match]
+name_contains   = ["Code"]
+must_have_child = ["User"]
+
+[[scope]]
+id    = "cached-data"
+label = "CachedData"
+glob  = "**/Code/CachedData/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "code-cache"
+label = "Code Cache"
+glob  = "**/Code/Code Cache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "gpu-cache"
+label = "GPU Cache"
+glob  = "**/Code/GPUCache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "service-worker"
+label = "Service Worker"
+glob  = "**/Code/Service Worker/CacheStorage/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "logs"
+label = "Logs"
+glob  = "**/Code/logs/**"
+mode  = "recycle"
+
+[[scope]]
+id     = "workspace-storage"
+label  = "Workspace Storage（旧工作区元数据，深度清理）"
+glob   = "**/Code/User/workspaceStorage/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 90 }

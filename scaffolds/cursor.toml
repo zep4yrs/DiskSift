@@ -1,0 +1,45 @@
+id          = "cursor"
+name        = "Cursor (AI Code Editor)"
+homepage    = "https://cursor.com/"
+risk        = "low"
+disclaimer  = "VS Code fork。设置、扩展、AI 历史保留；只清缓存与索引。"
+
+detect = [
+  "%APPDATA%/Cursor",
+  "**/Cursor/User",
+]
+
+[match]
+name_contains   = ["Cursor"]
+must_have_child = ["User"]
+
+[[scope]]
+id    = "cached-data"
+label = "CachedData"
+glob  = "**/Cursor/CachedData/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "code-cache"
+label = "Code Cache"
+glob  = "**/Cursor/Code Cache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "gpu-cache"
+label = "GPU Cache"
+glob  = "**/Cursor/GPUCache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "logs"
+label = "Logs"
+glob  = "**/Cursor/logs/**"
+mode  = "recycle"
+
+[[scope]]
+id     = "workspace-storage"
+label  = "Workspace Storage（深度清理）"
+glob   = "**/Cursor/User/workspaceStorage/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 90 }

@@ -1,0 +1,29 @@
+id          = "telegram"
+name        = "Telegram Desktop"
+homepage    = "https://desktop.telegram.org/"
+risk        = "low"
+disclaimer  = "只清自动下载的图片/视频/文件缓存（user_data/cache）。聊天数据库保留。"
+
+detect = [
+  "%APPDATA%/Telegram Desktop",
+  "**/Telegram Desktop",
+  "**/Telegram Desktop/tdata/user_data*",
+]
+
+[match]
+name_contains   = ["Telegram Desktop"]
+must_have_child = ["tdata"]
+
+[[scope]]
+id     = "media-cache"
+label  = "自动下载的媒体缓存"
+glob   = "**/Telegram Desktop/tdata/user_data*/cache/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 30 }
+
+[[scope]]
+id     = "media-cache-other"
+label  = "其它账号的媒体缓存"
+glob   = "**/Telegram Desktop/tdata/user_data*/media_cache/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 30 }

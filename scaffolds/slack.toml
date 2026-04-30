@@ -1,0 +1,37 @@
+id          = "slack"
+name        = "Slack"
+homepage    = "https://slack.com/"
+risk        = "low"
+disclaimer  = "Electron 浏览器内核缓存，下次启动会重建。登录态保留。"
+
+detect = [
+  "%APPDATA%/Slack",
+  "**/Slack",
+]
+
+[match]
+name_contains   = ["Slack"]
+
+[[scope]]
+id    = "http-cache"
+label = "Cache"
+glob  = "**/Slack/Cache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "code-cache"
+label = "Code Cache"
+glob  = "**/Slack/Code Cache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "gpu-cache"
+label = "GPU Cache"
+glob  = "**/Slack/GPUCache/**"
+mode  = "recycle"
+
+[[scope]]
+id    = "service-worker-cache"
+label = "Service Worker"
+glob  = "**/Slack/Service Worker/CacheStorage/**"
+mode  = "recycle"
