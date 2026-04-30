@@ -111,7 +111,7 @@ export default function App() {
       </header>
 
       {!isTauri && (
-        <div className="banner" style={{ background: 'rgba(91,141,239,0.15)', color: '#9bb6f5' }}>
+        <div className="banner" style={{ background: 'rgba(255, 111, 168, 0.10)', color: 'var(--accent-soft)', borderBottom: '1px solid rgba(255, 111, 168, 0.25)' }}>
           浏览器预览模式 · 数据是模拟的（C 盘的样子参考你截图） · 真实扫描需要在 Tauri 桌面 app 里跑
         </div>
       )}

@@ -12,8 +12,9 @@ type Props = {
 };
 
 const PALETTE = [
-  '#5B8DEF', '#F2A341', '#E14B57', '#48B984', '#A872C8',
-  '#23A4B8', '#D9D04F', '#F37E97', '#7B97FF', '#62C77F',
+  '#ff6fa8', '#f472b6', '#ec4899', '#fb7185', '#e879f9',
+  '#c084fc', '#a855f7', '#fda4af', '#f9a8d4', '#ffb3cf',
+  '#fb923c', '#facc15',
 ];
 
 function colorFor(name: string): string {
@@ -54,17 +55,17 @@ export function Treemap({ node, width, height, onSelect, selectedPath }: Props) 
               width={w}
               height={h}
               fill={fill}
-              fillOpacity={d.depth === 1 ? 0.85 : 0.55}
-              stroke={isSelected ? '#fff' : 'rgba(0,0,0,0.4)'}
+              fillOpacity={d.depth === 1 ? 0.78 : 0.5}
+              stroke={isSelected ? '#fde6ee' : 'rgba(20,8,15,0.55)'}
               strokeWidth={isSelected ? 2 : 1}
             />
             {w > 70 && h > 22 && (
-              <text x={x + 6} y={y + 16} fill="rgba(0,0,0,0.85)" fontSize={11} fontWeight={600}>
+              <text x={x + 6} y={y + 16} fill="rgba(22,10,18,0.92)" fontSize={11} fontWeight={700}>
                 {d.data.name}
               </text>
             )}
             {w > 70 && h > 36 && (
-              <text x={x + 6} y={y + 30} fill="rgba(0,0,0,0.7)" fontSize={10}>
+              <text x={x + 6} y={y + 30} fill="rgba(22,10,18,0.72)" fontSize={10}>
                 {formatBytes(d.data.size)}
               </text>
             )}
