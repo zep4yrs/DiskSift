@@ -29,6 +29,7 @@ anyhow.workspace             = true
 chrono.workspace             = true
 tracing.workspace            = true
 tracing-subscriber.workspace = true
+jwalk.workspace              = true
 
 diskwise-scanner  = { path = "../../../crates/scanner" }
 diskwise-scaffold = { path = "../../../crates/scaffold" }

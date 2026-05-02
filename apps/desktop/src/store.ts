@@ -8,6 +8,25 @@ export interface WalkItem {
   status: 'pending' | 'advising' | 'ready' | 'done' | 'skipped';
 }
 
+export interface ChatTurn {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  text: string;
+  // optional structured advice that goes with the turn
+  advice?: AdvisorResponse;
+  // optional scaffold suggestion the user can act on inline
+  scaffoldId?: string | null;
+  pending?: boolean;
+}
+
+export interface ChatSession {
+  // the node currently being discussed in the chat panel
+  node: Node | null;
+  scaffoldId: string | null;
+  turns: ChatTurn[];
+  busy: boolean;
+}
+
 interface AppState {
   root: Node | null;
   scaffolds: Scaffold[];
@@ -16,6 +35,8 @@ interface AppState {
   walkIndex: number;
   walkThresholdGB: number;
   reclaimedBytes: number;
+  chat: ChatSession;
+  studioRequest: { scaffoldId: string; ts: number } | null;
 
   setRoot: (n: Node | null) => void;
   setScaffolds: (s: Scaffold[]) => void;
@@ -25,6 +46,14 @@ interface AppState {
   patchWalkItem: (i: number, patch: Partial<WalkItem>) => void;
   setThreshold: (gb: number) => void;
   addReclaimed: (n: number) => void;
+
+  focusChatOn: (node: Node, scaffoldId: string | null) => void;
+  pushChatTurn: (t: ChatTurn) => void;
+  patchChatTurn: (id: string, patch: Partial<ChatTurn>) => void;
+  setChatBusy: (b: boolean) => void;
+  resetChat: () => void;
+  requestStudio: (scaffoldId: string) => void;
+  consumeStudio: () => void;
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -35,6 +64,8 @@ export const useStore = create<AppState>((set) => ({
   walkIndex: 0,
   walkThresholdGB: 1,
   reclaimedBytes: 0,
+  chat: { node: null, scaffoldId: null, turns: [], busy: false },
+  studioRequest: null,
 
   setRoot: (root) => set({ root }),
   setScaffolds: (scaffolds) => set({ scaffolds }),
@@ -49,6 +80,24 @@ export const useStore = create<AppState>((set) => ({
     }),
   setThreshold: (walkThresholdGB) => set({ walkThresholdGB }),
   addReclaimed: (n) => set((s) => ({ reclaimedBytes: s.reclaimedBytes + n })),
+
+  focusChatOn: (node, scaffoldId) =>
+    // Keep prior turns — the user wants ONE running conversation. We just
+    // update the "focused" node/scaffold so any inline scaffold chips line
+    // up with whatever was most recently dropped.
+    set((s) => ({ chat: { ...s.chat, node, scaffoldId } })),
+  pushChatTurn: (t) => set((s) => ({ chat: { ...s.chat, turns: [...s.chat.turns, t] } })),
+  patchChatTurn: (id, patch) =>
+    set((s) => ({
+      chat: {
+        ...s.chat,
+        turns: s.chat.turns.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+      },
+    })),
+  setChatBusy: (b) => set((s) => ({ chat: { ...s.chat, busy: b } })),
+  resetChat: () => set(() => ({ chat: { node: null, scaffoldId: null, turns: [], busy: false } })),
+  requestStudio: (scaffoldId) => set({ studioRequest: { scaffoldId, ts: Date.now() } }),
+  consumeStudio: () => set({ studioRequest: null }),
 }));
 
 export function buildWalkQueue(root: Node, thresholdBytes: number): { node: Node; scaffoldId: string | null }[] {

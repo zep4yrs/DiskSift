@@ -1,11 +1,18 @@
 //! Cross-platform disk scanner. Returns a tree of directories with size/file_count.
 //!
-//! v0.1: walkdir-based, single thread. v0.2 will swap in direct NTFS MFT read on Windows.
+//! v0.1.1: parallel walk via jwalk (rayon under the hood) + per-leaf file
+//! children + progress callback. v0.2 will swap in direct NTFS MFT read on
+//! Windows for sub-3s C: drive scans.
 
+use jwalk::WalkDir as JWalk;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
+#[cfg(windows)]
+mod mft;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
@@ -34,33 +41,90 @@ struct DirAcc {
     file_count: u64,
     ext_bytes: HashMap<String, u64>,
     ext_count: HashMap<String, u64>,
+    files: Vec<(String, u64)>, // (file name, size) — only kept on the immediate parent
 }
 
 pub struct ScanOptions {
     pub follow_symlinks: bool,
     pub max_depth: Option<usize>,
+    /// How many files to keep per directory in the returned tree. None = all (memory hog on large dirs).
+    pub keep_files_per_dir: Option<usize>,
 }
 
 impl Default for ScanOptions {
     fn default() -> Self {
-        Self { follow_symlinks: false, max_depth: None }
+        Self {
+            follow_symlinks: false,
+            max_depth: None,
+            keep_files_per_dir: Some(500),
+        }
     }
 }
 
-pub fn scan<P: AsRef<Path>>(root: P) -> anyhow::Result<Node> {
-    scan_with(root, ScanOptions::default())
+#[derive(Debug, Clone, Default)]
+pub struct ScanProgress {
+    pub files_seen: u64,
+    pub bytes_seen: u64,
+    pub current_path: String,
 }
 
-pub fn scan_with<P: AsRef<Path>>(root: P, opts: ScanOptions) -> anyhow::Result<Node> {
-    let root = root.as_ref().to_path_buf();
-    let mut accs: HashMap<PathBuf, DirAcc> = HashMap::new();
+pub fn scan<P: AsRef<Path>>(root: P) -> anyhow::Result<Node> {
+    scan_with(root, ScanOptions::default(), |_| {})
+}
 
-    let mut walker = WalkDir::new(&root).follow_links(opts.follow_symlinks);
+pub fn scan_with<P, F>(root: P, opts: ScanOptions, on_progress: F) -> anyhow::Result<Node>
+where
+    P: AsRef<Path>,
+    F: Fn(&ScanProgress) + Send + Sync,
+{
+    let root = root.as_ref().to_path_buf();
+
+    // Try the MFT fast path on Windows when the root is on an NTFS volume.
+    #[cfg(windows)]
+    {
+        if let Some(letter) = drive_letter_of(&root) {
+            let subroot = if is_drive_root(&root) { None } else { Some(root.as_path()) };
+            let progress = &on_progress;
+            match mft::scan_volume(letter, subroot, |records, bytes| {
+                progress(&ScanProgress {
+                    files_seen: records,
+                    bytes_seen: bytes,
+                    current_path: format!("MFT record {}", records),
+                });
+            }) {
+                Ok(n) => {
+                    progress(&ScanProgress {
+                        files_seen: n.file_count,
+                        bytes_seen: n.size,
+                        current_path: "done (mft)".into(),
+                    });
+                    return Ok(n);
+                }
+                Err(e) => {
+                    tracing::warn!("MFT scan failed, falling back to walkdir: {e:#}");
+                }
+            }
+        }
+    }
+
+    let files_seen = Arc::new(AtomicU64::new(0));
+    let bytes_seen = Arc::new(AtomicU64::new(0));
+    let last_emit = Arc::new(AtomicU64::new(0));
+
+    // Phase 1: parallel walk, collect (path, size) pairs for every file.
+    let mut walker = JWalk::new(&root)
+        .skip_hidden(false)
+        .follow_links(opts.follow_symlinks)
+        .parallelism(jwalk::Parallelism::RayonDefaultPool {
+            busy_timeout: std::time::Duration::from_secs(5),
+        });
     if let Some(d) = opts.max_depth {
         walker = walker.max_depth(d);
     }
 
-    for entry in walker.into_iter().filter_map(|e| e.ok()) {
+    let mut accs: HashMap<PathBuf, DirAcc> = HashMap::new();
+
+    for entry in walker.into_iter().flatten() {
         if !entry.file_type().is_file() {
             continue;
         }
@@ -70,7 +134,16 @@ pub fn scan_with<P: AsRef<Path>>(root: P, opts: ScanOptions) -> anyhow::Result<N
             .extension()
             .map(|e| e.to_string_lossy().to_lowercase())
             .unwrap_or_else(|| "(none)".into());
+        let file_name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
 
+        // attribute to immediate parent (with files list) and walk upward (totals only)
+        if let Some(parent) = path.parent() {
+            let acc = accs.entry(parent.to_path_buf()).or_default();
+            acc.files.push((file_name, size));
+        }
         let mut cur = path.parent();
         while let Some(dir) = cur {
             let acc = accs.entry(dir.to_path_buf()).or_default();
@@ -83,12 +156,30 @@ pub fn scan_with<P: AsRef<Path>>(root: P, opts: ScanOptions) -> anyhow::Result<N
             }
             cur = dir.parent();
         }
+
+        let total_files = files_seen.fetch_add(1, Ordering::Relaxed) + 1;
+        bytes_seen.fetch_add(size, Ordering::Relaxed);
+        // Throttle progress to ~every 5k files to avoid IPC saturation.
+        if total_files.wrapping_sub(last_emit.load(Ordering::Relaxed)) >= 5000 {
+            last_emit.store(total_files, Ordering::Relaxed);
+            on_progress(&ScanProgress {
+                files_seen: total_files,
+                bytes_seen: bytes_seen.load(Ordering::Relaxed),
+                current_path: path.to_string_lossy().to_string(),
+            });
+        }
     }
 
-    Ok(build_tree(&root, &accs))
+    on_progress(&ScanProgress {
+        files_seen: files_seen.load(Ordering::Relaxed),
+        bytes_seen: bytes_seen.load(Ordering::Relaxed),
+        current_path: "done".into(),
+    });
+
+    Ok(build_tree(&root, &accs, opts.keep_files_per_dir))
 }
 
-fn build_tree(dir: &Path, accs: &HashMap<PathBuf, DirAcc>) -> Node {
+fn build_tree(dir: &Path, accs: &HashMap<PathBuf, DirAcc>, keep_files: Option<usize>) -> Node {
     let acc = accs.get(dir);
     let size = acc.map(|a| a.size).unwrap_or(0);
     let file_count = acc.map(|a| a.file_count).unwrap_or(0);
@@ -114,14 +205,37 @@ fn build_tree(dir: &Path, accs: &HashMap<PathBuf, DirAcc>) -> Node {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| dir.to_string_lossy().to_string());
 
-    let mut children = Vec::new();
+    let mut children: Vec<Node> = Vec::new();
+
+    // Subdirectories — recurse.
     if let Ok(rd) = std::fs::read_dir(dir) {
         for entry in rd.flatten() {
             if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                children.push(build_tree(&entry.path(), accs));
+                children.push(build_tree(&entry.path(), accs, keep_files));
             }
         }
     }
+
+    // Files — pull the largest from this dir's acc and emit as leaf nodes.
+    if let Some(a) = acc {
+        let mut files = a.files.clone();
+        files.sort_by(|x, y| y.1.cmp(&x.1));
+        let limit = keep_files.unwrap_or(usize::MAX);
+        for (fname, fsize) in files.into_iter().take(limit) {
+            let fpath = dir.join(&fname);
+            children.push(Node {
+                name: fname,
+                path: fpath.to_string_lossy().to_string(),
+                is_dir: false,
+                size: fsize,
+                file_count: 1,
+                children: Vec::new(),
+                scaffold_id: None,
+                top_extensions: Vec::new(),
+            });
+        }
+    }
+
     children.sort_by(|a, b| b.size.cmp(&a.size));
 
     Node {
@@ -136,10 +250,30 @@ fn build_tree(dir: &Path, accs: &HashMap<PathBuf, DirAcc>) -> Node {
     }
 }
 
+#[cfg(windows)]
+fn drive_letter_of(p: &Path) -> Option<char> {
+    let s = p.to_string_lossy();
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' {
+        let c = bytes[0] as char;
+        if c.is_ascii_alphabetic() {
+            return Some(c);
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn is_drive_root(p: &Path) -> bool {
+    let s = p.to_string_lossy();
+    matches!(s.as_ref(), "C:" | "D:" | "E:" | "F:" | "G:" | "H:")
+        || (s.len() == 3 && s.as_bytes()[1] == b':' && (s.as_bytes()[2] == b'\\' || s.as_bytes()[2] == b'/'))
+}
+
 /// Pull up to `n` sample paths from a directory, ordered shallowest-first.
 pub fn sample_paths<P: AsRef<Path>>(root: P, n: usize) -> Vec<String> {
     let root = root.as_ref();
-    WalkDir::new(root)
+    walkdir::WalkDir::new(root)
         .max_depth(3)
         .into_iter()
         .filter_map(|e| e.ok())
@@ -164,6 +298,9 @@ mod tests {
         let node = scan(&dir).unwrap();
         assert_eq!(node.size, 11);
         assert_eq!(node.file_count, 2);
+        // file leaves should appear as children of their directory
+        let a = node.children.iter().find(|c| c.name == "a").unwrap();
+        assert!(a.children.iter().any(|c| !c.is_dir && c.name == "file1.txt"));
         let _ = fs::remove_dir_all(&dir);
     }
 

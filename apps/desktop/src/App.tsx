@@ -1,16 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Folder, ScanLine, Settings as SettingsIcon, Play, LayoutGrid, BarChart3 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Folder, ScanLine, Settings as SettingsIcon } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
+import { listen } from '@tauri-apps/api/event';
 import { api } from './api';
 import { isTauri } from './env';
-import { useStore, buildWalkQueue } from './store';
+import { useStore } from './store';
 import { TreeView } from './components/TreeView';
-import { Treemap } from './components/Treemap';
-import { AutoWalk } from './components/AutoWalk';
+import { ChatPanel } from './components/ChatPanel';
+import { Studio } from './components/Studio';
 import { Settings } from './components/Settings';
-import { TriageView } from './components/TriageView';
+import { Splitter } from './components/Splitter';
+import { Logo } from './components/Logo';
 import { formatBytes } from './format';
-import type { Triaged } from './triage';
+import { loadSettings, isConfigured } from './advisorClient';
+
+function isDriveRoot(p: string): boolean {
+  // C: / C:\ / C:/  — anything beyond is a subfolder
+  return /^[A-Za-z]:[\\/]?$/.test(p);
+}
+
+const DEFAULT_LEFT = 620;
+const DEFAULT_RIGHT = 320;
+const MIN_LEFT = 320;
+const MIN_RIGHT = 220;
+const MIN_CENTER = 360;
 
 export default function App() {
   const root = useStore((s) => s.root);
@@ -19,28 +32,56 @@ export default function App() {
   const scaffolds = useStore((s) => s.scaffolds);
   const selectedPath = useStore((s) => s.selectedPath);
   const select = useStore((s) => s.selectPath);
-  const setWalk = useStore((s) => s.setWalk);
-  const threshold = useStore((s) => s.walkThresholdGB);
-  const setThreshold = useStore((s) => s.setThreshold);
 
   const [scanning, setScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState<{ files: number; bytes: number; path: string } | null>(null);
+  const [scanTotalBytes, setScanTotalBytes] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [pickedPath, setPickedPath] = useState<string>('');
   const [showSettings, setShowSettings] = useState(false);
-  const [centerView, setCenterView] = useState<'triage' | 'treemap'>('triage');
-  const treeWrap = useRef<HTMLDivElement>(null);
-  const [treemapSize, setTreemapSize] = useState({ w: 800, h: 480 });
+  const [advisorTag, setAdvisorTag] = useState<{ provider: string } | null>(null);
+
+  const refreshAdvisorTag = () => {
+    const s = loadSettings();
+    setAdvisorTag(isConfigured(s) ? { provider: s.provider } : null);
+  };
+  useEffect(() => { refreshAdvisorTag(); }, []);
+  const [leftWidth, setLeftWidth] = useState<number>(() => {
+    const v = Number(localStorage.getItem('diskwise.leftWidth'));
+    return Number.isFinite(v) && v > MIN_LEFT ? v : DEFAULT_LEFT;
+  });
+  const [rightWidth, setRightWidth] = useState<number>(() => {
+    const v = Number(localStorage.getItem('diskwise.rightWidth'));
+    return Number.isFinite(v) && v > MIN_RIGHT ? v : DEFAULT_RIGHT;
+  });
+
+  useEffect(() => { localStorage.setItem('diskwise.leftWidth', String(leftWidth)); }, [leftWidth]);
+  useEffect(() => { localStorage.setItem('diskwise.rightWidth', String(rightWidth)); }, [rightWidth]);
+
+  const dragLeft = (dx: number) => {
+    setLeftWidth((w) => {
+      const winW = window.innerWidth;
+      const maxLeft = Math.max(MIN_LEFT, winW - rightWidth - MIN_CENTER);
+      return Math.max(MIN_LEFT, Math.min(maxLeft, w + dx));
+    });
+  };
+  const dragRight = (dx: number) => {
+    setRightWidth((w) => {
+      const winW = window.innerWidth;
+      const maxRight = Math.max(MIN_RIGHT, winW - leftWidth - MIN_CENTER);
+      return Math.max(MIN_RIGHT, Math.min(maxRight, w - dx));
+    });
+  };
 
   useEffect(() => { api.listScaffolds().then(setScaffolds).catch(() => {}); }, [setScaffolds]);
 
   useEffect(() => {
-    if (!treeWrap.current) return;
-    const ro = new ResizeObserver(() => {
-      const r = treeWrap.current!.getBoundingClientRect();
-      setTreemapSize({ w: Math.max(300, r.width), h: Math.max(200, r.height) });
-    });
-    ro.observe(treeWrap.current);
-    return () => ro.disconnect();
+    if (!isTauri) return;
+    const unlisten = listen<{ files_seen: number; bytes_seen: number; current_path: string }>(
+      'scan-progress',
+      (e) => setScanProgress({ files: e.payload.files_seen, bytes: e.payload.bytes_seen, path: e.payload.current_path }),
+    );
+    return () => { unlisten.then((u) => u()); };
   }, []);
 
   const pickDirectory = async () => {
@@ -55,10 +96,24 @@ export default function App() {
 
   const scan = async () => {
     if (!pickedPath) return;
-    setErr(null); setScanning(true);
+    setErr(null); setScanning(true); setScanProgress(null); setScanTotalBytes(null);
+    if (isTauri) {
+      if (isDriveRoot(pickedPath)) {
+        // Drive root: ask the OS for used bytes — instant, exact.
+        api.volumeInfo(pickedPath)
+          .then((info) => { if (info) setScanTotalBytes(info.used_bytes); })
+          .catch(() => {});
+      } else {
+        // Subfolder: run a fast size-only walk in parallel with the real scan.
+        // The real scan is doing the same work either way; this just gives the
+        // progress bar an exact denominator a bit ahead of completion.
+        api.estimateSize(pickedPath)
+          .then((bytes) => { if (bytes > 0) setScanTotalBytes(bytes); })
+          .catch(() => {});
+      }
+    }
     try {
       const node = await api.scan(pickedPath);
-      // attach scaffold ids
       const tagged = await tagScaffolds(node);
       setRoot(tagged);
       select(tagged.path);
@@ -69,35 +124,22 @@ export default function App() {
     }
   };
 
-  const tagScaffolds = async (n: any): Promise<any> => {
-    const id = await api.detectScaffold(n.path).catch(() => null);
+  const tagScaffolds = async (n: any, depth = 0): Promise<any> => {
+    const id = n.is_dir ? await api.detectScaffold(n.path).catch(() => null) : null;
+    const cap = depth < 2 ? 100 : depth < 4 ? 50 : 20;
     return {
       ...n,
       scaffold_id: id,
-      children: await Promise.all((n.children ?? []).slice(0, 50).map(tagScaffolds)),
+      children: await Promise.all(
+        (n.children ?? []).slice(0, cap).map((c: any) => tagScaffolds(c, depth + 1)),
+      ),
     };
   };
-
-  const startWalk = () => {
-    if (!root) return;
-    const items = buildWalkQueue(root, threshold * 1024 ** 3);
-    setWalk(items.map((it) => ({ node: it.node, scaffoldId: it.scaffoldId, status: 'pending' })));
-  };
-
-  const jumpToWalkFromTriage = (it: Triaged) => {
-    setWalk([{ node: it.node, scaffoldId: it.scaffoldId, status: 'pending' }]);
-  };
-
-  const selectedNode = useMemo(() => {
-    if (!root || !selectedPath) return root;
-    const dfs = (n: any): any => n.path === selectedPath ? n : (n.children ?? []).map(dfs).find(Boolean);
-    return dfs(root) ?? root;
-  }, [root, selectedPath]);
 
   return (
     <div className="app">
       <header>
-        <span className="brand"><span className="dot" /> Diskwise</span>
+        <span className="brand"><Logo size={22} /> Diskwise</span>
         <button className="ghost" onClick={pickDirectory}>
           <Folder size={14} /> {pickedPath || '选择磁盘或文件夹'}
         </button>
@@ -105,91 +147,76 @@ export default function App() {
           <ScanLine size={14} /> {scanning ? '扫描中…' : '扫描'}
         </button>
         <div className="grow" />
-        <label className="threshold">
-          阈值
-          <input type="number" min={0.05} step={0.05} value={threshold} onChange={(e) => setThreshold(Number(e.target.value))} />
-          GB
-        </label>
-        <button className="primary" onClick={startWalk} disabled={!root}>
-          <Play size={14} /> 开始巡查
-        </button>
-        <button className="ghost icon" onClick={() => setShowSettings(true)}>
+        <span className="muted small">
+          {root ? `${formatBytes(root.size)} · ${root.file_count.toLocaleString()} 文件` : '未扫描'}
+        </span>
+        <button
+          className={'ghost icon settings-btn' + (advisorTag ? ' bound' : '')}
+          onClick={() => setShowSettings(true)}
+          title={advisorTag ? `已绑定 ${advisorTag.provider} · 点开管理` : 'AI 还没配置 · 点开设置'}
+        >
           <SettingsIcon size={16} />
+          {advisorTag && <span className="settings-dot" />}
         </button>
+        {advisorTag && (
+          <span className="provider-pill" title="当前 AI 提供商">
+            {advisorTag.provider}
+          </span>
+        )}
       </header>
 
-      {!isTauri && (
-        <div className="banner preview">
-          浏览器预览模式 · 扫描数据是模拟的 · <strong>右上角设置里填 AI Key，AI 卡片就会调真实接口</strong>
+      {scanning && (
+        <div className="scan-bar">
+          <div
+            className={'scan-bar-fill' + (scanTotalBytes && scanProgress ? ' determinate' : ' indeterminate')}
+            style={
+              scanTotalBytes && scanProgress
+                ? { width: `${Math.min(99, (scanProgress.bytes / scanTotalBytes) * 100)}%` }
+                : undefined
+            }
+          />
+          <div className="scan-bar-label">
+            {scanProgress
+              ? `${scanProgress.files.toLocaleString()} 个文件 · ${formatBytes(scanProgress.bytes)}${scanTotalBytes ? ` / ${formatBytes(scanTotalBytes)}` : ''}`
+              : '准备扫描…'}
+          </div>
         </div>
       )}
       {err && <div className="banner error">{err}</div>}
 
-      <main>
+      <main style={{ gridTemplateColumns: `${leftWidth}px 4px 1fr 4px ${rightWidth}px` }}>
         <aside className="left">
-          {root ? <TreeView root={root} selectedPath={selectedPath} onSelect={select} /> : <Empty />}
+          {root ? <TreeView root={root} selectedPath={selectedPath} onSelect={select} /> : <EmptyLeft />}
         </aside>
 
+        <Splitter onDrag={dragLeft} onDoubleClick={() => setLeftWidth(DEFAULT_LEFT)} />
+
         <section className="center">
-          <div className="breadcrumb">
-            <button className={'tab' + (centerView === 'triage' ? ' active' : '')} onClick={() => setCenterView('triage')}>
-              <LayoutGrid size={13} /> 诊断
-            </button>
-            <button className={'tab' + (centerView === 'treemap' ? ' active' : '')} onClick={() => setCenterView('treemap')}>
-              <BarChart3 size={13} /> 树图
-            </button>
-            <div className="grow" />
-            {selectedNode && (
-              <span style={{ color: 'var(--ink-2)', fontSize: 11, fontWeight: 600 }}>
-                {selectedNode.path}
-              </span>
-            )}
-            {selectedNode && <span className="size">{formatBytes(selectedNode.size)}</span>}
-          </div>
-          <div className="center-body" ref={treeWrap}>
-            {centerView === 'triage' && root && (
-              <TriageView
-                root={root}
-                thresholdBytes={threshold * 1024 ** 3}
-                onJumpToWalk={jumpToWalkFromTriage}
-                onSelect={select}
-              />
-            )}
-            {centerView === 'treemap' && selectedNode && selectedNode.children?.length > 0 && (
-              <div className="treemap-wrap">
-                <Treemap
-                  node={selectedNode}
-                  width={treemapSize.w}
-                  height={treemapSize.h}
-                  onSelect={select}
-                  selectedPath={selectedPath}
-                />
-              </div>
-            )}
-            {!root && <Empty />}
-          </div>
+          <ChatPanel />
         </section>
 
+        <Splitter onDrag={dragRight} onDoubleClick={() => setRightWidth(DEFAULT_RIGHT)} />
+
         <aside className="right">
-          <AutoWalk />
+          <Studio />
         </aside>
       </main>
 
       <footer>
-        <span>Diskwise v0.1 · 已加载 {scaffolds.length} 个清理脚本</span>
-        <span>{root ? `已扫描 ${formatBytes(root.size)} · ${root.file_count.toLocaleString()} 文件` : '还没扫描'}</span>
+        <span>Diskwise v0.1 · {scaffolds.length} 个脚本</span>
+        <span>{root?.path ?? '还没扫描'}</span>
       </footer>
 
-      {showSettings && <Settings onClose={() => setShowSettings(false)} />}
+      {showSettings && <Settings onClose={() => { setShowSettings(false); refreshAdvisorTag(); }} />}
     </div>
   );
 }
 
-function Empty() {
+function EmptyLeft() {
   return (
     <div className="empty">
       <div className="empty-title">还没扫描</div>
-      <div className="empty-sub">在顶栏选一个文件夹，然后点「扫描」。</div>
+      <div className="empty-sub">在顶栏选一个文件夹，然后点「扫描」。<br />扫完之后，左侧会列出每个文件夹和文件。</div>
     </div>
   );
 }

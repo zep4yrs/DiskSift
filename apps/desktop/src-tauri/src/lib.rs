@@ -4,9 +4,16 @@ use std::sync::Mutex;
 use diskwise_advisor::{advise as advise_provider, AdvisorRequest, AdvisorResponse, Provider};
 use diskwise_executor::{execute, Plan, UndoEntry};
 use diskwise_scaffold::{detect_for, load_dir, Scaffold};
-use diskwise_scanner::{sample_paths, scan, Node};
+use diskwise_scanner::{sample_paths, scan_with, Node, ScanOptions};
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
+
+#[derive(serde::Serialize, Clone)]
+struct ScanProgressEvent {
+    files_seen: u64,
+    bytes_seen: u64,
+    current_path: String,
+}
 
 struct AppState {
     scaffolds: Mutex<Vec<Scaffold>>,
@@ -16,17 +23,106 @@ struct AppState {
 }
 
 #[tauri::command]
-async fn scan_path(path: String) -> Result<Node, String> {
+async fn scan_path(app: AppHandle, path: String) -> Result<Node, String> {
     let p = PathBuf::from(&path);
-    tokio::task::spawn_blocking(move || scan(p))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+    let app_for_progress = app.clone();
+    tokio::task::spawn_blocking(move || {
+        scan_with(p, ScanOptions::default(), |progress| {
+            let _ = app_for_progress.emit(
+                "scan-progress",
+                ScanProgressEvent {
+                    files_seen: progress.files_seen,
+                    bytes_seen: progress.bytes_seen,
+                    current_path: progress.current_path.clone(),
+                },
+            );
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn list_scaffolds(state: State<'_, AppState>) -> Vec<Scaffold> {
     state.scaffolds.lock().unwrap().clone()
+}
+
+/// Fast size-only walk used to seed the progress-bar denominator before the
+/// real scan starts. Single jwalk pass, sums file sizes, no other state.
+#[tauri::command]
+async fn estimate_size(path: String) -> Result<u64, String> {
+    let p = PathBuf::from(&path);
+    tokio::task::spawn_blocking(move || -> u64 {
+        let mut total: u64 = 0;
+        for entry in jwalk::WalkDir::new(&p)
+            .skip_hidden(false)
+            .follow_links(false)
+            .into_iter()
+            .flatten()
+        {
+            if entry.file_type().is_file() {
+                if let Ok(md) = entry.metadata() {
+                    total = total.saturating_add(md.len());
+                }
+            }
+        }
+        total
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize, Clone)]
+struct VolumeInfo {
+    total_bytes: u64,
+    used_bytes: u64,
+    free_bytes: u64,
+}
+
+#[tauri::command]
+fn volume_info(path: String) -> Result<VolumeInfo, String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let mut wide: Vec<u16> = std::ffi::OsStr::new(&path).encode_wide().collect();
+        // Trim to drive root for the Win32 API.
+        let root: Vec<u16> = if wide.len() >= 2 && wide[1] == b':' as u16 {
+            vec![wide[0], wide[1], b'\\' as u16, 0]
+        } else {
+            wide.push(0);
+            wide
+        };
+        let mut free_to_caller: u64 = 0;
+        let mut total: u64 = 0;
+        let mut total_free: u64 = 0;
+        // SAFETY: calling documented Win32 API with valid wide-char buffers.
+        let ok = unsafe {
+            #[link(name = "kernel32")]
+            extern "system" {
+                fn GetDiskFreeSpaceExW(
+                    lpDirectoryName: *const u16,
+                    lpFreeBytesAvailable: *mut u64,
+                    lpTotalNumberOfBytes: *mut u64,
+                    lpTotalNumberOfFreeBytes: *mut u64,
+                ) -> i32;
+            }
+            GetDiskFreeSpaceExW(root.as_ptr(), &mut free_to_caller, &mut total, &mut total_free)
+        };
+        if ok == 0 {
+            return Err("GetDiskFreeSpaceExW failed".into());
+        }
+        return Ok(VolumeInfo {
+            total_bytes: total,
+            used_bytes: total.saturating_sub(total_free),
+            free_bytes: total_free,
+        });
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err("volume_info only implemented on Windows".into())
+    }
 }
 
 #[tauri::command]
@@ -82,6 +178,11 @@ fn set_advisor(
             base_url: base_url.unwrap_or_else(|| "http://localhost:11434".to_string()),
             model,
         },
+        "gemini" => Provider::Gemini {
+            api_key: api_key.ok_or_else(|| "api_key required".to_string())?,
+            model,
+            base_url: base_url.unwrap_or_else(|| "https://generativelanguage.googleapis.com".to_string()),
+        },
         other => return Err(format!("unknown provider: {other}")),
     };
     *state.advisor.lock().unwrap() = Some(p);
@@ -121,12 +222,14 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             scan_path,
+            estimate_size,
             list_scaffolds,
             detect_scaffold,
             advise,
             inspect_path,
             execute_plan,
             set_advisor,
+            volume_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

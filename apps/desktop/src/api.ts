@@ -29,8 +29,16 @@ export const api = {
   execute: (plan: Plan, dryRun: boolean) =>
     isTauri ? invoke<UndoEntry[]>('execute_plan', { plan, dryRun }) : mocks.execute(plan, dryRun),
 
+  volumeInfo: (path: string) =>
+    isTauri
+      ? invoke<{ total_bytes: number; used_bytes: number; free_bytes: number }>('volume_info', { path })
+      : Promise.resolve(null),
+
+  estimateSize: (path: string) =>
+    isTauri ? invoke<number>('estimate_size', { path }) : Promise.resolve(0),
+
   setAdvisor: (
-    provider: 'openai' | 'anthropic' | 'ollama',
+    provider: 'openai' | 'anthropic' | 'gemini' | 'ollama',
     model: string,
     apiKey?: string,
     baseUrl?: string,

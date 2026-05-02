@@ -51,6 +51,11 @@ pub enum Provider {
         base_url: String,
         model: String,
     },
+    Gemini {
+        api_key: String,
+        model: String,
+        base_url: String,
+    },
 }
 
 const SYSTEM: &str = r#"You are Diskwise's local file advisor. Given a folder's metadata, decide what it is and whether it can be cleaned. Reply in strict JSON ONLY, matching this schema exactly:
@@ -120,6 +125,28 @@ pub async fn advise(provider: &Provider, req: &AdvisorRequest) -> anyhow::Result
             v["content"][0]["text"]
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("anthropic: missing content[0].text"))?
+                .to_string()
+        }
+        Provider::Gemini { api_key, model, base_url } => {
+            let body = serde_json::json!({
+                "systemInstruction": { "parts": [{ "text": SYSTEM }] },
+                "contents": [{ "role": "user", "parts": [{ "text": user_prompt }] }],
+                "generationConfig": {
+                    "responseMimeType": "application/json",
+                    "temperature": 0.2
+                }
+            });
+            let url = format!(
+                "{}/v1beta/models/{}:generateContent?key={}",
+                base_url.trim_end_matches('/'),
+                model,
+                api_key
+            );
+            let r = client.post(url).json(&body).send().await?.error_for_status()?;
+            let v: serde_json::Value = r.json().await?;
+            v["candidates"][0]["content"]["parts"][0]["text"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("gemini: missing candidates[0].content.parts[0].text"))?
                 .to_string()
         }
         Provider::Ollama { base_url, model } => {
