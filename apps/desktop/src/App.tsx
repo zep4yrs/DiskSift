@@ -11,6 +11,7 @@ import { Studio } from './components/Studio';
 import { Settings } from './components/Settings';
 import { Splitter } from './components/Splitter';
 import { Logo } from './components/Logo';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { formatBytes } from './format';
 import { loadSettings, isConfigured } from './advisorClient';
 
@@ -198,7 +199,9 @@ export default function App() {
         <Splitter onDrag={dragRight} onDoubleClick={() => setRightWidth(DEFAULT_RIGHT)} />
 
         <aside className="right">
-          <Studio />
+          <ErrorBoundary fallbackLabel="Studio 面板渲染失败">
+            <Studio />
+          </ErrorBoundary>
         </aside>
       </main>
 

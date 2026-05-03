@@ -1,8 +1,15 @@
-import { useMemo, useState } from 'react';
-import { ChevronRight, ChevronDown, Sparkles, MessageSquare } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ChevronRight, ChevronDown, Sparkles, MessageSquare, Trash2, Loader2 } from 'lucide-react';
 import { useStore } from '../store';
 import { formatBytes } from '../format';
+import { api } from '../api';
 import type { Node, Scaffold } from '../types';
+
+interface ScopeSize {
+  scope_id: string;
+  bytes: number;
+  file_count: number;
+}
 
 const FEATURED_IDS = [
   'wechat-pc',
@@ -167,6 +174,62 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
   const sc = card.scaffold;
   const n = card.match;
   const Caret = expanded ? ChevronDown : ChevronRight;
+  const addReclaimed = useStore((s) => s.addReclaimed);
+
+  const [scopeSizes, setScopeSizes] = useState<ScopeSize[] | null>(null);
+  const [scopeLoading, setScopeLoading] = useState(false);
+  const [busyScope, setBusyScope] = useState<string | null>(null);
+  const [scopeMsg, setScopeMsg] = useState<string | null>(null);
+  const [armedScope, setArmedScope] = useState<string | null>(null); // two-step click confirm
+
+  // Load per-scope sizes once the card is expanded on a detected match.
+  useEffect(() => {
+    if (!expanded || !n || (sc.scopes ?? []).length === 0) return;
+    let cancelled = false;
+    setScopeLoading(true);
+    api
+      .scopeSizes(sc.id, n.path)
+      .then((rows) => { if (!cancelled) setScopeSizes(rows); })
+      .catch((e) => { if (!cancelled) setScopeMsg(`扫描 scope 大小失败：${String(e)}`); })
+      .finally(() => { if (!cancelled) setScopeLoading(false); });
+    return () => { cancelled = true; };
+  }, [expanded, n?.path, sc.id, (sc.scopes ?? []).length]);
+
+  const runScope = async (scopeId: string, _scopeLabel: string, bytes: number) => {
+    if (!n) return;
+    setArmedScope(null);
+    setBusyScope(scopeId);
+    setScopeMsg(null);
+    try {
+      const entries = await api.executeScope(sc.id, scopeId, n.path, false);
+      addReclaimed(bytes);
+      setScopeMsg(`已清理 ${entries.length} 个文件 · 约 ${formatBytes(bytes)}`);
+      // Refresh scope sizes so this row drops to 0.
+      const rows = await api.scopeSizes(sc.id, n.path);
+      setScopeSizes(rows);
+    } catch (e) {
+      setScopeMsg(`清理失败：${String(e)}`);
+    } finally {
+      setBusyScope(null);
+    }
+  };
+
+  // Two-step confirm: first click "arms" the row (button turns red & shows "确认"),
+  // second click within ~5s actually runs. Avoids window.confirm which has had
+  // flaky behavior in some Tauri webview builds.
+  const handleScopeClick = (scopeId: string, scopeLabel: string, bytes: number) => {
+    if (busyScope) return;
+    if (armedScope === scopeId) {
+      runScope(scopeId, scopeLabel, bytes);
+    } else {
+      setArmedScope(scopeId);
+      setScopeMsg(null);
+      window.setTimeout(() => {
+        setArmedScope((cur) => (cur === scopeId ? null : cur));
+      }, 5000);
+    }
+  };
+
   return (
     <div className={'studio-card-wrap risk-' + sc.risk + (n ? ' detected' : '')}>
       <button
@@ -209,6 +272,45 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
                 <span className="studio-detail-label">大小</span>
                 <span className="mono-num">{formatBytes(n.size)} · {n.file_count.toLocaleString()} 文件</span>
               </div>
+              {(sc.scopes ?? []).length > 0 && (
+                <>
+                  <div className="studio-detail-label" style={{ marginTop: 6 }}>
+                    脚本可清的桶 ({(sc.scopes ?? []).length})
+                    {scopeLoading && <Loader2 size={11} className="spin" style={{ marginLeft: 6, verticalAlign: 'middle' }} />}
+                  </div>
+                  <ul className="studio-scopes">
+                    {(sc.scopes ?? []).map((scope) => {
+                      const row = scopeSizes?.find((r) => r.scope_id === scope.id);
+                      const bytes = row?.bytes ?? 0;
+                      const fileCount = row?.file_count ?? 0;
+                      const empty = scopeSizes !== null && bytes === 0;
+                      const busy = busyScope === scope.id;
+                      return (
+                        <li key={scope.id} className={'studio-scope-row' + (empty ? ' empty' : '')} title={scope.glob}>
+                          <span className="studio-scope-label">{scope.label}</span>
+                          <span className="mono-num studio-scope-size">
+                            {scopeSizes === null ? '—' : `${formatBytes(bytes)}${fileCount ? ` · ${fileCount.toLocaleString()}` : ''}`}
+                          </span>
+                          <button
+                            className={'secondary studio-scope-btn' + (armedScope === scope.id ? ' armed' : '')}
+                            disabled={busy || empty || scopeLoading}
+                            onClick={() => handleScopeClick(scope.id, scope.label, bytes)}
+                            title={`${scope.mode} · ${scope.glob}`}
+                          >
+                            {busy
+                              ? <><Loader2 size={11} className="spin" /> 清理中</>
+                              : armedScope === scope.id
+                                ? <><Trash2 size={11} /> 再点确认</>
+                                : <><Trash2 size={11} /> 清理</>}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {scopeMsg && <div className="studio-scope-msg muted small">{scopeMsg}</div>}
+                </>
+              )}
+
               {(n.children ?? []).length > 0 && (
                 <>
                   <div className="studio-detail-label" style={{ marginTop: 6 }}>占用最大的子项</div>

@@ -14,7 +14,9 @@ pub struct Scaffold {
     pub detect: Vec<String>,
     #[serde(rename = "match", default)]
     pub matcher: Match,
-    #[serde(rename = "scope", default)]
+    // TOML uses `[[scope]]` blocks (singular) — keep that for authoring ergonomics.
+    // JSON to the frontend uses `scopes` (plural) so it matches the TS Scaffold type.
+    #[serde(rename(deserialize = "scope", serialize = "scopes"), alias = "scopes", default)]
     pub scopes: Vec<Scope>,
 }
 
@@ -132,7 +134,10 @@ fn norm(s: &str) -> String {
     s.replace('\\', "/")
 }
 
-fn expand_env(s: &str) -> String {
+/// Expand environment variables in a path/glob string, supporting both
+/// `$VAR` / `${VAR}` (Unix) and `%VAR%` (Windows) syntax. Used by the scanner
+/// for `detect` patterns and by callers that want to evaluate scope `glob`s.
+pub fn expand_env(s: &str) -> String {
     let unix = shellexpand::env(s)
         .map(|c| c.into_owned())
         .unwrap_or_else(|_| s.to_string());

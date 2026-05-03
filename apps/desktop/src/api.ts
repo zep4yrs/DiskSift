@@ -20,6 +20,19 @@ export const api = {
   detectScaffold: (path: string) =>
     isTauri ? invoke<string | null>('detect_scaffold', { path }) : mocks.detectScaffold(path),
 
+  scopeSizes: (scaffoldId: string, rootPath: string) =>
+    isTauri
+      ? invoke<{ scope_id: string; bytes: number; file_count: number }[]>('scope_sizes', {
+          scaffoldId,
+          rootPath,
+        })
+      : mocks.scopeSizes(scaffoldId, rootPath),
+
+  executeScope: (scaffoldId: string, scopeId: string, rootPath: string, dryRun: boolean) =>
+    isTauri
+      ? invoke<UndoEntry[]>('execute_scope', { scaffoldId, scopeId, rootPath, dryRun })
+      : Promise.resolve([] as UndoEntry[]),
+
   advise: (req: AdvisorRequest) =>
     isTauri ? invoke<AdvisorResponse>('advise', { req }) : mocks.advise(req),
 

@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use diskwise_advisor::{advise as advise_provider, AdvisorRequest, AdvisorResponse, Provider};
 use diskwise_executor::{execute, Plan, UndoEntry};
-use diskwise_scaffold::{detect_for, load_dir, Scaffold};
+use diskwise_scaffold::{detect_for, expand_env, load_dir, Scaffold};
 use diskwise_scanner::{sample_paths, scan_with, Node, ScanOptions};
 
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -130,6 +130,159 @@ fn detect_scaffold(state: State<'_, AppState>, path: String) -> Option<String> {
     detect_for(&state.scaffolds.lock().unwrap(), std::path::Path::new(&path))
 }
 
+#[derive(serde::Serialize, Clone)]
+struct ScopeSize {
+    scope_id: String,
+    bytes: u64,
+    file_count: u64,
+}
+
+/// Walk `root_path` and tally how many bytes / files each `[[scope]]` glob
+/// in `scaffold_id` would match. Used by the Studio panel to show per-scope
+/// occupancy alongside the generic "largest sub-items" view. Files matching
+/// multiple scopes are counted once per matching scope (the same physical
+/// bytes — overlap means cleaning either scope reclaims them).
+#[tauri::command]
+async fn scope_sizes(
+    state: State<'_, AppState>,
+    scaffold_id: String,
+    root_path: String,
+) -> Result<Vec<ScopeSize>, String> {
+    let scaffold = state
+        .scaffolds
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|s| s.id == scaffold_id)
+        .cloned()
+        .ok_or_else(|| format!("scaffold not found: {scaffold_id}"))?;
+
+    let mut sets: Vec<(String, globset::GlobSet)> = Vec::with_capacity(scaffold.scopes.len());
+    for sc in &scaffold.scopes {
+        let pattern = expand_env(&sc.glob);
+        let glob = globset::GlobBuilder::new(&pattern)
+            .literal_separator(false)
+            .case_insensitive(true)
+            .build()
+            .map_err(|e| format!("scope `{}` has invalid glob `{}`: {e}", sc.id, sc.glob))?;
+        let mut b = globset::GlobSetBuilder::new();
+        b.add(glob);
+        sets.push((sc.id.clone(), b.build().map_err(|e| e.to_string())?));
+    }
+
+    let root = PathBuf::from(&root_path);
+    tokio::task::spawn_blocking(move || {
+        let mut tally: Vec<(u64, u64)> = vec![(0, 0); sets.len()];
+        for entry in jwalk::WalkDir::new(&root)
+            .skip_hidden(false)
+            .follow_links(false)
+            .into_iter()
+            .flatten()
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let path_str = entry.path().to_string_lossy().replace('\\', "/");
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            for (i, (_, set)) in sets.iter().enumerate() {
+                if set.is_match(&path_str) {
+                    tally[i].0 = tally[i].0.saturating_add(size);
+                    tally[i].1 = tally[i].1.saturating_add(1);
+                }
+            }
+        }
+        sets.into_iter()
+            .zip(tally)
+            .map(|((scope_id, _), (bytes, file_count))| ScopeSize {
+                scope_id,
+                bytes,
+                file_count,
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Resolve a scaffold scope's glob to actual file paths under `root_path` and
+/// run the executor on just those files. Use this instead of feeding the
+/// matched root directly into `execute_plan` — the latter would delete the
+/// whole folder, ignoring the scope's glob. `dry_run = true` returns what
+/// would be touched without performing the action.
+#[tauri::command]
+async fn execute_scope(
+    state: State<'_, AppState>,
+    scaffold_id: String,
+    scope_id: String,
+    root_path: String,
+    dry_run: bool,
+) -> Result<Vec<UndoEntry>, String> {
+    let (scaffold, scope) = {
+        let scaffolds = state.scaffolds.lock().unwrap();
+        let sc = scaffolds
+            .iter()
+            .find(|s| s.id == scaffold_id)
+            .cloned()
+            .ok_or_else(|| format!("scaffold not found: {scaffold_id}"))?;
+        let scope = sc
+            .scopes
+            .iter()
+            .find(|s| s.id == scope_id)
+            .cloned()
+            .ok_or_else(|| format!("scope not found: {scaffold_id}/{scope_id}"))?;
+        (sc, scope)
+    };
+
+    let pattern = expand_env(&scope.glob);
+    let glob = globset::GlobBuilder::new(&pattern)
+        .literal_separator(false)
+        .case_insensitive(true)
+        .build()
+        .map_err(|e| format!("scope `{}` has invalid glob: {e}", scope.id))?;
+    let mut b = globset::GlobSetBuilder::new();
+    b.add(glob);
+    let set = b.build().map_err(|e| e.to_string())?;
+
+    let root = PathBuf::from(&root_path);
+    let matched: Vec<PathBuf> = tokio::task::spawn_blocking(move || {
+        let mut out = Vec::new();
+        for entry in jwalk::WalkDir::new(&root)
+            .skip_hidden(false)
+            .follow_links(false)
+            .into_iter()
+            .flatten()
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let p = entry.path();
+            let s = p.to_string_lossy().replace('\\', "/");
+            if set.is_match(&s) {
+                out.push(p);
+            }
+        }
+        out
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if matched.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let action = match scope.mode {
+        diskwise_scaffold::Mode::Recycle => diskwise_executor::Action::Recycle,
+        diskwise_scaffold::Mode::Quarantine => diskwise_executor::Action::Quarantine,
+        diskwise_scaffold::Mode::Delete => diskwise_executor::Action::Delete,
+    };
+    let plan = Plan {
+        action,
+        paths: matched,
+        reason: format!("Diskwise scaffold {}/{} (Studio)", scaffold.id, scope.id),
+    };
+    execute(&plan, dry_run, &state.undo_log, &state.quarantine_root).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn advise(state: State<'_, AppState>, req: AdvisorRequest) -> Result<AdvisorResponse, String> {
     let provider = state
@@ -225,6 +378,8 @@ pub fn run() {
             estimate_size,
             list_scaffolds,
             detect_scaffold,
+            scope_sizes,
+            execute_scope,
             advise,
             inspect_path,
             execute_plan,
