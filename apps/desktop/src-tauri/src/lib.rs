@@ -84,20 +84,44 @@ async fn scan_path(
 
 /// Walks `node` in place, filling `scaffold_id` for directories and truncating
 /// each level's children to the same depth-based caps the old frontend
-/// `tagScaffolds` applied (depth<2 → 100, depth<4 → 50, else → 20). Children
-/// arrive sorted by size desc from `build_tree`, so truncating preserves the
-/// "biggest N" subset the UI used to render.
+/// `tagScaffolds` applied (depth<2 → 100, depth<4 → 50, else → 20).
+///
+/// Order matters: we recurse into ALL children first to propagate scaffold tags
+/// fully, then apply a tag-aware truncation that keeps any subtree containing a
+/// match before falling back to "biggest N" by size. Without this, a deep
+/// scaffold target (e.g. `C:\Users\<u>\Documents\xwechat_files`) or one nested
+/// inside a populated install dir (`Weixin\<v>\WeChatPlayer.bin`) could be
+/// truncated out at deeper scan roots where the cap shrinks to 20.
 fn tag_and_truncate(node: &mut Node, compiled: &[CompiledScaffold], depth: usize) {
     if node.is_dir {
         node.scaffold_id = detect_compiled(compiled, std::path::Path::new(&node.path));
     }
-    let cap = if depth < 2 { 100 } else if depth < 4 { 50 } else { 20 };
-    if node.children.len() > cap {
-        node.children.truncate(cap);
-    }
     for c in &mut node.children {
         tag_and_truncate(c, compiled, depth + 1);
     }
+    let cap = if depth < 2 { 100 } else if depth < 4 { 50 } else { 20 };
+    if node.children.len() > cap {
+        // Partition tagged subtrees first (preserving their original size-desc
+        // order), then fill remaining slots from the rest. Cap the tagged group
+        // at `cap` too, so a freak case with > cap matches at one level still
+        // produces a bounded tree.
+        let (tagged, rest): (Vec<Node>, Vec<Node>) = node
+            .children
+            .drain(..)
+            .partition(has_scaffold_tag);
+        let mut survivors: Vec<Node> = tagged.into_iter().take(cap).collect();
+        let need = cap.saturating_sub(survivors.len());
+        survivors.extend(rest.into_iter().take(need));
+        // Restore size-desc order for display (partition mixed tagged in front).
+        survivors.sort_by(|a, b| b.size.cmp(&a.size));
+        node.children = survivors;
+    }
+}
+
+/// True if `n` itself, or any descendant, has a scaffold_id assigned. Used by
+/// `tag_and_truncate` to decide which subtrees must survive truncation.
+fn has_scaffold_tag(n: &Node) -> bool {
+    n.scaffold_id.is_some() || n.children.iter().any(has_scaffold_tag)
 }
 
 #[derive(serde::Serialize, Clone)]
