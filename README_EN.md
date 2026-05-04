@@ -28,7 +28,7 @@ Open-source disk cleaner. Scan a whole drive in seconds to see where the bytes w
 
 | Platform | File | Notes |
 |---|---|---|
-| **Windows 10/11** | [`Diskwise_x.x.x_x64-setup.exe`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) (NSIS)<br>[`Diskwise_x.x.x_x64_en-US.msi`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) (MSI) | First launch: SmartScreen will block — click "More info" → "Run anyway". NTFS MFT direct read needs admin; the installer ships a manifest that auto-elevates via UAC. |
+| **Windows** | [`Diskwise_x.x.x_x64-setup.exe`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) (NSIS)<br>[`Diskwise_x.x.x_x64_en-US.msi`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) (MSI) | First launch: SmartScreen will block — click "More info" → "Run anyway". NTFS MFT direct read needs admin; the installer ships a manifest that auto-elevates via UAC. |
 | **macOS** | [`Diskwise_x.x.x_universal.dmg`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) | First launch: allow it under System Settings → Privacy & Security. |
 | **Linux** | [`Diskwise_x.x.x_amd64.AppImage`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) / `.deb` | `chmod +x` the AppImage and double-click. Falls back to cross-platform walker, slower than Windows. |
 
