@@ -2,42 +2,159 @@ id          = "wechat-pc"
 name        = "WeChat (PC)"
 homepage    = "https://weixin.qq.com/"
 risk        = "low"
-disclaimer  = "Only deletes media caches under FileStorage. Chat history is preserved; deleted media may show as missing when re-opening old conversations."
+disclaimer  = "Removes WeChat caches and (optionally) old received media. Chat history (db_storage, all_users/sqlite), account state (config / login / All Users / XPlugin), favorites (business/favorite) and Moments (business/sns) are never touched. Files go to the Recycle Bin. Old chats may show 'image/voice expired' for items beyond your chosen retention window."
 
+# Data roots: 4.x uses xwechat_files; 3.x uses WeChat Files. Either may be relocated to other drives.
+# Roaming app dir: 4.x is xwechat; 3.x is WeChat. Both detected.
 detect = [
-  "**/Tencent/WeChat",
-  "**/WeChat Files/*/FileStorage",
+  "%USERPROFILE%/Documents/xwechat_files",
+  "%USERPROFILE%/Documents/WeChat Files",
+  "%APPDATA%/Tencent/xwechat",
+  "%APPDATA%/Tencent/WeChat",
+  "**/xwechat_files",
   "**/WeChat Files",
 ]
 
+# Matcher fallback for users who relocated WeChat data off the default path.
+# `name_contains` only takes long unambiguous fragments — bare "WeChat" /
+# "xwechat" used to false-positive on directories like
+# `WPS Office/.../uploadwechatfile` and `Weixin/<v>/WeChatPlayer.bin`.
+# `must_have_child = ["all_users"]` further requires the directory to look
+# like a real WeChat data root: both 4.x (`all_users`) and 3.x (`All Users`,
+# resolved case-insensitively on Windows NTFS) have this subfolder; install
+# directories and apps with "wechat" in their name do not.
 [match]
-name_contains    = ["WeChat Files", "WeChat"]
-must_have_child  = ["FileStorage"]
+name_contains   = ["xwechat_files", "WeChat Files"]
+must_have_child = ["all_users"]
+
+# ============================================================================
+# WeChat 4.x scopes (Weixin.exe, xwechat_files/...)
+# ============================================================================
 
 [[scope]]
-id     = "image-cache"
-label  = "Image cache (FileStorage/Image)"
-glob   = "**/FileStorage/Image/**"
+id     = "chat-media-cache"
+label  = "Chat media cache (cache/YYYY-MM/Message)"
+glob   = "**/xwechat_files/wxid_*/cache/*/Message/**"
 mode   = "recycle"
-prompt = { kind = "days", default = 30, label = "Delete images older than (days)" }
+prompt = { kind = "days", default = 30, label = "Delete cached chat media older than (days)" }
 
 [[scope]]
-id     = "video-cache"
-label  = "Video cache (FileStorage/Video)"
-glob   = "**/FileStorage/Video/**"
+id     = "web-resource-cache"
+label  = "Web / mini-program resource cache"
+glob   = "**/xwechat_files/wxid_*/cache/*/{HttpResource,WeAppIcon}/**"
+mode   = "recycle"
+prompt = { kind = "none" }
+
+[[scope]]
+id     = "sticker-cache"
+label  = "Sticker / emoticon cache"
+glob   = "**/xwechat_files/wxid_*/{cache/*/Emoticon,business/emoticon}/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 30, label = "Delete sticker cache older than (days)" }
+
+[[scope]]
+id     = "temp-files"
+label  = "Temp files (session / input / image)"
+glob   = "**/xwechat_files/wxid_*/temp/**"
+mode   = "recycle"
+prompt = { kind = "none" }
+
+[[scope]]
+id     = "avatar-cache"
+label  = "Avatar cache (all_users/head_imgs)"
+glob   = "**/xwechat_files/all_users/head_imgs/**"
+mode   = "recycle"
+prompt = { kind = "none" }
+
+[[scope]]
+id     = "apm-records"
+label  = "APM / telemetry records"
+glob   = "**/xwechat_files/wxid_*/apm_record/**"
+mode   = "recycle"
+prompt = { kind = "none" }
+
+[[scope]]
+id     = "received-files"
+label  = "Received files (msg/file)"
+glob   = "**/xwechat_files/wxid_*/msg/file/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 30, label = "Delete received files older than (days)" }
+
+[[scope]]
+id     = "received-videos"
+label  = "Received videos (msg/video)"
+glob   = "**/xwechat_files/wxid_*/msg/video/**"
 mode   = "recycle"
 prompt = { kind = "days", default = 7, label = "Delete videos older than (days)" }
 
 [[scope]]
-id     = "file-cache"
-label  = "Received files (FileStorage/File)"
-glob   = "**/FileStorage/File/**"
+id     = "received-images"
+label  = "Received images (msg/image)"
+glob   = "**/xwechat_files/wxid_*/msg/image/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 30, label = "Delete received images older than (days)" }
+
+[[scope]]
+id     = "voice-attachments"
+label  = "Voice messages / attachments (msg/attach)"
+glob   = "**/xwechat_files/wxid_*/msg/attach/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 30, label = "Delete voice/attachments older than (days)" }
+
+[[scope]]
+id     = "chat-backups"
+label  = "Chat backups (Backup/)"
+glob   = "**/xwechat_files/Backup/wxid_*/**"
+mode   = "recycle"
+prompt = { kind = "confirm", label = "I understand this deletes my chat backups" }
+
+# ============================================================================
+# Roaming app dir (4.x: %APPDATA%/Tencent/xwechat)
+# ============================================================================
+
+[[scope]]
+id     = "app-logs-crashes"
+label  = "App logs & crash dumps"
+glob   = "%APPDATA%/Tencent/xwechat/{log,crashinfo}/**"
+mode   = "recycle"
+prompt = { kind = "none" }
+
+[[scope]]
+id     = "app-update-leftover"
+label  = "Installer downloads & remote-config cache"
+glob   = "%APPDATA%/Tencent/xwechat/{update,confsdk}/**"
+mode   = "recycle"
+prompt = { kind = "none" }
+
+# ============================================================================
+# WeChat 3.x legacy scopes (WeChat.exe, WeChat Files/FileStorage/...)
+# Empty on 4.x machines; kept for users who haven't upgraded.
+# ============================================================================
+
+[[scope]]
+id     = "image-cache-3x"
+label  = "[3.x] Image cache (FileStorage/Image)"
+glob   = "**/WeChat Files/wxid_*/FileStorage/Image/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 30, label = "Delete images older than (days)" }
+
+[[scope]]
+id     = "video-cache-3x"
+label  = "[3.x] Video cache (FileStorage/Video)"
+glob   = "**/WeChat Files/wxid_*/FileStorage/Video/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 7, label = "Delete videos older than (days)" }
+
+[[scope]]
+id     = "file-cache-3x"
+label  = "[3.x] Received files (FileStorage/File)"
+glob   = "**/WeChat Files/wxid_*/FileStorage/File/**"
 mode   = "recycle"
 prompt = { kind = "days", default = 30, label = "Delete files older than (days)" }
 
 [[scope]]
-id     = "cache-misc"
-label  = "Misc cache (FileStorage/Cache)"
-glob   = "**/FileStorage/Cache/**"
+id     = "cache-misc-3x"
+label  = "[3.x] Misc cache (FileStorage/Cache)"
+glob   = "**/WeChat Files/wxid_*/FileStorage/Cache/**"
 mode   = "recycle"
 prompt = { kind = "none" }

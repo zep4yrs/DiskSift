@@ -332,3 +332,8 @@ export async function execute(plan: Plan, _dryRun: boolean): Promise<UndoEntry[]
 }
 
 function wait(ms: number) { return new Promise<void>((r) => setTimeout(r, ms)); }
+
+export async function scopeSizes(_scaffoldId: string, _rootPath: string): Promise<{ scope_id: string; bytes: number; file_count: number }[]> {
+  await wait(50);
+  return [];
+}

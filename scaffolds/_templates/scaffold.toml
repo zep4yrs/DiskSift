@@ -1,0 +1,68 @@
+# 复制本文件到 scaffolds/<id>.toml 后，按 14-phase 工作流（.claude/commands/add-scaffold.md）填充。
+# 完成后跑：
+#   cargo run -p diskwise-scaffold-lint -- scaffolds/<id>.toml
+#   cargo test -p diskwise-scaffold --test <id>_safety
+#
+# 注：本目录（scaffolds/_templates/）不会被 scaffold::load_dir 加载——它只读
+# scaffolds/ 顶层的 .toml。模板放子目录是为了避免被当成真 scaffold。
+
+id          = "TODO-kebab-case-id"        # kebab-case，全仓库唯一
+name        = "TODO Display Name"          # UI 卡片标题
+homepage    = "https://example.com/"       # 可选
+risk        = "low"                        # low / medium / high；只清缓存→low
+disclaimer  = """\
+TODO: 显式列出"绝不删 X / Y / Z"。\
+明确"删除后某些功能可能受影响"。\
+明确"走回收站可还原"。\
+不要使用"安全"二字。\
+"""
+
+# detect 路径：env 变量用 %VAR%（Windows）/ $VAR（Unix）。
+# 至少含：默认安装/数据路径 + **/<datafolder> 通配（兼容用户改盘符）。
+detect = [
+  "%LOCALAPPDATA%/TODO",
+  "%APPDATA%/TODO",
+  "**/TODO_data_folder",
+]
+
+[match]
+# 当 detect 没命中时的二级匹配——基名 substring + 必须含哪些子目录。
+name_contains    = ["TODO"]
+must_have_child  = []                      # 留空除非确实需要排除假阳性
+
+# ============================================================================
+# L1 可重生缓存（默认勾选，多数有保留期）
+# ============================================================================
+
+[[scope]]
+id     = "TODO-cache-1"
+label  = "TODO 描述（中文 OK）"
+glob   = "**/<datafolder>/<account-pattern>/<bucket>/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 30, label = "Delete TODO older than (days)" }
+
+# 例：全量清的运行时缓存
+[[scope]]
+id     = "TODO-runtime"
+label  = "运行日志/Crash dumps"
+glob   = "%APPDATA%/TODO/{log,crashinfo}/**"
+mode   = "recycle"
+prompt = { kind = "none" }
+
+# ============================================================================
+# L2 可选历史数据（默认勾选 + 30 天保留；备份类用 confirm 不勾）
+# ============================================================================
+
+[[scope]]
+id     = "TODO-received"
+label  = "接收的文件"
+glob   = "**/<datafolder>/<account>/file/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 30, label = "Delete files older than (days)" }
+
+[[scope]]
+id     = "TODO-backup"
+label  = "本地备份"
+glob   = "**/<datafolder>/Backup/**"
+mode   = "recycle"
+prompt = { kind = "confirm", label = "I understand this deletes my backups" }

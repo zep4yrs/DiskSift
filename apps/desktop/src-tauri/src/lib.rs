@@ -1,10 +1,14 @@
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::{Duration, SystemTime};
 
 use diskwise_advisor::{advise as advise_provider, AdvisorRequest, AdvisorResponse, Provider};
 use diskwise_executor::{execute, Plan, UndoEntry};
-use diskwise_scaffold::{detect_for, load_dir, Scaffold};
-use diskwise_scanner::{sample_paths, scan_with, Node, ScanOptions};
+use diskwise_scaffold::{
+    compile_all, detect_compiled, detect_for, expand_env, load_dir, CompiledScaffold, Scaffold,
+};
+use diskwise_scanner::{sample_paths, scan_with_stats, Node, ScanOptions, ScanStats};
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -23,11 +27,23 @@ struct AppState {
 }
 
 #[tauri::command]
-async fn scan_path(app: AppHandle, path: String) -> Result<Node, String> {
+async fn scan_path(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Node, String> {
     let p = PathBuf::from(&path);
     let app_for_progress = app.clone();
-    tokio::task::spawn_blocking(move || {
-        scan_with(p, ScanOptions::default(), |progress| {
+    let app_for_stats = app.clone();
+    let cmd_t0 = std::time::Instant::now();
+
+    // Compile scaffolds outside spawn_blocking so we don't carry the AppState
+    // Mutex across thread boundaries. The compiled form is `Send` and used by
+    // the post-scan walk to fill `Node.scaffold_id`.
+    let compiled = compile_all(&state.scaffolds.lock().unwrap().clone());
+
+    let result = tokio::task::spawn_blocking(move || {
+        let scan_result = scan_with_stats(p, ScanOptions::default(), |progress| {
             let _ = app_for_progress.emit(
                 "scan-progress",
                 ScanProgressEvent {
@@ -36,11 +52,116 @@ async fn scan_path(app: AppHandle, path: String) -> Result<Node, String> {
                     current_path: progress.current_path.clone(),
                 },
             );
-        })
+        });
+        // After the scan returns, walk the tree once to fill scaffold_id and
+        // apply the depth-based breadth caps that the frontend's tagScaffolds
+        // used to apply. Doing both here in one pass with pre-compiled
+        // GlobSets replaces the previous per-directory IPC storm.
+        let tag_t0 = std::time::Instant::now();
+        let scan_result = scan_result.map(|(mut node, stats)| {
+            tag_and_truncate(&mut node, &compiled, 0);
+            (node, stats, tag_t0.elapsed().as_millis() as u64)
+        });
+        scan_result
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+
+    match result {
+        Ok((node, stats, tag_ms)) => {
+            let cmd_ms = cmd_t0.elapsed().as_millis() as u64;
+            tracing::info!(
+                "scan_path: cmd_ms={} scanner_ms={} tag_ms={} overhead={}ms",
+                cmd_ms,
+                stats.total_ms,
+                tag_ms,
+                cmd_ms.saturating_sub(stats.total_ms).saturating_sub(tag_ms),
+            );
+            let _ = app_for_stats.emit("scan-stats", &ScanStatsEvent::from((cmd_ms, tag_ms, &stats)));
+            Ok(node)
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Walks `node` in place, filling `scaffold_id` for directories and truncating
+/// each level's children to the same depth-based caps the old frontend
+/// `tagScaffolds` applied (depth<2 → 100, depth<4 → 50, else → 20).
+///
+/// Order matters: we recurse into ALL children first to propagate scaffold tags
+/// fully, then apply a tag-aware truncation that keeps any subtree containing a
+/// match before falling back to "biggest N" by size. Without this, a deep
+/// scaffold target (e.g. `C:\Users\<u>\Documents\xwechat_files`) or one nested
+/// inside a populated install dir (`Weixin\<v>\WeChatPlayer.bin`) could be
+/// truncated out at deeper scan roots where the cap shrinks to 20.
+fn tag_and_truncate(node: &mut Node, compiled: &[CompiledScaffold], depth: usize) {
+    if node.is_dir {
+        node.scaffold_id = detect_compiled(compiled, std::path::Path::new(&node.path));
+    }
+    for c in &mut node.children {
+        tag_and_truncate(c, compiled, depth + 1);
+    }
+    let cap = if depth < 2 { 100 } else if depth < 4 { 50 } else { 20 };
+    if node.children.len() > cap {
+        // Partition tagged subtrees first (preserving their original size-desc
+        // order), then fill remaining slots from the rest. Cap the tagged group
+        // at `cap` too, so a freak case with > cap matches at one level still
+        // produces a bounded tree.
+        let (tagged, rest): (Vec<Node>, Vec<Node>) = node
+            .children
+            .drain(..)
+            .partition(has_scaffold_tag);
+        let mut survivors: Vec<Node> = tagged.into_iter().take(cap).collect();
+        let need = cap.saturating_sub(survivors.len());
+        survivors.extend(rest.into_iter().take(need));
+        // Restore size-desc order for display (partition mixed tagged in front).
+        survivors.sort_by(|a, b| b.size.cmp(&a.size));
+        node.children = survivors;
+    }
+}
+
+/// True if `n` itself, or any descendant, has a scaffold_id assigned. Used by
+/// `tag_and_truncate` to decide which subtrees must survive truncation.
+fn has_scaffold_tag(n: &Node) -> bool {
+    n.scaffold_id.is_some() || n.children.iter().any(has_scaffold_tag)
+}
+
+#[derive(serde::Serialize, Clone)]
+struct ScanStatsEvent {
+    mode: String,
+    mft_attempted: bool,
+    mft_succeeded: bool,
+    mft_ms: u64,
+    walk_ms: u64,
+    build_tree_ms: u64,
+    /// Time inside `scan_with_stats` (mft_ms + walk_ms + build_tree_ms + overhead).
+    scanner_total_ms: u64,
+    /// Time spent in the post-scan tag-and-truncate pass (replaces frontend tagScaffolds).
+    tag_ms: u64,
+    /// Time inside the `scan_path` command (scanner_total_ms + tag_ms + spawn_blocking overhead).
+    cmd_total_ms: u64,
+    files_seen: u64,
+    bytes_seen: u64,
+    dirs_in_acc: u64,
+}
+
+impl From<(u64, u64, &ScanStats)> for ScanStatsEvent {
+    fn from((cmd_ms, tag_ms, s): (u64, u64, &ScanStats)) -> Self {
+        Self {
+            mode: s.mode.clone(),
+            mft_attempted: s.mft_attempted,
+            mft_succeeded: s.mft_succeeded,
+            mft_ms: s.mft_ms,
+            walk_ms: s.walk_ms,
+            build_tree_ms: s.build_tree_ms,
+            scanner_total_ms: s.total_ms,
+            tag_ms,
+            cmd_total_ms: cmd_ms,
+            files_seen: s.files_seen,
+            bytes_seen: s.bytes_seen,
+            dirs_in_acc: s.dirs_in_acc,
+        }
+    }
 }
 
 #[tauri::command]
@@ -128,6 +249,222 @@ fn volume_info(path: String) -> Result<VolumeInfo, String> {
 #[tauri::command]
 fn detect_scaffold(state: State<'_, AppState>, path: String) -> Option<String> {
     detect_for(&state.scaffolds.lock().unwrap(), std::path::Path::new(&path))
+}
+
+#[derive(serde::Serialize, Clone)]
+struct ScopeSize {
+    scope_id: String,
+    bytes: u64,
+    file_count: u64,
+}
+
+/// Walk `root_path` and tally how many bytes / files each `[[scope]]` glob
+/// True when `path`'s first `wxid_*` segment is in `allow`. Paths with no
+/// `wxid_*` segment (e.g. `all_users/`, `%APPDATA%/Tencent/xwechat/log/`)
+/// always pass — those are cross-account or roaming-only data that aren't
+/// wxid-scoped. `None` or an empty allow-list disables the filter entirely.
+fn path_passes_wxid(path: &Path, wxid_filter: Option<&[String]>) -> bool {
+    let Some(allowed) = wxid_filter else { return true };
+    if allowed.is_empty() {
+        return true;
+    }
+    for component in path.components() {
+        if let Some(s) = component.as_os_str().to_str() {
+            if s.starts_with("wxid_") {
+                return allowed.iter().any(|w| w == s);
+            }
+        }
+    }
+    true
+}
+
+/// True when `metadata.modified()` is older than `now - days * 86400s`.
+/// `days = None` skips the filter. Files whose mtime can't be read pass —
+/// we don't silently drop data the user expects to see because of a transient
+/// OS error.
+fn mtime_older_than(metadata: &std::fs::Metadata, days: Option<u32>) -> bool {
+    let Some(d) = days else { return true };
+    let Ok(modified) = metadata.modified() else { return true };
+    let threshold = SystemTime::now()
+        .checked_sub(Duration::from_secs(d as u64 * 86_400))
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+    modified <= threshold
+}
+
+/// in `scaffold_id` would match. Used by the Studio panel to show per-scope
+/// occupancy alongside the generic "largest sub-items" view. Files matching
+/// multiple scopes are counted once per matching scope (the same physical
+/// bytes — overlap means cleaning either scope reclaims them).
+#[tauri::command]
+async fn scope_sizes(
+    state: State<'_, AppState>,
+    scaffold_id: String,
+    root_path: String,
+    scope_days: Option<HashMap<String, u32>>,
+    wxid_filter: Option<Vec<String>>,
+) -> Result<Vec<ScopeSize>, String> {
+    let scaffold = state
+        .scaffolds
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|s| s.id == scaffold_id)
+        .cloned()
+        .ok_or_else(|| format!("scaffold not found: {scaffold_id}"))?;
+
+    let mut sets: Vec<(String, globset::GlobSet)> = Vec::with_capacity(scaffold.scopes.len());
+    for sc in &scaffold.scopes {
+        let pattern = expand_env(&sc.glob);
+        let glob = globset::GlobBuilder::new(&pattern)
+            .literal_separator(false)
+            .case_insensitive(true)
+            .build()
+            .map_err(|e| format!("scope `{}` has invalid glob `{}`: {e}", sc.id, sc.glob))?;
+        let mut b = globset::GlobSetBuilder::new();
+        b.add(glob);
+        sets.push((sc.id.clone(), b.build().map_err(|e| e.to_string())?));
+    }
+
+    let root = PathBuf::from(&root_path);
+    let wxid_filter_owned = wxid_filter;
+    let scope_days_owned = scope_days;
+    tokio::task::spawn_blocking(move || {
+        let mut tally: Vec<(u64, u64)> = vec![(0, 0); sets.len()];
+        for entry in jwalk::WalkDir::new(&root)
+            .skip_hidden(false)
+            .follow_links(false)
+            .into_iter()
+            .flatten()
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let path = entry.path();
+            let metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if !path_passes_wxid(&path, wxid_filter_owned.as_deref()) {
+                continue;
+            }
+            let path_str = path.to_string_lossy().replace('\\', "/");
+            let size = metadata.len();
+            for (i, (scope_id, set)) in sets.iter().enumerate() {
+                if !set.is_match(&path_str) {
+                    continue;
+                }
+                let days = scope_days_owned
+                    .as_ref()
+                    .and_then(|m| m.get(scope_id).copied());
+                if !mtime_older_than(&metadata, days) {
+                    continue;
+                }
+                tally[i].0 = tally[i].0.saturating_add(size);
+                tally[i].1 = tally[i].1.saturating_add(1);
+            }
+        }
+        sets.into_iter()
+            .zip(tally)
+            .map(|((scope_id, _), (bytes, file_count))| ScopeSize {
+                scope_id,
+                bytes,
+                file_count,
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Resolve a scaffold scope's glob to actual file paths under `root_path` and
+/// run the executor on just those files. Use this instead of feeding the
+/// matched root directly into `execute_plan` — the latter would delete the
+/// whole folder, ignoring the scope's glob. `dry_run = true` returns what
+/// would be touched without performing the action.
+#[tauri::command]
+async fn execute_scope(
+    state: State<'_, AppState>,
+    scaffold_id: String,
+    scope_id: String,
+    root_path: String,
+    dry_run: bool,
+    older_than_days: Option<u32>,
+    wxid_filter: Option<Vec<String>>,
+) -> Result<Vec<UndoEntry>, String> {
+    let (scaffold, scope) = {
+        let scaffolds = state.scaffolds.lock().unwrap();
+        let sc = scaffolds
+            .iter()
+            .find(|s| s.id == scaffold_id)
+            .cloned()
+            .ok_or_else(|| format!("scaffold not found: {scaffold_id}"))?;
+        let scope = sc
+            .scopes
+            .iter()
+            .find(|s| s.id == scope_id)
+            .cloned()
+            .ok_or_else(|| format!("scope not found: {scaffold_id}/{scope_id}"))?;
+        (sc, scope)
+    };
+
+    let pattern = expand_env(&scope.glob);
+    let glob = globset::GlobBuilder::new(&pattern)
+        .literal_separator(false)
+        .case_insensitive(true)
+        .build()
+        .map_err(|e| format!("scope `{}` has invalid glob: {e}", scope.id))?;
+    let mut b = globset::GlobSetBuilder::new();
+    b.add(glob);
+    let set = b.build().map_err(|e| e.to_string())?;
+
+    let root = PathBuf::from(&root_path);
+    let wxid_filter_owned = wxid_filter;
+    let matched: Vec<PathBuf> = tokio::task::spawn_blocking(move || {
+        let mut out = Vec::new();
+        for entry in jwalk::WalkDir::new(&root)
+            .skip_hidden(false)
+            .follow_links(false)
+            .into_iter()
+            .flatten()
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let p = entry.path();
+            let metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if !path_passes_wxid(&p, wxid_filter_owned.as_deref())
+                || !mtime_older_than(&metadata, older_than_days)
+            {
+                continue;
+            }
+            let s = p.to_string_lossy().replace('\\', "/");
+            if set.is_match(&s) {
+                out.push(p);
+            }
+        }
+        out
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if matched.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let action = match scope.mode {
+        diskwise_scaffold::Mode::Recycle => diskwise_executor::Action::Recycle,
+        diskwise_scaffold::Mode::Quarantine => diskwise_executor::Action::Quarantine,
+        diskwise_scaffold::Mode::Delete => diskwise_executor::Action::Delete,
+    };
+    let plan = Plan {
+        action,
+        paths: matched,
+        reason: format!("Diskwise scaffold {}/{} (Studio)", scaffold.id, scope.id),
+    };
+    execute(&plan, dry_run, &state.undo_log, &state.quarantine_root).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -225,6 +562,8 @@ pub fn run() {
             estimate_size,
             list_scaffolds,
             detect_scaffold,
+            scope_sizes,
+            execute_scope,
             advise,
             inspect_path,
             execute_plan,
