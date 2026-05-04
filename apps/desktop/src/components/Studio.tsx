@@ -4,6 +4,59 @@ import { useStore } from '../store';
 import { formatBytes } from '../format';
 import { api } from '../api';
 import type { Node, Scaffold } from '../types';
+import { ErrorBoundary } from './ErrorBoundary';
+
+const SCOPE_DAYS_STORAGE_KEY = 'diskwise.scopeDays';
+
+function readScopeDaysAll(): Record<string, Record<string, number>> {
+  try {
+    const raw = localStorage.getItem(SCOPE_DAYS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/// Per-scaffold `{ scopeId -> days }` persistence, sourced from localStorage.
+/// Only entries that DIFFER from the scaffold's own `prompt.default` are saved
+/// — when the user edits a value back to default, the entry is dropped to keep
+/// the store from accumulating noise. Wxid checkboxes and scope enable state
+/// are NOT persisted by design (per user decision).
+function useScopeDays(scaffoldId: string, defaults: Record<string, number>) {
+  const defaultsKey = JSON.stringify(defaults);
+  const [days, setDays] = useState<Record<string, number>>(() => {
+    const persisted = readScopeDaysAll()[scaffoldId] ?? {};
+    return { ...defaults, ...persisted };
+  });
+
+  useEffect(() => {
+    const persisted = readScopeDaysAll()[scaffoldId] ?? {};
+    setDays({ ...defaults, ...persisted });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scaffoldId, defaultsKey]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const all = readScopeDaysAll();
+      const overrides: Record<string, number> = {};
+      for (const [k, v] of Object.entries(days)) {
+        if (defaults[k] !== v) overrides[k] = v;
+      }
+      if (Object.keys(overrides).length === 0) {
+        delete all[scaffoldId];
+      } else {
+        all[scaffoldId] = overrides;
+      }
+      try { localStorage.setItem(SCOPE_DAYS_STORAGE_KEY, JSON.stringify(all)); } catch { /* quota / private mode */ }
+    }, 300);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scaffoldId, JSON.stringify(days), defaultsKey]);
+
+  return [days, setDays] as const;
+}
 
 interface ScopeSize {
   scope_id: string;
@@ -207,7 +260,9 @@ export function Studio() {
       <div className="studio-section-label">推荐 · 按占用排序</div>
       <div className="studio-grid">
         {featured.map((c) => (
-          <Card key={c.scaffold.id} card={c} expanded={expanded.has(c.scaffold.id)} onToggle={() => toggle(c.scaffold.id)} onAsk={() => requestStudio(c.scaffold.id)} />
+          <ErrorBoundary key={c.scaffold.id} fallbackLabel={`${c.scaffold.name} 卡片渲染失败`}>
+            <Card card={c} expanded={expanded.has(c.scaffold.id)} onToggle={() => toggle(c.scaffold.id)} onAsk={() => requestStudio(c.scaffold.id)} />
+          </ErrorBoundary>
         ))}
       </div>
 
@@ -216,7 +271,9 @@ export function Studio() {
           <div className="studio-section-label">更多</div>
           <div className="studio-grid">
             {others.map((c) => (
-              <Card key={c.scaffold.id} card={c} expanded={expanded.has(c.scaffold.id)} onToggle={() => toggle(c.scaffold.id)} onAsk={() => requestStudio(c.scaffold.id)} />
+              <ErrorBoundary key={c.scaffold.id} fallbackLabel={`${c.scaffold.name} 卡片渲染失败`}>
+                <Card card={c} expanded={expanded.has(c.scaffold.id)} onToggle={() => toggle(c.scaffold.id)} onAsk={() => requestStudio(c.scaffold.id)} />
+              </ErrorBoundary>
             ))}
           </div>
         </>
@@ -258,38 +315,84 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
   const [scopeMsg, setScopeMsg] = useState<string | null>(null);
   const [armedScope, setArmedScope] = useState<string | null>(null); // two-step click confirm
 
+  // Days-prompt scopes: pull each scope's `prompt.default` once and seed state.
+  // Subsequent edits live in `daysByScope`; we never mutate the scaffold itself.
+  // Persisted across sessions via localStorage (only non-default values are stored).
+  const defaultDays = useMemo<Record<string, number>>(() => {
+    const out: Record<string, number> = {};
+    for (const scope of sc.scopes ?? []) {
+      if (scope.prompt?.kind === 'days') out[scope.id] = scope.prompt.default;
+    }
+    return out;
+  }, [sc.scopes]);
+  const [daysByScope, setDaysByScope] = useScopeDays(sc.id, defaultDays);
+
+  // Enumerate per-account wxids from matches' direct children. WeChat 4.x lays
+  // accounts out as `xwechat_files/wxid_*/...`, 3.x as `WeChat Files/wxid_*/...`.
+  // We only consider direct children of matches (the matched root IS xwechat_files
+  // / WeChat Files itself), so `Backup/wxid_*/`, `all_users/`, and roaming dirs
+  // like `%APPDATA%/Tencent/xwechat` (no wxid layer) all get filtered out here.
+  const wxids = useMemo<string[]>(() => {
+    const out = new Set<string>();
+    for (const m of matches) {
+      for (const c of m.children ?? []) {
+        if (c.is_dir && c.name.startsWith('wxid_')) out.add(c.name);
+      }
+    }
+    return [...out].sort();
+  }, [matches]);
+  const [selectedWxids, setSelectedWxids] = useState<Set<string>>(() => new Set(wxids));
+  // Re-seed selection when the wxid set itself changes (e.g. after rescan).
+  // We only persist days (Step C); wxid checkboxes default to all-on each session.
+  useEffect(() => { setSelectedWxids(new Set(wxids)); }, [wxids.join('|')]);
+
   // Stable cache key for the matches array — useEffect needs a primitive so it
   // doesn't re-fire just because Studio re-rendered with a fresh array identity.
   const matchKey = matches.map((m) => m.path).sort().join('|');
+  // Same idea for daysByScope and wxid selection.
+  const daysKey = JSON.stringify(daysByScope);
+  const wxidFilterArg = wxids.length > 0 && selectedWxids.size < wxids.length
+    ? [...selectedWxids]
+    : undefined;
+  const wxidKey = wxidFilterArg ? wxidFilterArg.slice().sort().join('|') : '';
 
   // Load per-scope sizes once expanded. Fan-out across all matches and aggregate
   // by scope_id so all 16 wechat scopes can light up even when matches live in
   // separate roots (Documents\xwechat_files and AppData\Roaming\Tencent\xwechat).
+  // Debounced 300ms so dragging a number input doesn't fire one jwalk per keystroke.
   useEffect(() => {
     if (!expanded || matches.length === 0 || (sc.scopes ?? []).length === 0) return;
     let cancelled = false;
-    setScopeLoading(true);
-    Promise.all(matches.map((m) => api.scopeSizes(sc.id, m.path).catch(() => [] as ScopeSize[])))
-      .then((rowsList) => {
-        if (cancelled) return;
-        setScopeSizes(aggregateScopeSizes(rowsList));
-      })
-      .catch((e) => { if (!cancelled) setScopeMsg(`扫描 scope 大小失败：${String(e)}`); })
-      .finally(() => { if (!cancelled) setScopeLoading(false); });
-    return () => { cancelled = true; };
-  }, [expanded, matchKey, sc.id, (sc.scopes ?? []).length]);
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      setScopeLoading(true);
+      Promise.all(
+        matches.map((m) =>
+          api.scopeSizes(sc.id, m.path, daysByScope, wxidFilterArg).catch(() => [] as ScopeSize[]),
+        ),
+      )
+        .then((rowsList) => {
+          if (cancelled) return;
+          setScopeSizes(aggregateScopeSizes(rowsList));
+        })
+        .catch((e) => { if (!cancelled) setScopeMsg(`扫描 scope 大小失败：${String(e)}`); })
+        .finally(() => { if (!cancelled) setScopeLoading(false); });
+    }, 300);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [expanded, matchKey, sc.id, (sc.scopes ?? []).length, daysKey, wxidKey]);
 
   const runScope = async (scopeId: string, _scopeLabel: string, bytes: number) => {
     if (matches.length === 0) return;
     setArmedScope(null);
     setBusyScope(scopeId);
     setScopeMsg(null);
+    const days = daysByScope[scopeId];
     try {
       // Fan executeScope across every matched root. Roots whose globs don't
       // match anything return [] from the executor — safe to ignore.
       const entriesPerRoot = await Promise.all(
         matches.map((m) =>
-          api.executeScope(sc.id, scopeId, m.path, false).catch((e) => {
+          api.executeScope(sc.id, scopeId, m.path, false, days, wxidFilterArg).catch((e) => {
             // eslint-disable-next-line no-console
             console.warn(`[diskwise] executeScope ${sc.id}/${scopeId} on ${m.path} failed:`, e);
             return [];
@@ -301,7 +404,9 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
       setScopeMsg(`已清理 ${totalEntries} 个文件 · 约 ${formatBytes(bytes)}`);
       // Refresh sizes — same fan-out + aggregate.
       const rowsList = await Promise.all(
-        matches.map((m) => api.scopeSizes(sc.id, m.path).catch(() => [] as ScopeSize[])),
+        matches.map((m) =>
+          api.scopeSizes(sc.id, m.path, daysByScope, wxidFilterArg).catch(() => [] as ScopeSize[]),
+        ),
       );
       setScopeSizes(aggregateScopeSizes(rowsList));
     } catch (e) {
@@ -394,6 +499,37 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
                   {matches.length > 1 && <span className="muted small" style={{ marginLeft: 6 }}>（{matches.length} 处合计）</span>}
                 </span>
               </div>
+              {wxids.length > 0 && (
+                <div className="studio-detail-row">
+                  <span className="studio-detail-label">账号</span>
+                  <span style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', flex: 1, minWidth: 0 }}>
+                    {wxids.map((w) => {
+                      const checked = selectedWxids.has(w);
+                      return (
+                        <label
+                          key={w}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer', userSelect: 'none' }}
+                          title={`仅清理勾选账号的数据；跨账号目录（all_users/、漫游目录）不受影响`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              setSelectedWxids((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(w)) next.delete(w);
+                                else next.add(w);
+                                return next;
+                              });
+                            }}
+                          />
+                          <span className={checked ? '' : 'muted'}>{w}</span>
+                        </label>
+                      );
+                    })}
+                  </span>
+                </div>
+              )}
               {(sc.scopes ?? []).length > 0 && (
                 <>
                   <div className="studio-detail-label" style={{ marginTop: 6 }}>
@@ -425,6 +561,42 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
                                 ? <><Trash2 size={11} /> 再点确认</>
                                 : <><Trash2 size={11} /> 清理</>}
                           </button>
+                          {scope.prompt?.kind === 'days' && (
+                            <span
+                              className="muted"
+                              style={{ gridColumn: '1 / -1', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, marginTop: 1, paddingLeft: 2 }}
+                            >
+                              保留最近
+                              <input
+                                type="number"
+                                min={0}
+                                value={daysByScope[scope.id] ?? scope.prompt.default}
+                                onChange={(e) => {
+                                  const v = Number(e.target.value);
+                                  setDaysByScope((prev) => ({ ...prev, [scope.id]: Number.isFinite(v) && v >= 0 ? v : 0 }));
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                style={{ width: 56, padding: '1px 4px', fontSize: 10.5, textAlign: 'right' }}
+                                title={scope.prompt.label ?? '保留最近 N 天的文件，更老的才会被清'}
+                              />
+                              天
+                              {daysByScope[scope.id] !== undefined && daysByScope[scope.id] !== scope.prompt.default && (
+                                <button
+                                  type="button"
+                                  className="secondary"
+                                  onClick={() => setDaysByScope((prev) => {
+                                    const next = { ...prev };
+                                    delete next[scope.id];
+                                    return next;
+                                  })}
+                                  style={{ fontSize: 10, padding: '0 6px', marginLeft: 4 }}
+                                  title={`恢复默认 ${scope.prompt.kind === 'days' ? scope.prompt.default : ''} 天`}
+                                >
+                                  恢复默认
+                                </button>
+                              )}
+                            </span>
+                          )}
                         </li>
                       );
                     })}

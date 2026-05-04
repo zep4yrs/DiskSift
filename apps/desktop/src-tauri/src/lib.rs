@@ -1,5 +1,7 @@
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::{Duration, SystemTime};
 
 use diskwise_advisor::{advise as advise_provider, AdvisorRequest, AdvisorResponse, Provider};
 use diskwise_executor::{execute, Plan, UndoEntry};
@@ -257,6 +259,38 @@ struct ScopeSize {
 }
 
 /// Walk `root_path` and tally how many bytes / files each `[[scope]]` glob
+/// True when `path`'s first `wxid_*` segment is in `allow`. Paths with no
+/// `wxid_*` segment (e.g. `all_users/`, `%APPDATA%/Tencent/xwechat/log/`)
+/// always pass — those are cross-account or roaming-only data that aren't
+/// wxid-scoped. `None` or an empty allow-list disables the filter entirely.
+fn path_passes_wxid(path: &Path, wxid_filter: Option<&[String]>) -> bool {
+    let Some(allowed) = wxid_filter else { return true };
+    if allowed.is_empty() {
+        return true;
+    }
+    for component in path.components() {
+        if let Some(s) = component.as_os_str().to_str() {
+            if s.starts_with("wxid_") {
+                return allowed.iter().any(|w| w == s);
+            }
+        }
+    }
+    true
+}
+
+/// True when `metadata.modified()` is older than `now - days * 86400s`.
+/// `days = None` skips the filter. Files whose mtime can't be read pass —
+/// we don't silently drop data the user expects to see because of a transient
+/// OS error.
+fn mtime_older_than(metadata: &std::fs::Metadata, days: Option<u32>) -> bool {
+    let Some(d) = days else { return true };
+    let Ok(modified) = metadata.modified() else { return true };
+    let threshold = SystemTime::now()
+        .checked_sub(Duration::from_secs(d as u64 * 86_400))
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+    modified <= threshold
+}
+
 /// in `scaffold_id` would match. Used by the Studio panel to show per-scope
 /// occupancy alongside the generic "largest sub-items" view. Files matching
 /// multiple scopes are counted once per matching scope (the same physical
@@ -266,6 +300,8 @@ async fn scope_sizes(
     state: State<'_, AppState>,
     scaffold_id: String,
     root_path: String,
+    scope_days: Option<HashMap<String, u32>>,
+    wxid_filter: Option<Vec<String>>,
 ) -> Result<Vec<ScopeSize>, String> {
     let scaffold = state
         .scaffolds
@@ -290,6 +326,8 @@ async fn scope_sizes(
     }
 
     let root = PathBuf::from(&root_path);
+    let wxid_filter_owned = wxid_filter;
+    let scope_days_owned = scope_days;
     tokio::task::spawn_blocking(move || {
         let mut tally: Vec<(u64, u64)> = vec![(0, 0); sets.len()];
         for entry in jwalk::WalkDir::new(&root)
@@ -301,13 +339,28 @@ async fn scope_sizes(
             if !entry.file_type().is_file() {
                 continue;
             }
-            let path_str = entry.path().to_string_lossy().replace('\\', "/");
-            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-            for (i, (_, set)) in sets.iter().enumerate() {
-                if set.is_match(&path_str) {
-                    tally[i].0 = tally[i].0.saturating_add(size);
-                    tally[i].1 = tally[i].1.saturating_add(1);
+            let path = entry.path();
+            let metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if !path_passes_wxid(&path, wxid_filter_owned.as_deref()) {
+                continue;
+            }
+            let path_str = path.to_string_lossy().replace('\\', "/");
+            let size = metadata.len();
+            for (i, (scope_id, set)) in sets.iter().enumerate() {
+                if !set.is_match(&path_str) {
+                    continue;
                 }
+                let days = scope_days_owned
+                    .as_ref()
+                    .and_then(|m| m.get(scope_id).copied());
+                if !mtime_older_than(&metadata, days) {
+                    continue;
+                }
+                tally[i].0 = tally[i].0.saturating_add(size);
+                tally[i].1 = tally[i].1.saturating_add(1);
             }
         }
         sets.into_iter()
@@ -335,6 +388,8 @@ async fn execute_scope(
     scope_id: String,
     root_path: String,
     dry_run: bool,
+    older_than_days: Option<u32>,
+    wxid_filter: Option<Vec<String>>,
 ) -> Result<Vec<UndoEntry>, String> {
     let (scaffold, scope) = {
         let scaffolds = state.scaffolds.lock().unwrap();
@@ -363,6 +418,7 @@ async fn execute_scope(
     let set = b.build().map_err(|e| e.to_string())?;
 
     let root = PathBuf::from(&root_path);
+    let wxid_filter_owned = wxid_filter;
     let matched: Vec<PathBuf> = tokio::task::spawn_blocking(move || {
         let mut out = Vec::new();
         for entry in jwalk::WalkDir::new(&root)
@@ -375,6 +431,15 @@ async fn execute_scope(
                 continue;
             }
             let p = entry.path();
+            let metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if !path_passes_wxid(&p, wxid_filter_owned.as_deref())
+                || !mtime_older_than(&metadata, older_than_days)
+            {
+                continue;
+            }
             let s = p.to_string_lossy().replace('\\', "/");
             if set.is_match(&s) {
                 out.push(p);

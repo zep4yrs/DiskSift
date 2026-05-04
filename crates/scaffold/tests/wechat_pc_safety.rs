@@ -93,6 +93,7 @@ fn wechat_pc_globs_are_safe() {
         ("apm-records", "C:/Users/test/Documents/xwechat_files/wxid_aaa_bbb/apm_record/process_duration/x"),
         ("received-files", "C:/Users/test/Documents/xwechat_files/wxid_aaa_bbb/msg/file/2026-05/note.pdf"),
         ("received-videos", "C:/Users/test/Documents/xwechat_files/wxid_aaa_bbb/msg/video/2026-05/clip.mp4"),
+        ("received-images", "C:/Users/test/Documents/xwechat_files/wxid_aaa_bbb/msg/image/2026-05/photo.jpg"),
         ("voice-attachments", "C:/Users/test/Documents/xwechat_files/wxid_aaa_bbb/msg/attach/abc/voice.amr"),
         ("chat-backups", "C:/Users/test/Documents/xwechat_files/Backup/wxid_aaa/data.bak"),
         ("app-logs-crashes", "C:/Users/test/AppData/Roaming/Tencent/xwechat/log/player/x.log"),
@@ -130,7 +131,10 @@ fn wechat_pc_globs_are_safe() {
         "C:/Users/test/Documents/xwechat_files/all_users/config/global.cfg",
         // 4.x user-irreplaceable: favorites, moments, web-view K-V, editor
         "C:/Users/test/Documents/xwechat_files/wxid_aaa_bbb/business/favorite/fav.dat",
+        "C:/Users/test/Documents/xwechat_files/wxid_aaa_bbb/business/favorite/image/saved.png",
         "C:/Users/test/Documents/xwechat_files/wxid_aaa_bbb/business/sns/moments.db",
+        "C:/Users/test/Documents/xwechat_files/wxid_aaa_bbb/business/sns/image/moment_pic.png",
+        "C:/Users/test/Documents/xwechat_files/wxid_aaa_bbb/db_storage/image/index.db",
         "C:/Users/test/Documents/xwechat_files/wxid_aaa_bbb/business/xweb/mmkv/x.kv",
         "C:/Users/test/Documents/xwechat_files/wxid_aaa_bbb/business/xeditor/state.dat",
         "C:/Users/test/Documents/xwechat_files/wxid_aaa_bbb/business/migrate/x",

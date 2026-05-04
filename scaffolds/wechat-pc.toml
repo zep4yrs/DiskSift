@@ -88,6 +88,13 @@ mode   = "recycle"
 prompt = { kind = "days", default = 7, label = "Delete videos older than (days)" }
 
 [[scope]]
+id     = "received-images"
+label  = "Received images (msg/image)"
+glob   = "**/xwechat_files/wxid_*/msg/image/**"
+mode   = "recycle"
+prompt = { kind = "days", default = 30, label = "Delete received images older than (days)" }
+
+[[scope]]
 id     = "voice-attachments"
 label  = "Voice messages / attachments (msg/attach)"
 glob   = "**/xwechat_files/wxid_*/msg/attach/**"

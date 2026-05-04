@@ -20,17 +20,38 @@ export const api = {
   detectScaffold: (path: string) =>
     isTauri ? invoke<string | null>('detect_scaffold', { path }) : mocks.detectScaffold(path),
 
-  scopeSizes: (scaffoldId: string, rootPath: string) =>
+  scopeSizes: (
+    scaffoldId: string,
+    rootPath: string,
+    scopeDays?: Record<string, number>,
+    wxidFilter?: string[],
+  ) =>
     isTauri
       ? invoke<{ scope_id: string; bytes: number; file_count: number }[]>('scope_sizes', {
           scaffoldId,
           rootPath,
+          scopeDays: scopeDays ?? null,
+          wxidFilter: wxidFilter ?? null,
         })
       : mocks.scopeSizes(scaffoldId, rootPath),
 
-  executeScope: (scaffoldId: string, scopeId: string, rootPath: string, dryRun: boolean) =>
+  executeScope: (
+    scaffoldId: string,
+    scopeId: string,
+    rootPath: string,
+    dryRun: boolean,
+    olderThanDays?: number,
+    wxidFilter?: string[],
+  ) =>
     isTauri
-      ? invoke<UndoEntry[]>('execute_scope', { scaffoldId, scopeId, rootPath, dryRun })
+      ? invoke<UndoEntry[]>('execute_scope', {
+          scaffoldId,
+          scopeId,
+          rootPath,
+          dryRun,
+          olderThanDays: olderThanDays ?? null,
+          wxidFilter: wxidFilter ?? null,
+        })
       : Promise.resolve([] as UndoEntry[]),
 
   advise: (req: AdvisorRequest) =>
