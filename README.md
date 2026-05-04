@@ -2,7 +2,7 @@
 
 <img src="apps/desktop/src-tauri/icons/128x128.png" alt="Pinkbin" width="96" height="96">
 
-# Pinkbin · Diskwise
+# Pinkbin
 
 **别再为不认识的大文件夹截图问 ChatGPT 了。**
 
