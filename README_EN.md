@@ -2,7 +2,7 @@
 
 <img src="apps/desktop/src-tauri/icons/128x128.png" alt="Pinkbin" width="96" height="96">
 
-# Pinkbin · Diskwise
+# Pinkbin
 
 **Scan. Understand. Clean — one folder at a time.**
 
