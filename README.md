@@ -167,4 +167,4 @@ cargo test --workspace    # 全工作空间测试
 
 ## License
 
-[MIT](LICENSE) · 欢迎 fork、商用、闭源衍生。但 **scaffold safety test 是社会契约**——你 fork 后改 scaffold，请保持 safety test 同步更新。删红线断言换"看起来更激进的清理"是我们专门防的失败模式。
+[MIT](LICENSE) · 欢迎 fork、商用、闭源衍生。改 scaffold 时记得同步改它的 safety test——红线断言是防止误删用户数据的最后一道闸。

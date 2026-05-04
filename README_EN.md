@@ -168,4 +168,4 @@ Requires **Node 20+ · pnpm 9+ · Rust stable · Tauri prerequisites** (on Windo
 
 ## License
 
-[MIT](LICENSE) · fork it, sell it, fork it closed-source — go ahead. But **the scaffold safety tests are a social contract** — if you fork and modify a scaffold, please keep the safety tests in sync. Removing red-line assertions in exchange for "more aggressive cleanup" is the failure mode we're explicitly defending against.
+[MIT](LICENSE) · fork it, sell it, fork it closed-source — go ahead. If you modify a scaffold, please keep its safety test in sync — the red-line assertions are the last line of defense against accidentally deleting user data.
