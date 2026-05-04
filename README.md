@@ -1,70 +1,166 @@
-<sub>🌐 <b>中文</b> · <a href="README_EN.md">English</a></sub>
-
 <div align="center">
+
+<img src="apps/desktop/src-tauri/icons/128x128.png" alt="Pinkbin" width="96" height="96">
 
 # Pinkbin · Diskwise
 
-> *扫盘 → 看到陌生大文件夹 → 不用再截图问 ChatGPT*
+**别再为不认识的大文件夹截图问 ChatGPT 了。**
+
+开源磁盘清理工具 · WizTree 速度的扫盘 + AI 帮你解释每个文件夹是什么 · 能不能删 · 怎么删。
 
 [![License](https://img.shields.io/badge/License-MIT-ff69b4.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB.svg)](https://tauri.app)
-[![Platform](https://img.shields.io/badge/Win%20%C2%B7%20macOS%20%C2%B7%20Linux-lightgrey.svg)](#安装)
+[![Platform](https://img.shields.io/badge/Win%20·%20macOS%20·%20Linux-lightgrey.svg)](#下载)
 
-WizTree 速度的扫描器 + 38 份内置清理脚本（微信 3.x/4.x · Steam · Chrome · Docker · conda · …）+ 不认识的文件夹甩给 AI 解释。删除走系统回收站，不读文件内容。
+[下载](#下载) · [截图](#看效果) · [功能](#三件事) · [怎么用](#怎么用) · [架构](#架构) · [路线图](#路线图) · [贡献](#怎么贡献) · [致谢](#致谢)
+
+**简体中文 | [English](README_EN.md)**
 
 </div>
 
 ---
 
-## Demo
+## 下载
+
+<p align="center">
+  <a href="https://github.com/cccyd2003-qwq/pinkbin/releases/latest"><img src="https://img.shields.io/badge/⬇_下载最新版_(Windows)-ff69b4?style=for-the-badge&logo=windows&logoColor=white" height="42"></a>
+</p>
+
+| 平台 | 文件 | 备注 |
+|---|---|---|
+| **Windows 10/11** | [`Diskwise_x.x.x_x64-setup.exe`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest)（NSIS）<br>[`Diskwise_x.x.x_x64_en-US.msi`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest)（MSI） | 首次启动 SmartScreen 拦截：点"更多信息"→"仍要运行"。NTFS MFT 直读需要管理员权限，安装包带 manifest 自动 UAC |
+| **macOS** | [`Diskwise_x.x.x_universal.dmg`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) | 首次需在系统设置→隐私与安全里允许运行 |
+| **Linux** | [`Diskwise_x.x.x_amd64.AppImage`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) / `.deb` | AppImage `chmod +x` 后双击；fallback 到跨平台 walker，比 Windows 慢 |
+
+---
+
+## 看效果
 
 <p align="center">
   <img src="docs/screenshots/hero.png" alt="Pinkbin 主界面" width="100%">
 </p>
 
-## 安装
+<p align="center"><sub>主界面 · 左侧 WizTree 风格树状视图 · 中间 AI 拖拽分析面板 · 右侧 Studio 清理脚本卡片</sub></p>
 
-去 [**Releases**](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) 下对应平台的安装包。Windows 首次启动 SmartScreen 拦截：点"更多信息"→"仍要运行"。
+---
 
-打开 → 右上角 ⚙ 配 AI（推荐本地 [Ollama](https://ollama.com/download)，免 key）→ 选磁盘 → 扫描 → 点 Studio 卡片审阅。
+## 三件事
 
-## 它能做什么
+Pinkbin 只做三件事：
 
-- **秒扫磁盘** —— Windows 直读 NTFS MFT，整盘 C: 2–5 秒
-- **38 份清理脚本** —— 已知 App（微信 / Steam / Docker / conda / …）显示专属面板，每个 scope 单独清，默认进回收站
-- **AI 解释陌生文件夹** —— BYOK（Anthropic / OpenAI / Gemini / 本地 Ollama），只发目录元数据
-- **微信 3.x + 4.x 双兼容** —— 自动检测版本，4.x 13 桶 / 3.x 9 桶
-- **撤销日志 + 7 天隔离** —— `~/.diskwise/undo.jsonl`，可恢复
-- **红线由集成测试守护** —— 改 glob 不小心碰到聊天 DB / 收藏，CI 红，PR 进不去
+### 1. 把磁盘空间分配看清楚
 
-## 想加新 App 支持
+直读 Windows NTFS Master File Table（jwalk 跨平台 fallback），整盘 C: **2–5 秒**扫完，跟 [WizTree](https://diskanalyzer.com) 同档。出彩色 treemap + 单行 22px 高的树视图——一眼看到 `D:\xwechat_files` 占了 80GB，`C:\Users\<你>\AppData\Local\Docker` 占了 50GB。
 
-写一份 `scaffolds/<id>.toml` + 一份 `crates/scaffold/tests/<id>_safety.rs`，提 PR。详见 [`.claude/commands/add-scaffold.md`](.claude/commands/add-scaffold.md)。Claude Code 用户可直接 `/add-scaffold <id>`。
+### 2. 拖拽到中间 AI 分析"这个文件夹是什么"
 
-## 开发
+不认识的文件夹？把它从左边树或右边路径**拖进中间聊天框**，AI 解释这是什么、能不能删、删了会丢什么。BYOK——你提供 Anthropic / OpenAI / Gemini 的 Key，或本地跑 Ollama 完全免费。
+
+**Pinkbin 只发目录元数据**给 AI（路径名、大小、文件数、扩展名占比、最多 20 条样本路径）—— **永远不读文件内容**。
+
+### 3. 已知应用走专属清理脚本
+
+某些应用大众化、占空间大、清理边界清楚——给它写一份**清理脚本**（一份 TOML + 一份 Rust 集成测试），用户在 Studio 卡片里直接按 scope 单独清。**目前两个**：
+
+- **微信 PC 端**（3.x + 4.x 双兼容）—— 22 个 scope，清缓存/接收媒体/聊天备份，永不动聊天 DB / 收藏 / 朋友圈 / `CustomEmotion`
+- **Conda 环境**—— 整目录回收 stale env（`conda-meta/history` mtime > 90 天），base env 灰显不可勾
+
+**未来会做的**：Steam shadercache · Chrome 缓存 · Docker buildx · HuggingFace 模型 · npm/pnpm/pip cache · OBS 录像 · IDE 索引——大众应用、占空间大、清理边界清楚的，逐个走 14-phase 工作流加进来（含红线集成测试守护）。**为什么砍掉之前那 36 个 legacy scaffold**：因为没人验过 glob 边界，存在误删风险（典型例子：旧版 `node-modules` 把 Cursor / VSCode / 游戏内嵌的 node_modules 也命中了）。
+
+所有删除默认进**系统回收站**，可恢复。每一次操作写 `~/.diskwise/undo.jsonl`，可选 7 天 quarantine。
+
+---
+
+## 怎么用
+
+1. **下载安装包**[（上面）](#下载)，双击安装，桌面出现 Diskwise 图标
+2. **打开 → 右上角 ⚙ 配 AI**——推荐先用本地 [Ollama](https://ollama.com/download)（免费免 key），或者填 Anthropic / OpenAI / Gemini 的 API Key
+3. **顶部"选择磁盘或文件夹"→ 点扫描**——2-5 秒后看到 treemap + 树
+4. **遇到陌生大文件夹**——拖到中间聊天框问 AI；或者右侧 Studio 已经认出了的（微信、conda）直接看清理面板
+5. **删除前**：默认进回收站；高风险操作（chat-backups 等）会两步确认；勾选 dry-run 可以先看要删什么
+
+---
+
+## 架构
+
+```
+┌────────────────────┐     ┌─────────────────────┐
+│   React + Tauri    │────>│  Rust workspace     │
+│   (前端 UI)         │<────│  (4 crates)         │
+└────────────────────┘     └──────────┬──────────┘
+                                      │
+        ┌─────────────────┬───────────┼──────────────┬──────────────┐
+        │                 │           │              │              │
+   ┌────▼────┐    ┌──────▼─────┐  ┌──▼──────┐  ┌────▼────┐  ┌──────▼──────┐
+   │ scanner │    │  scaffold  │  │executor │  │advisor  │  │scaffold-lint│
+   │ NTFS MFT│    │ TOML 加载   │  │Recycle/ │  │AI 顾问   │  │ CI 校验     │
+   │ + jwalk │    │ + globset  │  │Quarant. │  │4 协议   │  │              │
+   └─────────┘    └────────────┘  └─────────┘  └─────────┘  └─────────────┘
+```
+
+| 层 | 技术栈 |
+|---|---|
+| 前端 | React 18 + TypeScript + Tauri 2 + react-markdown |
+| 后端 | Rust workspace（4 crates）+ Tauri IPC |
+| 扫描器 | Windows: NTFS MFT 直读（`ntfs` crate）/ 跨平台: `jwalk` |
+| AI | BYOK · Anthropic · OpenAI · Gemini · Ollama 四协议 |
+| 数据 | 用户本机 `~/.diskwise/`（undo.jsonl + quarantine/）· 不上云 |
+
+---
+
+## 路线图
+
+- [x] **v0.1** —— 基础扫描 + treemap + 树视图 + 拖拽 AI 分析
+- [x] **v0.2** —— Windows NTFS MFT 直读（88× 提速）+ WeChat 4.x 重写 + Conda env 卡片 + 砍 36 个未验证 scaffold
+- [ ] **v0.3** —— 撤销 UI（消费 `undo.jsonl`）+ zoomable treemap 下钻 + Markdown 渲染美化（已上）
+- [ ] **v0.4** —— **更多内置清理脚本**：Steam · Chrome · Docker · HuggingFace · npm/pnpm/pip · OBS · IDE 索引……每份配 safety test 守红线
+- [ ] **v0.5** —— macOS / Linux native fast scanner（APFS Spotlight / btrfs subvol）
+- [ ] **v0.6** —— Scaffold marketplace（用户提交、社区验证、版本控制）
+
+---
+
+## 怎么贡献
+
+最有价值的贡献是**写新的清理脚本**。每加一个 App 支持就是一份 PR：
+
+1. 在 [`docs/scaffold-requirements/`](docs/scaffold-requirements/) 写需求文档（红线清单：聊天 DB？账号 key？用户收藏？）
+2. 在你机器上跑这个 App，用 `Glob` 列出真实目录结构，找出 cache vs 用户数据的边界
+3. 抄 [`scaffolds/_templates/scaffold.toml`](scaffolds/_templates/scaffold.toml) 写 TOML
+4. 抄 [`crates/scaffold/tests/_templates/scaffold_safety.rs`](crates/scaffold/tests/_templates/scaffold_safety.rs) 写 safety test（**正向断言 + 红线断言**，CI 必跑，没测试不收）
+5. `pnpm tauri dev` 目视确认卡片渲染
+6. 提 PR，模板会带 14 项 checklist
+
+[Claude Code](https://claude.com/claude-code) 用户可以直接在仓库根目录敲 `/add-scaffold <id>`，一键启动 14-phase 工作流。
+
+详细流程：[`.claude/commands/add-scaffold.md`](.claude/commands/add-scaffold.md)。
+
+### 开发
 
 ```bash
 git clone https://github.com/cccyd2003-qwq/pinkbin.git && cd pinkbin
 pnpm install
-pnpm tauri dev          # 桌面 app
-pnpm -C apps/desktop dev  # 仅前端，浏览器调试
-cargo test --workspace  # 全工作空间测试
+pnpm tauri dev            # 桌面 app（首次会编译 Rust 依赖，5-15 分钟）
+pnpm -C apps/desktop dev  # 仅前端，浏览器调试，mock 后端
+cargo test --workspace    # 全工作空间测试
 ```
 
-## FAQ
+需要 **Node 20+ · pnpm 9+ · Rust stable · Tauri 前置依赖**（Windows 上是 VS Build Tools 2022 + WebView2）。
 
-**微信 3.x 能用吗？** 能。自动检测版本，3.x 9 个 scope（FileStorage 下 Image/Video/File/Voice2/MsgAttach/Stickers/Temp/Cache + 漫游 Log/Update）。聊天记录、收藏、`CustomEmotion`（"我的表情"）由集成测试守护，永不命中。
-
-**AI Key 会被上传吗？** 不会。Pinkbin 没有服务器。Key 仅存本机，请求直接从你电脑发到你配的 AI 服务商。文件内容**永不**上传。
-
-**删错了能恢复吗？** 默认进系统回收站，从回收站恢复。隔离模式放 `~/.diskwise/quarantine/` 7 天。
-
-**Windows SmartScreen 拦截？** 没买 EV 签名（¥2000+/年）。点"更多信息"→"仍要运行"，或自己 `cargo tauri build`。
+---
 
 ## 致谢
 
-[WizTree](https://diskanalyzer.com)（速度标杆）· [Tauri](https://tauri.app) · [CleanMyWechat](https://github.com/blackboxo/CleanMyWechat)（微信 3.x 范本）· README 风格参考 [alchaincyf/huashu-design](https://github.com/alchaincyf/huashu-design) · [@jtlyu](https://github.com/jtlyu)（性能优化 + WeChat 4.x 重写）
+- **灵感来源**
+  - [WizTree](https://diskanalyzer.com) —— NTFS MFT 直读思路与速度标杆
+  - [SpaceSniffer](http://www.uderzo.it/main_products/space_sniffer/) —— treemap 可视化先驱
+  - [CleanMyWechat](https://github.com/blackboxo/CleanMyWechat) —— 微信清理脚本范本，messaging 需求文档参考它
+  - [SquirrelDisk](https://github.com/adileo/squirreldisk) —— Tauri + Rust 实现参考
+- **依赖巨人的肩膀**：[Tauri](https://tauri.app) · [`d3-hierarchy`](https://github.com/d3/d3-hierarchy) · [`jwalk`](https://github.com/jessegrosjean/jwalk) · [`ntfs`](https://github.com/ColinFinck/ntfs) · [`globset`](https://github.com/BurntSushi/ripgrep/tree/master/crates/globset) · [`trash-rs`](https://github.com/Byron/trash-rs) · [react-markdown](https://github.com/remarkjs/react-markdown)
+- **协作**：[Claude Code](https://claude.com/claude-code) · [@jtlyu](https://github.com/jtlyu)（性能优化 + WeChat 4.x 重写 + scaffold harness 工作流基建）
+- **README 风格**参考 [multica-ai/multica](https://github.com/multica-ai/multica)（中英可切换）和 [blackboxo/CleanMyWechat](https://github.com/blackboxo/CleanMyWechat)（朴素直白）
+
+---
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) · 欢迎 fork、商用、闭源衍生。但 **scaffold safety test 是社会契约**——你 fork 后改 scaffold，请保持 safety test 同步更新。删红线断言换"看起来更激进的清理"是我们专门防的失败模式。
