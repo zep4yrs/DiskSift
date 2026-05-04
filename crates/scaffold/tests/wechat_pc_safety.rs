@@ -103,7 +103,17 @@ fn wechat_pc_globs_are_safe() {
         ("image-cache-3x", "C:/Users/test/Documents/WeChat Files/wxid_legacy/FileStorage/Image/2026-05/img.dat"),
         ("video-cache-3x", "C:/Users/test/Documents/WeChat Files/wxid_legacy/FileStorage/Video/clip.mp4"),
         ("file-cache-3x", "C:/Users/test/Documents/WeChat Files/wxid_legacy/FileStorage/File/note.pdf"),
+        ("voice-cache-3x", "C:/Users/test/Documents/WeChat Files/wxid_legacy/FileStorage/Voice2/2026-05/v.amr"),
+        ("voice-cache-3x", "C:/Users/test/Documents/WeChat Files/wxid_legacy/FileStorage/Voice/old.amr"),
+        ("msg-attach-3x", "C:/Users/test/Documents/WeChat Files/wxid_legacy/FileStorage/MsgAttach/abc/Image/Thumb_x.dat"),
+        ("sticker-cache-3x", "C:/Users/test/Documents/WeChat Files/wxid_legacy/FileStorage/Stickers/pack/x.png"),
+        ("sticker-cache-3x", "C:/Users/test/Documents/WeChat Files/wxid_legacy/FileStorage/Emotion/x.gif"),
+        ("temp-files-3x", "C:/Users/test/Documents/WeChat Files/wxid_legacy/FileStorage/Temp/dl_part.tmp"),
         ("cache-misc-3x", "C:/Users/test/Documents/WeChat Files/wxid_legacy/FileStorage/Cache/x"),
+        ("app-logs-crashes-3x", "C:/Users/test/AppData/Roaming/Tencent/WeChat/Log/2026/x.log"),
+        ("app-logs-crashes-3x", "C:/Users/test/AppData/Roaming/Tencent/WeChat/Logs/x.log"),
+        ("app-logs-crashes-3x", "C:/Users/test/AppData/Roaming/Tencent/WeChat/CrashReport/x.dmp"),
+        ("app-update-leftover-3x", "C:/Users/test/AppData/Roaming/Tencent/WeChat/Update/setup.exe"),
     ];
 
     for (expected_id, p) in positives {
@@ -155,6 +165,15 @@ fn wechat_pc_globs_are_safe() {
         "C:/Users/test/Documents/WeChat Files/wxid_legacy/Accounts/x.dat",
         "C:/Users/test/Documents/WeChat Files/wxid_legacy/FileStorage/Fav/x",
         "C:/Users/test/Documents/WeChat Files/wxid_legacy/Favorites/x",
+        // 3.x soft red line: CustomEmotion is the user's saved sticker panel,
+        // not a system cache. sticker-cache-3x must NOT touch this.
+        "C:/Users/test/Documents/WeChat Files/wxid_legacy/FileStorage/CustomEmotion/123abc.gif",
+        "C:/Users/test/Documents/WeChat Files/wxid_legacy/FileStorage/CustomEmotion/sub/x.png",
+        // 3.x roaming red lines: account/login state, plugin runtime
+        "C:/Users/test/AppData/Roaming/Tencent/WeChat/AccInfo.dat",
+        "C:/Users/test/AppData/Roaming/Tencent/WeChat/All Users/x",
+        "C:/Users/test/AppData/Roaming/Tencent/WeChat/login/auth.dat",
+        "C:/Users/test/AppData/Roaming/Tencent/WeChat/XPlugin/plugin.dll",
     ];
 
     let mut violations = Vec::new();

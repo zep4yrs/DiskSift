@@ -155,6 +155,9 @@ prompt   = { kind = "none" }
 # ============================================================================
 # WeChat 3.x legacy scopes (WeChat.exe, WeChat Files/FileStorage/...)
 # Empty on 4.x machines; UI hides the whole group when 4.x is detected.
+# CustomEmotion 是用户主动保存的"我的表情"，属软红线，不在任何 scope 内。
+# Favorite / Favorites 是用户收藏，硬红线，不在任何 scope 内。
+# Msg / MultiMsg 是聊天 DB，硬红线，不在任何 scope 内。
 # ============================================================================
 
 [[scope]]
@@ -185,9 +188,64 @@ variant  = "3.x"
 prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
 
 [[scope]]
+id       = "voice-cache-3x"
+label    = "语音消息"
+glob     = "**/WeChat Files/wxid_*/FileStorage/{Voice2,Voice}/**"
+mode     = "recycle"
+category = "media"
+variant  = "3.x"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
+
+[[scope]]
+id       = "msg-attach-3x"
+label    = "消息缩略图缓存"
+glob     = "**/WeChat Files/wxid_*/FileStorage/MsgAttach/**"
+mode     = "recycle"
+category = "cache"
+variant  = "3.x"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
+
+[[scope]]
+id       = "sticker-cache-3x"
+label    = "表情包缓存"
+glob     = "**/WeChat Files/wxid_*/FileStorage/{Stickers,Emotion}/**"
+mode     = "recycle"
+category = "cache"
+variant  = "3.x"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
+
+[[scope]]
+id       = "temp-files-3x"
+label    = "临时文件"
+glob     = "**/WeChat Files/wxid_*/FileStorage/Temp/**"
+mode     = "recycle"
+category = "cache"
+variant  = "3.x"
+prompt   = { kind = "none" }
+
+[[scope]]
 id       = "cache-misc-3x"
 label    = "杂项缓存"
 glob     = "**/WeChat Files/wxid_*/FileStorage/Cache/**"
+mode     = "recycle"
+category = "cache"
+variant  = "3.x"
+prompt   = { kind = "none" }
+
+# 3.x 漫游目录（%APPDATA%/Tencent/WeChat/）
+[[scope]]
+id       = "app-logs-crashes-3x"
+label    = "应用日志与崩溃信息"
+glob     = "%APPDATA%/Tencent/WeChat/{Log,Logs,CrashReport}/**"
+mode     = "recycle"
+category = "cache"
+variant  = "3.x"
+prompt   = { kind = "none" }
+
+[[scope]]
+id       = "app-update-leftover-3x"
+label    = "安装包 / 更新缓存"
+glob     = "%APPDATA%/Tencent/WeChat/Update/**"
 mode     = "recycle"
 category = "cache"
 variant  = "3.x"
