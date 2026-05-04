@@ -204,26 +204,47 @@ pub struct CompiledScaffold {
     must_have_child: Vec<String>,
 }
 
-/// Compile a list of scaffolds to the matching-friendly form. Bad globs are
-/// logged and skipped (preserving `detect_for`'s permissive behavior — a single
-/// broken pattern doesn't disable the whole scaffold).
+/// Compile a list of scaffolds to the matching-friendly form. Each `detect`
+/// pattern is compiled individually and added to the union GlobSet only if
+/// well-formed — matching `detect_for`'s "skip the bad one, keep the rest"
+/// behavior. A single broken pattern must not disable the whole scaffold.
 pub fn compile_all(scaffolds: &[Scaffold]) -> Vec<CompiledScaffold> {
     scaffolds
         .iter()
         .map(|s| {
-            let patterns: Vec<String> = s
-                .detect
-                .iter()
-                .map(|d| norm(&expand_env(d)).to_lowercase())
-                .collect();
-            let pattern_refs: Vec<&str> = patterns.iter().map(String::as_str).collect();
-            let detect_globs = match make_globset(&pattern_refs) {
-                Ok(set) => set,
-                Err(e) => {
-                    tracing::warn!("scaffold {}: globset compile failed ({}); falling back to empty set", s.id, e);
-                    globset::GlobSetBuilder::new().build().expect("empty globset")
+            let mut builder = globset::GlobSetBuilder::new();
+            let mut accepted: Vec<String> = Vec::with_capacity(s.detect.len());
+            for d in &s.detect {
+                let pat = norm(&expand_env(d)).to_lowercase();
+                match globset::GlobBuilder::new(&pat)
+                    .literal_separator(false)
+                    .case_insensitive(true)
+                    .build()
+                {
+                    Ok(g) => {
+                        builder.add(g);
+                        accepted.push(pat);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "scaffold {}: skipping bad detect pattern {:?}: {}",
+                            s.id,
+                            d,
+                            e
+                        );
+                    }
                 }
-            };
+            }
+            let detect_globs = builder
+                .build()
+                .unwrap_or_else(|_| globset::GlobSetBuilder::new().build().expect("empty globset"));
+            tracing::debug!(
+                "scaffold {}: compiled detect={:?} name_contains_lc={:?} must_have_child={:?}",
+                s.id,
+                accepted,
+                s.matcher.name_contains.iter().map(|n| n.to_lowercase()).collect::<Vec<_>>(),
+                s.matcher.must_have_child,
+            );
             CompiledScaffold {
                 id: s.id.clone(),
                 detect_globs,
@@ -283,5 +304,135 @@ mode = "recycle"
         let s: Scaffold = toml::from_str(toml).unwrap();
         assert_eq!(s.id, "demo");
         assert_eq!(s.scopes.len(), 1);
+    }
+
+    #[test]
+    fn detect_compiled_matches_simple_recursive_glob() {
+        // Reproduce the wechat-pc detect surface as minimally as possible.
+        let toml = r#"
+id = "wechat-pc"
+name = "WeChat (PC)"
+risk = "low"
+disclaimer = "test"
+detect = [
+  "**/xwechat_files",
+  "**/WeChat Files",
+]
+[match]
+name_contains = ["xwechat_files", "WeChat Files", "xwechat", "WeChat"]
+"#;
+        let s: Scaffold = toml::from_str(toml).unwrap();
+        let compiled = compile_all(&[s]);
+        let path = Path::new("C:/Users/lvjin/Documents/xwechat_files");
+        assert_eq!(
+            detect_compiled(&compiled, path),
+            Some("wechat-pc".to_string()),
+            "detect_compiled missed `**/xwechat_files` against {:?}",
+            path,
+        );
+    }
+
+    #[test]
+    fn detect_compiled_must_isolate_bad_patterns_like_detect_for() {
+        // If any single detect pattern fails to compile, compile_all should
+        // not nuke the whole scaffold's detect surface — that would diverge
+        // from detect_for, which silently skips each bad pattern individually.
+        // This guards against regressions where one quirky pattern (e.g. a
+        // shell-expansion result containing `[` or `{` in a real user env)
+        // poisons every other pattern in the same scaffold.
+        let toml = r#"
+id = "wechat-pc"
+name = "WeChat (PC)"
+risk = "low"
+disclaimer = "test"
+detect = [
+  "[invalid-glob",
+  "**/xwechat_files",
+]
+[match]
+name_contains = []
+"#;
+        let s: Scaffold = toml::from_str(toml).unwrap();
+        let scaffolds = vec![s];
+        let compiled = compile_all(&scaffolds);
+        let path = Path::new("C:/Users/lvjin/Documents/xwechat_files");
+        assert_eq!(
+            detect_compiled(&compiled, path),
+            detect_for(&scaffolds, path),
+            "compile_all dropped good pattern when sibling pattern is bad",
+        );
+        assert_eq!(
+            detect_compiled(&compiled, path).as_deref(),
+            Some("wechat-pc"),
+        );
+    }
+
+    #[test]
+    fn detect_compiled_matches_actual_wechat_toml() {
+        // Load the real scaffolds/wechat-pc.toml (same path as production
+        // load_dir) and confirm detect_compiled tags a typical 4.x data dir.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scaffolds/wechat-pc.toml");
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {:?} failed: {}", path, e));
+        let s: Scaffold = toml::from_str(&text).expect("wechat-pc.toml parse");
+        eprintln!(
+            "wechat-pc loaded: detect={:?}, name_contains={:?}, must_have_child={:?}",
+            s.detect, s.matcher.name_contains, s.matcher.must_have_child,
+        );
+        let compiled = compile_all(&[s.clone()]);
+
+        for p in [
+            "C:/Users/lvjin/Documents/xwechat_files",
+            "C:\\Users\\lvjin\\Documents\\xwechat_files",
+            "/some/path/xwechat_files",
+        ] {
+            let path = Path::new(p);
+            let got = detect_compiled(&compiled, path);
+            let oracle = detect_for(&[s.clone()], path);
+            eprintln!("path={:?} compiled={:?} oracle={:?}", p, got, oracle);
+            assert_eq!(got, oracle, "divergence at {:?}", p);
+            assert_eq!(got.as_deref(), Some("wechat-pc"), "missed at {:?}", p);
+        }
+    }
+
+    #[test]
+    fn detect_compiled_equivalent_to_detect_for_on_wechat_pc() {
+        // Full wechat-pc detect/match block, including %VAR% expansion
+        // patterns, to verify compile_all isn't silently dropping any pattern.
+        let toml = r#"
+id = "wechat-pc"
+name = "WeChat (PC)"
+risk = "low"
+disclaimer = "test"
+detect = [
+  "%USERPROFILE%/Documents/xwechat_files",
+  "%USERPROFILE%/Documents/WeChat Files",
+  "%APPDATA%/Tencent/xwechat",
+  "%APPDATA%/Tencent/WeChat",
+  "**/xwechat_files",
+  "**/WeChat Files",
+]
+[match]
+name_contains = ["xwechat_files", "WeChat Files", "xwechat", "WeChat"]
+"#;
+        let s: Scaffold = toml::from_str(toml).unwrap();
+        let scaffolds = vec![s];
+        let compiled = compile_all(&scaffolds);
+
+        for path_str in [
+            "C:/Users/lvjin/Documents/xwechat_files",
+            "C:\\Users\\lvjin\\Documents\\xwechat_files",
+            "/home/foo/Documents/xwechat_files",
+            "C:/Users/lvjin/Documents/WeChat Files",
+        ] {
+            let path = Path::new(path_str);
+            assert_eq!(
+                detect_compiled(&compiled, path),
+                detect_for(&scaffolds, path),
+                "compile_all vs detect_for diverged on {:?}",
+                path_str,
+            );
+        }
     }
 }
