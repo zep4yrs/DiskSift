@@ -32,129 +32,163 @@ must_have_child = ["all_users"]
 # ============================================================================
 
 [[scope]]
-id     = "chat-media-cache"
-label  = "Chat media cache (cache/YYYY-MM/Message)"
-glob   = "**/xwechat_files/wxid_*/cache/*/Message/**"
-mode   = "recycle"
-prompt = { kind = "days", default = 30, label = "Delete cached chat media older than (days)" }
+id       = "chat-media-cache"
+label    = "聊天媒体缓存"
+glob     = "**/xwechat_files/wxid_*/cache/*/Message/**"
+mode     = "recycle"
+category = "cache"
+variant  = "4.x"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
 
 [[scope]]
-id     = "web-resource-cache"
-label  = "Web / mini-program resource cache"
-glob   = "**/xwechat_files/wxid_*/cache/*/{HttpResource,WeAppIcon}/**"
-mode   = "recycle"
-prompt = { kind = "none" }
+id       = "web-resource-cache"
+label    = "网页 / 小程序缓存"
+glob     = "**/xwechat_files/wxid_*/cache/*/{HttpResource,WeAppIcon}/**"
+mode     = "recycle"
+category = "cache"
+variant  = "4.x"
+prompt   = { kind = "none" }
 
 [[scope]]
-id     = "sticker-cache"
-label  = "Sticker / emoticon cache"
-glob   = "**/xwechat_files/wxid_*/{cache/*/Emoticon,business/emoticon}/**"
-mode   = "recycle"
-prompt = { kind = "days", default = 30, label = "Delete sticker cache older than (days)" }
+id       = "sticker-cache"
+label    = "表情缓存"
+glob     = "**/xwechat_files/wxid_*/{cache/*/Emoticon,business/emoticon}/**"
+mode     = "recycle"
+category = "cache"
+variant  = "4.x"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
 
 [[scope]]
-id     = "temp-files"
-label  = "Temp files (session / input / image)"
-glob   = "**/xwechat_files/wxid_*/temp/**"
-mode   = "recycle"
-prompt = { kind = "none" }
+id       = "temp-files"
+label    = "临时文件"
+glob     = "**/xwechat_files/wxid_*/temp/**"
+mode     = "recycle"
+category = "cache"
+variant  = "4.x"
+prompt   = { kind = "none" }
 
 [[scope]]
-id     = "avatar-cache"
-label  = "Avatar cache (all_users/head_imgs)"
-glob   = "**/xwechat_files/all_users/head_imgs/**"
-mode   = "recycle"
-prompt = { kind = "none" }
+id       = "avatar-cache"
+label    = "头像缓存"
+glob     = "**/xwechat_files/all_users/head_imgs/**"
+mode     = "recycle"
+category = "cache"
+variant  = "4.x"
+prompt   = { kind = "none" }
 
 [[scope]]
-id     = "apm-records"
-label  = "APM / telemetry records"
-glob   = "**/xwechat_files/wxid_*/apm_record/**"
-mode   = "recycle"
-prompt = { kind = "none" }
+id       = "apm-records"
+label    = "性能与统计记录"
+glob     = "**/xwechat_files/wxid_*/apm_record/**"
+mode     = "recycle"
+category = "cache"
+variant  = "4.x"
+prompt   = { kind = "none" }
 
 [[scope]]
-id     = "received-files"
-label  = "Received files (msg/file)"
-glob   = "**/xwechat_files/wxid_*/msg/file/**"
-mode   = "recycle"
-prompt = { kind = "days", default = 30, label = "Delete received files older than (days)" }
+id       = "received-files"
+label    = "接收的文件"
+glob     = "**/xwechat_files/wxid_*/msg/file/**"
+mode     = "recycle"
+category = "media"
+variant  = "4.x"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
 
 [[scope]]
-id     = "received-videos"
-label  = "Received videos (msg/video)"
-glob   = "**/xwechat_files/wxid_*/msg/video/**"
-mode   = "recycle"
-prompt = { kind = "days", default = 7, label = "Delete videos older than (days)" }
+id       = "received-videos"
+label    = "接收的视频"
+glob     = "**/xwechat_files/wxid_*/msg/video/**"
+mode     = "recycle"
+category = "media"
+variant  = "4.x"
+prompt   = { kind = "days", default = 7, label = "保留最近多少天" }
 
 [[scope]]
-id     = "received-images"
-label  = "Received images (msg/image)"
-glob   = "**/xwechat_files/wxid_*/msg/image/**"
-mode   = "recycle"
-prompt = { kind = "days", default = 30, label = "Delete received images older than (days)" }
+id       = "received-images"
+label    = "接收的图片"
+glob     = "**/xwechat_files/wxid_*/msg/image/**"
+mode     = "recycle"
+category = "media"
+variant  = "4.x"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
 
 [[scope]]
-id     = "voice-attachments"
-label  = "Voice messages / attachments (msg/attach)"
-glob   = "**/xwechat_files/wxid_*/msg/attach/**"
-mode   = "recycle"
-prompt = { kind = "days", default = 30, label = "Delete voice/attachments older than (days)" }
+id       = "voice-attachments"
+label    = "语音 / 附件"
+glob     = "**/xwechat_files/wxid_*/msg/attach/**"
+mode     = "recycle"
+category = "media"
+variant  = "4.x"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
 
 [[scope]]
-id     = "chat-backups"
-label  = "Chat backups (Backup/)"
-glob   = "**/xwechat_files/Backup/wxid_*/**"
-mode   = "recycle"
-prompt = { kind = "confirm", label = "I understand this deletes my chat backups" }
+id       = "chat-backups"
+label    = "聊天备份"
+glob     = "**/xwechat_files/Backup/wxid_*/**"
+mode     = "recycle"
+category = "backup"
+variant  = "4.x"
+prompt   = { kind = "confirm", label = "我确认要删除聊天备份" }
 
 # ============================================================================
 # Roaming app dir (4.x: %APPDATA%/Tencent/xwechat)
 # ============================================================================
 
 [[scope]]
-id     = "app-logs-crashes"
-label  = "App logs & crash dumps"
-glob   = "%APPDATA%/Tencent/xwechat/{log,crashinfo}/**"
-mode   = "recycle"
-prompt = { kind = "none" }
+id       = "app-logs-crashes"
+label    = "应用日志与崩溃信息"
+glob     = "%APPDATA%/Tencent/xwechat/{log,crashinfo}/**"
+mode     = "recycle"
+category = "cache"
+variant  = "4.x"
+prompt   = { kind = "none" }
 
 [[scope]]
-id     = "app-update-leftover"
-label  = "Installer downloads & remote-config cache"
-glob   = "%APPDATA%/Tencent/xwechat/{update,confsdk}/**"
-mode   = "recycle"
-prompt = { kind = "none" }
+id       = "app-update-leftover"
+label    = "安装包 / 远程配置缓存"
+glob     = "%APPDATA%/Tencent/xwechat/{update,confsdk}/**"
+mode     = "recycle"
+category = "cache"
+variant  = "4.x"
+prompt   = { kind = "none" }
 
 # ============================================================================
 # WeChat 3.x legacy scopes (WeChat.exe, WeChat Files/FileStorage/...)
-# Empty on 4.x machines; kept for users who haven't upgraded.
+# Empty on 4.x machines; UI hides the whole group when 4.x is detected.
 # ============================================================================
 
 [[scope]]
-id     = "image-cache-3x"
-label  = "[3.x] Image cache (FileStorage/Image)"
-glob   = "**/WeChat Files/wxid_*/FileStorage/Image/**"
-mode   = "recycle"
-prompt = { kind = "days", default = 30, label = "Delete images older than (days)" }
+id       = "image-cache-3x"
+label    = "接收的图片"
+glob     = "**/WeChat Files/wxid_*/FileStorage/Image/**"
+mode     = "recycle"
+category = "media"
+variant  = "3.x"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
 
 [[scope]]
-id     = "video-cache-3x"
-label  = "[3.x] Video cache (FileStorage/Video)"
-glob   = "**/WeChat Files/wxid_*/FileStorage/Video/**"
-mode   = "recycle"
-prompt = { kind = "days", default = 7, label = "Delete videos older than (days)" }
+id       = "video-cache-3x"
+label    = "接收的视频"
+glob     = "**/WeChat Files/wxid_*/FileStorage/Video/**"
+mode     = "recycle"
+category = "media"
+variant  = "3.x"
+prompt   = { kind = "days", default = 7, label = "保留最近多少天" }
 
 [[scope]]
-id     = "file-cache-3x"
-label  = "[3.x] Received files (FileStorage/File)"
-glob   = "**/WeChat Files/wxid_*/FileStorage/File/**"
-mode   = "recycle"
-prompt = { kind = "days", default = 30, label = "Delete files older than (days)" }
+id       = "file-cache-3x"
+label    = "接收的文件"
+glob     = "**/WeChat Files/wxid_*/FileStorage/File/**"
+mode     = "recycle"
+category = "media"
+variant  = "3.x"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
 
 [[scope]]
-id     = "cache-misc-3x"
-label  = "[3.x] Misc cache (FileStorage/Cache)"
-glob   = "**/WeChat Files/wxid_*/FileStorage/Cache/**"
-mode   = "recycle"
-prompt = { kind = "none" }
+id       = "cache-misc-3x"
+label    = "杂项缓存"
+glob     = "**/WeChat Files/wxid_*/FileStorage/Cache/**"
+mode     = "recycle"
+category = "cache"
+variant  = "3.x"
+prompt   = { kind = "none" }

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -c core.editor=true rebase --continue)",
+      "Bash(cargo test *)"
+    ]
+  }
+}

@@ -64,6 +64,29 @@ interface ScopeSize {
   file_count: number;
 }
 
+/// Sentinel id used by the merged cache button to participate in the
+/// existing `armedScope` / `busyScope` two-step-confirm machinery without
+/// colliding with any real scope id.
+const BULK_CACHE_ID = '__bulk_cache__';
+
+/// Detect which product variants ("3.x" / "4.x" for WeChat) are present in
+/// the matched paths. Used to hide scopes whose `variant` doesn't apply to
+/// the user's install — e.g. WeChat 4.x users never see `[3.x]` rows.
+///
+/// String-includes is safe here: `xwechat_files` (underscore) and
+/// `wechat files` (space) don't share a substring; `tencent/xwechat`'s
+/// 9th char is `x`, not `w`, so it doesn't false-positive on
+/// `tencent/wechat`.
+function detectVariants(matches: Node[]): Set<string> {
+  const out = new Set<string>();
+  for (const m of matches) {
+    const p = m.path.replace(/\\/g, '/').toLowerCase();
+    if (p.includes('xwechat_files') || p.includes('tencent/xwechat')) out.add('4.x');
+    if (p.includes('wechat files') || p.includes('tencent/wechat')) out.add('3.x');
+  }
+  return out;
+}
+
 const FEATURED_IDS = [
   'wechat-pc',
   'qq-pc',
@@ -432,6 +455,161 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
     }
   };
 
+  // Hide scopes whose variant isn't detected in the matched paths.
+  // E.g. on a WeChat 4.x install, the 3.x bucket never appears.
+  const detectedVariants = useMemo(() => detectVariants(matches), [matchKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const visibleScopes = useMemo(
+    () => (sc.scopes ?? []).filter((s) => !s.variant || detectedVariants.has(s.variant)),
+    [sc.scopes, detectedVariants],
+  );
+
+  // Group by category. `category` defaults to "cache" when missing — matches
+  // the conservative pre-feature behavior (anything unclassified bunches up
+  // with the merged cache button rather than dangerously appearing as media).
+  const mediaScopes = visibleScopes.filter((s) => s.category === 'media');
+  const cacheScopes = visibleScopes.filter((s) => (s.category ?? 'cache') === 'cache');
+  const backupScopes = visibleScopes.filter((s) => s.category === 'backup');
+
+  // Sort media by current bytes desc so the user sees the biggest target on top.
+  const sortedMediaScopes = useMemo(() => {
+    const byBytes = (id: string) => scopeSizes?.find((r) => r.scope_id === id)?.bytes ?? 0;
+    return [...mediaScopes].sort((a, b) => byBytes(b.id) - byBytes(a.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mediaScopes.map((s) => s.id).join('|'), scopeSizes]);
+
+  // Aggregate cache bytes/files for the merged button label.
+  const cacheTotal = useMemo(() => {
+    if (!scopeSizes) return { bytes: 0, files: 0 };
+    return cacheScopes.reduce(
+      (acc, s) => {
+        const row = scopeSizes.find((r) => r.scope_id === s.id);
+        return { bytes: acc.bytes + (row?.bytes ?? 0), files: acc.files + (row?.file_count ?? 0) };
+      },
+      { bytes: 0, files: 0 },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cacheScopes.map((s) => s.id).join('|'), scopeSizes]);
+
+  // Bulk cache run: fan out per cache scope per match. Backend stays split —
+  // we just call executeScope individually for each, so per-bucket logs and
+  // failure isolation are preserved (debug-friendly), only the UI is merged.
+  const runBulkCache = async () => {
+    if (cacheScopes.length === 0 || matches.length === 0) return;
+    setArmedScope(null);
+    setBusyScope(BULK_CACHE_ID);
+    setScopeMsg(null);
+    const beforeBytes = cacheTotal.bytes;
+    try {
+      const allEntries = await Promise.all(
+        cacheScopes.flatMap((scope) =>
+          matches.map((m) =>
+            api
+              .executeScope(sc.id, scope.id, m.path, false, daysByScope[scope.id], wxidFilterArg)
+              .catch((e) => {
+                // eslint-disable-next-line no-console
+                console.warn(`[diskwise] bulk: ${scope.id} on ${m.path} failed:`, e);
+                return [];
+              }),
+          ),
+        ),
+      );
+      const totalEntries = allEntries.reduce((s, arr) => s + arr.length, 0);
+      addReclaimed(beforeBytes);
+      setScopeMsg(
+        `已清理 ${totalEntries} 个文件 · 约 ${formatBytes(beforeBytes)} · 共 ${cacheScopes.length} 个桶`,
+      );
+      const rowsList = await Promise.all(
+        matches.map((m) =>
+          api.scopeSizes(sc.id, m.path, daysByScope, wxidFilterArg).catch(() => [] as ScopeSize[]),
+        ),
+      );
+      setScopeSizes(aggregateScopeSizes(rowsList));
+    } catch (e) {
+      setScopeMsg(`清理失败：${String(e)}`);
+    } finally {
+      setBusyScope(null);
+    }
+  };
+
+  const handleBulkClick = () => {
+    if (busyScope) return;
+    if (armedScope === BULK_CACHE_ID) {
+      runBulkCache();
+    } else {
+      setArmedScope(BULK_CACHE_ID);
+      setScopeMsg(null);
+      window.setTimeout(() => {
+        setArmedScope((cur) => (cur === BULK_CACHE_ID ? null : cur));
+      }, 5000);
+    }
+  };
+
+  // Single-row renderer reused by media + backup sections. Cache rows go
+  // through the bulk button and never call this.
+  const renderScopeRow = (scope: typeof sc.scopes[number]) => {
+    const row = scopeSizes?.find((r) => r.scope_id === scope.id);
+    const bytes = row?.bytes ?? 0;
+    const fileCount = row?.file_count ?? 0;
+    const empty = scopeSizes !== null && bytes === 0;
+    const busy = busyScope === scope.id;
+    return (
+      <li key={scope.id} className={'studio-scope-row' + (empty ? ' empty' : '')} title={scope.glob}>
+        <span className="studio-scope-label">{scope.label}</span>
+        <span className="mono-num studio-scope-size">
+          {scopeSizes === null ? '—' : `${formatBytes(bytes)}${fileCount ? ` · ${fileCount.toLocaleString()}` : ''}`}
+        </span>
+        <button
+          className={'secondary studio-scope-btn' + (armedScope === scope.id ? ' armed' : '')}
+          disabled={busy || empty || scopeLoading || (busyScope !== null && busyScope !== scope.id)}
+          onClick={() => handleScopeClick(scope.id, scope.label, bytes)}
+          title={`${scope.mode} · ${scope.glob}`}
+        >
+          {busy
+            ? <><Loader2 size={11} className="spin" /> 清理中</>
+            : armedScope === scope.id
+              ? <><Trash2 size={11} /> 再点确认</>
+              : <><Trash2 size={11} /> 清理</>}
+        </button>
+        {scope.prompt?.kind === 'days' && (
+          <span
+            className="muted"
+            style={{ gridColumn: '1 / -1', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, marginTop: 1, paddingLeft: 2 }}
+          >
+            保留最近
+            <input
+              type="number"
+              min={0}
+              value={daysByScope[scope.id] ?? scope.prompt.default}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setDaysByScope((prev) => ({ ...prev, [scope.id]: Number.isFinite(v) && v >= 0 ? v : 0 }));
+              }}
+              onClick={(e) => e.stopPropagation()}
+              style={{ width: 56, padding: '1px 4px', fontSize: 10.5, textAlign: 'right' }}
+              title={scope.prompt.label ?? '保留最近 N 天的文件，更老的才会被清'}
+            />
+            天
+            {daysByScope[scope.id] !== undefined && daysByScope[scope.id] !== scope.prompt.default && (
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setDaysByScope((prev) => {
+                  const next = { ...prev };
+                  delete next[scope.id];
+                  return next;
+                })}
+                style={{ fontSize: 10, padding: '0 6px', marginLeft: 4 }}
+                title={`恢复默认 ${scope.prompt.kind === 'days' ? scope.prompt.default : ''} 天`}
+              >
+                恢复默认
+              </button>
+            )}
+          </span>
+        )}
+      </li>
+    );
+  };
+
   // For "占用最大的子项": pull the union of all matches' children, sort by
   // size desc, take top 8. Each child carries its own absolute path so there's
   // no ambiguity even when matches span unrelated roots.
@@ -530,77 +708,64 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
                   </span>
                 </div>
               )}
-              {(sc.scopes ?? []).length > 0 && (
+              {visibleScopes.length > 0 && (
                 <>
-                  <div className="studio-detail-label" style={{ marginTop: 6 }}>
-                    脚本可清的桶 ({(sc.scopes ?? []).length})
-                    {scopeLoading && <Loader2 size={11} className="spin" style={{ marginLeft: 6, verticalAlign: 'middle' }} />}
-                  </div>
-                  <ul className="studio-scopes">
-                    {(sc.scopes ?? []).map((scope) => {
-                      const row = scopeSizes?.find((r) => r.scope_id === scope.id);
-                      const bytes = row?.bytes ?? 0;
-                      const fileCount = row?.file_count ?? 0;
-                      const empty = scopeSizes !== null && bytes === 0;
-                      const busy = busyScope === scope.id;
-                      return (
-                        <li key={scope.id} className={'studio-scope-row' + (empty ? ' empty' : '')} title={scope.glob}>
-                          <span className="studio-scope-label">{scope.label}</span>
+                  {sortedMediaScopes.length > 0 && (
+                    <>
+                      <div className="studio-detail-label" style={{ marginTop: 6 }}>
+                        接收的媒体
+                        {scopeLoading && <Loader2 size={11} className="spin" style={{ marginLeft: 6, verticalAlign: 'middle' }} />}
+                      </div>
+                      <ul className="studio-scopes">
+                        {sortedMediaScopes.map((scope) => renderScopeRow(scope))}
+                      </ul>
+                    </>
+                  )}
+
+                  {cacheScopes.length > 0 && (
+                    <>
+                      <div className="studio-detail-label" style={{ marginTop: 8 }}>缓存与临时数据</div>
+                      <ul className="studio-scopes">
+                        <li
+                          className="studio-scope-row bulk"
+                          title={`合并清理 ${cacheScopes.length} 个无害桶（缓存 / 临时 / 日志 / 遥测）；后端仍按单 scope 执行`}
+                        >
+                          <span className="studio-scope-label">一键清理（{cacheScopes.length} 个桶）</span>
                           <span className="mono-num studio-scope-size">
-                            {scopeSizes === null ? '—' : `${formatBytes(bytes)}${fileCount ? ` · ${fileCount.toLocaleString()}` : ''}`}
+                            {scopeSizes === null
+                              ? '—'
+                              : `${formatBytes(cacheTotal.bytes)}${cacheTotal.files ? ` · ${cacheTotal.files.toLocaleString()}` : ''}`}
                           </span>
                           <button
-                            className={'secondary studio-scope-btn' + (armedScope === scope.id ? ' armed' : '')}
-                            disabled={busy || empty || scopeLoading}
-                            onClick={() => handleScopeClick(scope.id, scope.label, bytes)}
-                            title={`${scope.mode} · ${scope.glob}`}
+                            className={'secondary studio-scope-btn' + (armedScope === BULK_CACHE_ID ? ' armed' : '')}
+                            disabled={
+                              busyScope !== null ||
+                              scopeLoading ||
+                              scopeSizes === null ||
+                              cacheTotal.bytes === 0
+                            }
+                            onClick={handleBulkClick}
                           >
-                            {busy
+                            {busyScope === BULK_CACHE_ID
                               ? <><Loader2 size={11} className="spin" /> 清理中</>
-                              : armedScope === scope.id
+                              : armedScope === BULK_CACHE_ID
                                 ? <><Trash2 size={11} /> 再点确认</>
                                 : <><Trash2 size={11} /> 清理</>}
                           </button>
-                          {scope.prompt?.kind === 'days' && (
-                            <span
-                              className="muted"
-                              style={{ gridColumn: '1 / -1', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, marginTop: 1, paddingLeft: 2 }}
-                            >
-                              保留最近
-                              <input
-                                type="number"
-                                min={0}
-                                value={daysByScope[scope.id] ?? scope.prompt.default}
-                                onChange={(e) => {
-                                  const v = Number(e.target.value);
-                                  setDaysByScope((prev) => ({ ...prev, [scope.id]: Number.isFinite(v) && v >= 0 ? v : 0 }));
-                                }}
-                                onClick={(e) => e.stopPropagation()}
-                                style={{ width: 56, padding: '1px 4px', fontSize: 10.5, textAlign: 'right' }}
-                                title={scope.prompt.label ?? '保留最近 N 天的文件，更老的才会被清'}
-                              />
-                              天
-                              {daysByScope[scope.id] !== undefined && daysByScope[scope.id] !== scope.prompt.default && (
-                                <button
-                                  type="button"
-                                  className="secondary"
-                                  onClick={() => setDaysByScope((prev) => {
-                                    const next = { ...prev };
-                                    delete next[scope.id];
-                                    return next;
-                                  })}
-                                  style={{ fontSize: 10, padding: '0 6px', marginLeft: 4 }}
-                                  title={`恢复默认 ${scope.prompt.kind === 'days' ? scope.prompt.default : ''} 天`}
-                                >
-                                  恢复默认
-                                </button>
-                              )}
-                            </span>
-                          )}
                         </li>
-                      );
-                    })}
-                  </ul>
+                      </ul>
+                    </>
+                  )}
+
+                  {backupScopes.length > 0 && (
+                    <>
+                      <div className="studio-detail-label" style={{ marginTop: 8 }}>聊天备份</div>
+                      <ul className="studio-scopes">
+                        {backupScopes.map((scope) => renderScopeRow(scope))}
+                      </ul>
+                    </>
+                  )}
+
                   {scopeMsg && <div className="studio-scope-msg muted small">{scopeMsg}</div>}
                 </>
               )}

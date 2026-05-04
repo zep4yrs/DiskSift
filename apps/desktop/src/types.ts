@@ -24,6 +24,8 @@ export interface Scope {
   label: string;
   glob: string;
   mode: Mode;
+  category?: 'cache' | 'media' | 'backup';
+  variant?: string;
   prompt?:
     | { kind: 'none' }
     | { kind: 'days'; default: number; label?: string }

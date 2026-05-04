@@ -1079,6 +1079,12 @@ footer {
 }
 .studio-scope-row:hover { background: var(--pink-bg); }
 .studio-scope-row.empty { opacity: 0.45; }
+.studio-scope-row.bulk {
+  background: var(--paper-2);
+  padding: 5px 8px;
+  font-weight: 500;
+}
+.studio-scope-row.bulk:hover { background: var(--paper-3); }
 .studio-scope-label {
   white-space: nowrap;
   overflow: hidden;

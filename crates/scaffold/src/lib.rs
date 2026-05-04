@@ -36,6 +36,17 @@ pub struct Scope {
     pub mode: Mode,
     #[serde(default)]
     pub prompt: Option<Prompt>,
+    /// "cache" | "media" | "backup". `None` is treated by the UI as "cache".
+    /// Drives Studio's grouping: media → top, cache → merged into one button,
+    /// backup → bottom.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// Optional product-version tag (e.g. "3.x" / "4.x" for WeChat). When set,
+    /// the UI hides this scope unless the variant is detected in the matched
+    /// paths — keeps obsolete-version buckets out of sight without deleting
+    /// them from the scaffold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
