@@ -3,8 +3,27 @@ import { ChevronRight, ChevronDown, Sparkles, MessageSquare, Trash2, Loader2 } f
 import { useStore } from '../store';
 import { formatBytes } from '../format';
 import { api } from '../api';
-import type { Node, Scaffold } from '../types';
+import type { Node, Scaffold, CondaEnv } from '../types';
 import { ErrorBoundary } from './ErrorBoundary';
+
+/// Relative-time renderer for conda env's last `conda-meta/history` mtime.
+/// `null` means history is missing (broken env or fresh install pre-first-op);
+/// surfaced as "从未" so user knows the staleness signal couldn't be read.
+function formatLastActive(ts: number | null): string {
+  if (ts === null) return '从未';
+  const now = Math.floor(Date.now() / 1000);
+  const diffSecs = Math.max(0, now - ts);
+  const days = Math.floor(diffSecs / 86400);
+  if (days < 1) return '今天';
+  if (days < 30) return `${days} 天前`;
+  if (days < 365) return `${Math.floor(days / 30)} 个月前`;
+  return `${Math.floor(days / 365)} 年前`;
+}
+
+/// Sentinel id for the envs cleanup button to participate in the
+/// armedScope/busyScope two-step-confirm machinery without colliding
+/// with any real scope id.
+const ENVS_BUTTON_ID = '__envs_cleanup__';
 
 const SCOPE_DAYS_STORAGE_KEY = 'diskwise.scopeDays';
 
@@ -369,6 +388,14 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
   // We only persist days (Step C); wxid checkboxes default to all-on each session.
   useEffect(() => { setSelectedWxids(new Set(wxids)); }, [wxids.join('|')]);
 
+  // Conda envs: only populated when sc.id === 'conda'. The matched root path
+  // IS the conda root (detect points there), so we can hand it directly to
+  // list_conda_envs. selectedEnvs is seeded from each env's `default_checked`
+  // (backend's stale-90d recommendation).
+  const [condaEnvs, setCondaEnvs] = useState<CondaEnv[] | null>(null);
+  const [condaEnvsLoading, setCondaEnvsLoading] = useState(false);
+  const [selectedEnvs, setSelectedEnvs] = useState<Set<string>>(new Set());
+
   // Stable cache key for the matches array — useEffect needs a primitive so it
   // doesn't re-fire just because Studio re-rendered with a fresh array identity.
   const matchKey = matches.map((m) => m.path).sort().join('|');
@@ -378,6 +405,30 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
     ? [...selectedWxids]
     : undefined;
   const wxidKey = wxidFilterArg ? wxidFilterArg.slice().sort().join('|') : '';
+
+  // Conda env list: fetch when card expands. Only the first matched root is
+  // queried — users with both anaconda3 AND miniconda3 detected as separate
+  // matches would only see the larger one's envs (out-of-scope for v1, real
+  // users typically have one conda install).
+  useEffect(() => {
+    if (sc.id !== 'conda' || !expanded || matches.length === 0) return;
+    let cancelled = false;
+    setCondaEnvsLoading(true);
+    api
+      .listCondaEnvs(matches[0].path)
+      .then((envs) => {
+        if (cancelled) return;
+        setCondaEnvs(envs);
+        setSelectedEnvs(new Set(envs.filter((e) => e.default_checked).map((e) => e.name)));
+      })
+      .catch((e) => {
+        // eslint-disable-next-line no-console
+        if (!cancelled) console.warn('[diskwise] listCondaEnvs failed:', e);
+      })
+      .finally(() => { if (!cancelled) setCondaEnvsLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sc.id, expanded, matchKey]);
 
   // Load per-scope sizes once expanded. Fan-out across all matches and aggregate
   // by scope_id so all 16 wechat scopes can light up even when matches live in
@@ -544,6 +595,64 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
     }
   };
 
+  // Aggregate of currently-selected envs (count + bytes). Drives the cleanup
+  // button label and the disabled state — empty selection → no-op + disabled.
+  const selectedEnvsTotal = useMemo(() => {
+    if (!condaEnvs) return { count: 0, bytes: 0 };
+    let count = 0;
+    let bytes = 0;
+    for (const e of condaEnvs) {
+      if (selectedEnvs.has(e.name)) {
+        count += 1;
+        bytes += e.size_bytes;
+      }
+    }
+    return { count, bytes };
+  }, [condaEnvs, selectedEnvs]);
+
+  const runEnvsCleanup = async () => {
+    if (sc.id !== 'conda' || !condaEnvs || selectedEnvs.size === 0 || matches.length === 0) return;
+    setArmedScope(null);
+    setBusyScope(ENVS_BUTTON_ID);
+    setScopeMsg(null);
+    const beforeBytes = selectedEnvsTotal.bytes;
+    const beforeCount = selectedEnvsTotal.count;
+    const envFilterArg = [...selectedEnvs];
+    try {
+      // execute_scope detects scope_id === "envs-stale" + non-empty env_filter
+      // and recycles each env directory as a single Recycle Bin entry
+      // (not one entry per file inside) — see apps/desktop/src-tauri/src/lib.rs.
+      const entries = await api.executeScope(
+        sc.id, 'envs-stale', matches[0].path, false,
+        undefined, undefined, envFilterArg,
+      );
+      addReclaimed(beforeBytes);
+      setScopeMsg(`已清理 ${beforeCount} 个 environment · 约 ${formatBytes(beforeBytes)} · ${entries.length} 个回收站条目`);
+      // Refresh env list — selection re-seeds from the new default_checked set.
+      const refreshed = await api.listCondaEnvs(matches[0].path).catch(() => [] as CondaEnv[]);
+      setCondaEnvs(refreshed);
+      setSelectedEnvs(new Set(refreshed.filter((e) => e.default_checked).map((e) => e.name)));
+    } catch (e) {
+      setScopeMsg(`清理失败：${String(e)}`);
+    } finally {
+      setBusyScope(null);
+    }
+  };
+
+  const handleEnvsClick = () => {
+    if (busyScope) return;
+    if (selectedEnvs.size === 0) return;
+    if (armedScope === ENVS_BUTTON_ID) {
+      runEnvsCleanup();
+    } else {
+      setArmedScope(ENVS_BUTTON_ID);
+      setScopeMsg(null);
+      window.setTimeout(() => {
+        setArmedScope((cur) => (cur === ENVS_BUTTON_ID ? null : cur));
+      }, 5000);
+    }
+  };
+
   // Single-row renderer reused by media + backup sections. Cache rows go
   // through the bulk button and never call this.
   const renderScopeRow = (scope: typeof sc.scopes[number]) => {
@@ -677,6 +786,26 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
                   {matches.length > 1 && <span className="muted small" style={{ marginLeft: 6 }}>（{matches.length} 处合计）</span>}
                 </span>
               </div>
+              {sc.id === 'conda' && (
+                <CondaEnvsSection
+                  envs={condaEnvs}
+                  loading={condaEnvsLoading}
+                  selected={selectedEnvs}
+                  onToggleEnv={(name) => {
+                    setSelectedEnvs((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(name)) next.delete(name);
+                      else next.add(name);
+                      return next;
+                    });
+                  }}
+                  selectedTotal={selectedEnvsTotal}
+                  onCleanup={handleEnvsClick}
+                  armed={armedScope === ENVS_BUTTON_ID}
+                  busy={busyScope === ENVS_BUTTON_ID}
+                  anyBusy={busyScope !== null}
+                />
+              )}
               {wxids.length > 0 && (
                 <div className="studio-detail-row">
                   <span className="studio-detail-label">账号</span>
@@ -810,5 +939,133 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
         </div>
       )}
     </div>
+  );
+}
+
+/// Conda env list with per-env checkbox + bulk-recycle button. Base env
+/// always appears as a non-clickable row at the top so users see it's
+/// protected (rather than wondering "where did base go"). Stale envs
+/// (default_checked from backend) are pre-selected; user can toggle.
+/// Recycle Bin gets one entry per env (not per file) — see lib.rs's
+/// envs-stale special case in execute_scope.
+function CondaEnvsSection({
+  envs,
+  loading,
+  selected,
+  onToggleEnv,
+  selectedTotal,
+  onCleanup,
+  armed,
+  busy,
+  anyBusy,
+}: {
+  envs: CondaEnv[] | null;
+  loading: boolean;
+  selected: Set<string>;
+  onToggleEnv: (name: string) => void;
+  selectedTotal: { count: number; bytes: number };
+  onCleanup: () => void;
+  armed: boolean;
+  busy: boolean;
+  anyBusy: boolean;
+}) {
+  if (envs === null) {
+    return (
+      <div className="studio-detail-row">
+        <span className="studio-detail-label">Environments</span>
+        <span className="muted small">
+          {loading ? <><Loader2 size={11} className="spin" /> 读取中…</> : '—'}
+        </span>
+      </div>
+    );
+  }
+
+  const userEnvs = envs.filter((e) => !e.is_base);
+  const baseEnv = envs.find((e) => e.is_base);
+
+  if (userEnvs.length === 0) {
+    return (
+      <>
+        <div className="studio-detail-label" style={{ marginTop: 6 }}>Environments</div>
+        {baseEnv && (
+          <div className="muted small" style={{ paddingLeft: 2, marginTop: 2 }}>
+            base · {formatBytes(baseEnv.size_bytes)} · 不可清
+          </div>
+        )}
+        <div className="muted small" style={{ paddingLeft: 2, marginTop: 4 }}>
+          没有用户创建的 environment（envs/ 为空）。可用 <code>conda env list</code> 在终端确认。
+        </div>
+      </>
+    );
+  }
+
+  const staleCount = userEnvs.filter((e) => e.default_checked).length;
+
+  return (
+    <>
+      <div className="studio-detail-label" style={{ marginTop: 6 }}>
+        Environments
+        {loading && <Loader2 size={11} className="spin" style={{ marginLeft: 6, verticalAlign: 'middle' }} />}
+      </div>
+      <div className="muted small" style={{ paddingLeft: 2, marginBottom: 4 }}>
+        {staleCount > 0
+          ? `发现 ${staleCount} 个 90 天没动过的 env · 已默认勾选`
+          : `${userEnvs.length} 个 env · 都在 90 天内有过 conda 操作 · 默认全不勾`}
+      </div>
+      <ul className="studio-scopes">
+        {baseEnv && (
+          <li className="studio-scope-row empty" title="base 是 conda 安装本身，永不可清。">
+            <span className="studio-scope-label muted">
+              <input type="checkbox" disabled checked={false} style={{ marginRight: 6 }} />
+              base · 不可清
+            </span>
+            <span className="mono-num studio-scope-size muted">{formatBytes(baseEnv.size_bytes)}</span>
+            <span className="muted small">{formatLastActive(baseEnv.last_active_ts)}</span>
+          </li>
+        )}
+        {userEnvs.map((e) => {
+          const checked = selected.has(e.name);
+          return (
+            <li
+              key={e.name}
+              className="studio-scope-row"
+              title={e.path}
+            >
+              <label
+                className="studio-scope-label"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: anyBusy ? 'not-allowed' : 'pointer', userSelect: 'none' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={anyBusy}
+                  onChange={() => onToggleEnv(e.name)}
+                />
+                <span className={checked ? '' : 'muted'}>{e.name}</span>
+              </label>
+              <span className="mono-num studio-scope-size">{formatBytes(e.size_bytes)}</span>
+              <span className="muted small">{formatLastActive(e.last_active_ts)}</span>
+            </li>
+          );
+        })}
+        <li className="studio-scope-row bulk" title="选中的 env 整个走系统回收站；可还原。base 永不动。">
+          <span className="studio-scope-label">
+            清理选中的 environment（{selectedTotal.count}）
+          </span>
+          <span className="mono-num studio-scope-size">{formatBytes(selectedTotal.bytes)}</span>
+          <button
+            className={'secondary studio-scope-btn' + (armed ? ' armed' : '')}
+            disabled={busy || selectedTotal.count === 0 || (anyBusy && !busy)}
+            onClick={onCleanup}
+          >
+            {busy
+              ? <><Loader2 size={11} className="spin" /> 清理中</>
+              : armed
+                ? <><Trash2 size={11} /> 再点确认</>
+                : <><Trash2 size={11} /> 清理</>}
+          </button>
+        </li>
+      </ul>
+    </>
   );
 }

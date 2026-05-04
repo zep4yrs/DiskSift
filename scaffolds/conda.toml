@@ -1,30 +1,66 @@
 id          = "conda"
-name        = "Conda packages cache"
+name        = "Conda / Anaconda / Miniconda"
 homepage    = "https://docs.conda.io/"
 risk        = "medium"
-disclaimer  = "等同 `conda clean --all`。已激活的 env 不动；只清下载的 tarball 与未引用的包。"
+disclaimer  = """\
+清理 conda 包缓存（pkgs/）+ 长期未激活的 environments（envs/<name>/）。\
+Base env、用户配置（.condarc）、~/.conda/environments.txt 永不触动；UI 上 base 灰显不可勾。\
+未使用判定基于 <env>/conda-meta/history 的 mtime——纯 `conda activate`（不装包）不会更新此文件，\
+所以"每天激活但不装包"的 env 可能被列为可清；走系统回收站可还原。\
+删除 env 后该 env 内的 pip-installed 包一并消失，重建需重装。"""
 
+# Detect at conda root (not pkgs/), so envs/ 也在扫描树内可见。
+# match.must_have_child = ["pkgs"] 防止误判随便一个含 "conda" 的目录
+# （例如用户的 my-conda-experiments/ 项目）。
 detect = [
-  "%USERPROFILE%/anaconda3/pkgs",
-  "%USERPROFILE%/miniconda3/pkgs",
-  "%USERPROFILE%/.conda/pkgs",
-  "${HOME}/anaconda3/pkgs",
-  "${HOME}/miniconda3/pkgs",
-  "${HOME}/.conda/pkgs",
+  "%USERPROFILE%/anaconda3",
+  "%USERPROFILE%/miniconda3",
+  "%USERPROFILE%/miniforge3",
+  "%USERPROFILE%/.conda",
+  "${HOME}/anaconda3",
+  "${HOME}/miniconda3",
+  "${HOME}/miniforge3",
+  "${HOME}/.conda",
+  "/opt/anaconda3",
+  "/opt/miniconda3",
 ]
 
 [match]
-name_contains   = ["pkgs"]
+name_contains   = ["anaconda3", "miniconda3", "miniforge3"]
+must_have_child = ["pkgs"]
+
+# 三个 scope 都是 directory granularity——recycle 整目录而非 file-by-file。
+# 原因：conda pkgs/<pkg>/ 下解压几百小文件，envs/<env>/ 下几万文件；file-by-file
+# recycle 每个文件 ~30ms，几千-几万文件累计几分钟，违反 §3.4 "用户不用思考"。
+# Glob 锚到 conda root 命名（{anaconda3,miniconda3,miniforge3,.conda}），避免
+# detect 改到 conda root 后误命中用户自定义 pkgs_dirs（如 envs/<x>/local-pkgs/）。
 
 [[scope]]
-id    = "tarballs"
-label = "下载的 tarball（cache）"
-glob  = "**/pkgs/cache/**"
-mode  = "recycle"
+id                  = "tarballs"
+label               = "下载的 tarball（pkgs/cache）"
+glob                = "**/{anaconda3,miniconda3,miniforge3,.conda}/pkgs/cache"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
 
 [[scope]]
-id    = "unused-packages"
-label = "未引用的包（按 mtime > 30 天）"
-glob  = "**/pkgs/**"
-mode  = "recycle"
-prompt = { kind = "days", default = 30 }
+id                  = "unused-packages"
+label               = "包缓存（按 mtime > 30 天）"
+glob                = "**/{anaconda3,miniconda3,miniforge3,.conda}/pkgs/*"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "days", default = 30 }
+recycle_granularity = "directory"
+
+# envs-stale 在 UI 不走标准 scope row 渲染——Studio.tsx 检测 sc.id === "conda"
+# 时调 list_conda_envs，按子目录列 env + checkbox + last-active 时间，把选中的
+# env name 作为 env_filter 传 execute_scope。execute_scope 通过
+# recycle_granularity = "directory" + path_passes_env 在通用路径下命中 envs/<name>，
+# 整目录 recycle（1 回收站条目代替几万文件）。
+[[scope]]
+id                  = "envs-stale"
+label               = "未使用的 environments"
+glob                = "**/{anaconda3,miniconda3,miniforge3,.conda}/envs/*"
+mode                = "recycle"
+category            = "envs"
+recycle_granularity = "directory"
