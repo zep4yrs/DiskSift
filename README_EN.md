@@ -4,9 +4,9 @@
 
 # Pinkbin · Diskwise
 
-**Stop screenshotting unfamiliar 80GB folders to ChatGPT.**
+**Scan. Understand. Clean — one folder at a time.**
 
-Open-source disk cleaner. WizTree-class scan speed + AI explains what each folder is, whether you can delete it, and what you'd lose.
+Open-source disk cleaner. Scan a whole drive in seconds to see where the bytes went, drag any unfamiliar folder into the AI to learn what it is and whether it's safe to delete, then clean by scope — defaults to the Recycle Bin, never reads your file contents.
 
 [![License](https://img.shields.io/badge/License-MIT-ff69b4.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB.svg)](https://tauri.app)
@@ -50,7 +50,7 @@ Pinkbin only does three things:
 
 ### 1. Show how the disk is allocated
 
-Direct read of the Windows NTFS Master File Table (jwalk fallback on other platforms). Full C: drive in **2–5 seconds**, on par with [WizTree](https://diskanalyzer.com). Renders a colored treemap and a single-line 22px-row tree view — at a glance you can see `D:\xwechat_files` taking 80GB, `C:\Users\<you>\AppData\Local\Docker` taking 50GB.
+Direct read of the Windows NTFS Master File Table (jwalk fallback on other platforms). Full C: drive in **2–5 seconds**. Renders a colored treemap and a single-line 22px-row tree view — at a glance you can see `D:\xwechat_files` taking 80GB, `C:\Users\<you>\AppData\Local\Docker` taking 50GB.
 
 ### 2. Drag any folder into the AI to ask "what is this"
 

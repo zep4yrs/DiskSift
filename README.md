@@ -4,9 +4,9 @@
 
 # Pinkbin
 
-**别再为不认识的大文件夹截图问 ChatGPT 了。**
+**扫盘 · 看懂 · 一条一条删干净。**
 
-开源磁盘清理工具 · WizTree 速度的扫盘 + AI 帮你解释每个文件夹是什么 · 能不能删 · 怎么删。
+开源磁盘清理工具。秒扫整盘看空间分配，把不认识的文件夹拖给 AI 让它告诉你这是什么、能不能删、删了会丢什么，再按 scope 逐项放心删——默认进回收站，永远不读你的文件内容。
 
 [![License](https://img.shields.io/badge/License-MIT-ff69b4.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB.svg)](https://tauri.app)
@@ -50,7 +50,7 @@ Pinkbin 只做三件事：
 
 ### 1. 把磁盘空间分配看清楚
 
-直读 Windows NTFS Master File Table（jwalk 跨平台 fallback），整盘 C: **2–5 秒**扫完，跟 [WizTree](https://diskanalyzer.com) 同档。出彩色 treemap + 单行 22px 高的树视图——一眼看到 `D:\xwechat_files` 占了 80GB，`C:\Users\<你>\AppData\Local\Docker` 占了 50GB。
+Windows 上直读 NTFS Master File Table（其他平台用 jwalk 跨平台 walker 兜底），整盘 C: **2–5 秒**扫完。出彩色 treemap + 单行 22px 高的树视图——一眼看到 `D:\xwechat_files` 占了 80GB，`C:\Users\<你>\AppData\Local\Docker` 占了 50GB。
 
 ### 2. 拖拽到中间 AI 分析"这个文件夹是什么"
 
