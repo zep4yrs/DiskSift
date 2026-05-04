@@ -15,8 +15,17 @@ detect = [
   "**/WeChat Files",
 ]
 
+# Matcher fallback for users who relocated WeChat data off the default path.
+# `name_contains` only takes long unambiguous fragments — bare "WeChat" /
+# "xwechat" used to false-positive on directories like
+# `WPS Office/.../uploadwechatfile` and `Weixin/<v>/WeChatPlayer.bin`.
+# `must_have_child = ["all_users"]` further requires the directory to look
+# like a real WeChat data root: both 4.x (`all_users`) and 3.x (`All Users`,
+# resolved case-insensitively on Windows NTFS) have this subfolder; install
+# directories and apps with "wechat" in their name do not.
 [match]
-name_contains = ["xwechat_files", "WeChat Files", "xwechat", "WeChat"]
+name_contains   = ["xwechat_files", "WeChat Files"]
+must_have_child = ["all_users"]
 
 # ============================================================================
 # WeChat 4.x scopes (Weixin.exe, xwechat_files/...)

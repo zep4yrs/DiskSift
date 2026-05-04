@@ -2,8 +2,13 @@
 //! the paths it advertises, and **must not** match WeChat red lines (chat DBs,
 //! account state, favorites, Moments, etc.). This file is the executable form
 //! of the red-line clauses in `docs/scaffold-requirements/messaging.md`.
+//!
+//! Also asserts the [match] block's behavior — basename + must_have_child must
+//! tag real data dirs (`xwechat_files`, `WeChat Files`) without false-positiving
+//! on third-party dirs whose name happens to contain "wechat" (e.g. WPS Office's
+//! `uploadwechatfile`, the install dir's `WeChatPlayer.bin`).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn workspace_root() -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -160,4 +165,83 @@ fn wechat_pc_globs_are_safe() {
         "wechat-pc.toml glob hit red lines:\n  {}",
         violations.join("\n  ")
     );
+}
+
+/// The [match] block must tag real WeChat data roots and reject install dirs
+/// or third-party dirs whose name happens to contain "wechat". This guards
+/// against the WPS Office / WeChatPlayer.bin false positives that prompted
+/// the must_have_child = ["all_users"] tightening.
+///
+/// We test against the LIVE filesystem via `tempdir`-style fixtures: the
+/// must_have_child check uses `path.join("all_users").exists()`, so we have
+/// to actually create the marker subdirectory for positives and leave it out
+/// for negatives.
+#[test]
+fn wechat_pc_matcher_distinguishes_data_from_installs() {
+    let scaffolds = vec![load_wechat_pc()];
+    let tmp = std::env::temp_dir().join(format!(
+        "diskwise-wechat-matcher-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+
+    // Positive: 4.x data root with `all_users/` child.
+    let pos_4x = tmp.join("Documents/xwechat_files");
+    std::fs::create_dir_all(pos_4x.join("all_users")).unwrap();
+
+    // Positive: 3.x data root with `All Users/` child (Windows NTFS resolves
+    // path.join("all_users") case-insensitively to this; on case-sensitive
+    // platforms this positive is skipped — we only assert on Windows).
+    let pos_3x = tmp.join("Documents/WeChat Files");
+    std::fs::create_dir_all(pos_3x.join("All Users")).unwrap();
+
+    // Negative: WPS Office "uploadwechatfile" — basename contains "wechat" but
+    // is not a WeChat data root. No `all_users` subfolder.
+    let neg_wps = tmp.join("AppData/Local/Kingsoft/WPS/uploadwechatfile");
+    std::fs::create_dir_all(&neg_wps).unwrap();
+
+    // Negative: WeChat install dir's `WeChatPlayer.bin` resource folder.
+    let neg_install = tmp.join("Program Files/Tencent/Weixin/4.1.9.30/WeChatPlayer.bin");
+    std::fs::create_dir_all(&neg_install).unwrap();
+
+    // Negative: a sibling that has "wechat" in the name AND happens to also
+    // contain something — but no `all_users`. Make sure we don't false-positive.
+    let neg_random = tmp.join("Random/MyWeChatBackup");
+    std::fs::create_dir_all(neg_random.join("photos")).unwrap();
+
+    let assert_match = |path: &Path, expected: Option<&str>, label: &str| {
+        let got = diskwise_scaffold::detect_for(&scaffolds, path);
+        assert_eq!(
+            got.as_deref(),
+            expected,
+            "{label}: detect_for({path:?}) = {got:?}, expected {expected:?}",
+        );
+    };
+
+    assert_match(&pos_4x, Some("wechat-pc"), "real 4.x data root");
+    #[cfg(windows)]
+    assert_match(&pos_3x, Some("wechat-pc"), "real 3.x data root (case-insensitive must_have_child)");
+    assert_match(&neg_wps, None, "WPS uploadwechatfile must not match");
+    assert_match(&neg_install, None, "WeChatPlayer.bin install dir must not match");
+    assert_match(&neg_random, None, "MyWeChatBackup must not match");
+
+    // Also confirm compile_all + detect_compiled agree (the production hot path).
+    let compiled = diskwise_scaffold::compile_all(&scaffolds);
+    let assert_compiled = |path: &Path, expected: Option<&str>, label: &str| {
+        let got = diskwise_scaffold::detect_compiled(&compiled, path);
+        assert_eq!(
+            got.as_deref(),
+            expected,
+            "{label} (compiled): detect_compiled({path:?}) = {got:?}, expected {expected:?}",
+        );
+    };
+    assert_compiled(&pos_4x, Some("wechat-pc"), "real 4.x data root");
+    assert_compiled(&neg_wps, None, "WPS uploadwechatfile must not match");
+    assert_compiled(&neg_install, None, "WeChatPlayer.bin install dir must not match");
+    assert_compiled(&neg_random, None, "MyWeChatBackup must not match");
+
+    // Cleanup — best-effort, ignore errors.
+    let _ = std::fs::remove_dir_all(&tmp);
 }
