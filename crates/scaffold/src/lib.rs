@@ -47,6 +47,25 @@ pub struct Scope {
     /// them from the scaffold.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant: Option<String>,
+    /// "file" (default) → glob matches files, recycle file-by-file (one
+    /// Recycle Bin entry per file). Right for media buckets where each file
+    /// is meaningful (chat images, log files).
+    /// "directory" → glob matches **directories**, recycle each as a single
+    /// unit (one Recycle Bin entry per dir). Required for any scope that
+    /// targets thousands of small files in self-contained subdirs (conda
+    /// pkgs/<pkg>, conda envs/<name>, node_modules/, cargo target/) — the
+    /// per-file path would create thousands of Recycle Bin entries and take
+    /// minutes; per-directory creates one entry per logical unit.
+    #[serde(default)]
+    pub recycle_granularity: RecycleGranularity,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RecycleGranularity {
+    #[default]
+    File,
+    Directory,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]

@@ -24,8 +24,9 @@ export interface Scope {
   label: string;
   glob: string;
   mode: Mode;
-  category?: 'cache' | 'media' | 'backup';
+  category?: 'cache' | 'media' | 'backup' | 'envs';
   variant?: string;
+  recycle_granularity?: RecycleGranularity;
   prompt?:
     | { kind: 'none' }
     | { kind: 'days'; default: number; label?: string }
@@ -79,3 +80,23 @@ export interface UndoEntry {
   destination?: string | null;
   reason: string;
 }
+
+/// Mirror of Rust's CondaEnv (apps/desktop/src-tauri/src/lib.rs). Returned
+/// by list_conda_envs and consumed by Studio's conda card. `last_active_ts`
+/// is unix epoch seconds of <env>/conda-meta/history mtime; null when
+/// missing. `default_checked` is the backend's stale-90d recommendation.
+export interface CondaEnv {
+  name: string;
+  path: string;
+  size_bytes: number;
+  last_active_ts: number | null;
+  is_base: boolean;
+  default_checked: boolean;
+}
+
+/// Mirror of Rust's RecycleGranularity (crates/scaffold/src/lib.rs). Drives
+/// whether a scope's glob matches files (default — file-by-file recycle) or
+/// directories (one Recycle Bin entry per matched dir). Read by frontend
+/// for display only; the actual file-vs-dir branching happens in the Tauri
+/// backend's execute_scope / scope_sizes commands.
+export type RecycleGranularity = 'file' | 'directory';

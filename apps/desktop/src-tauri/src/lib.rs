@@ -6,7 +6,8 @@ use std::time::{Duration, SystemTime};
 use diskwise_advisor::{advise as advise_provider, AdvisorRequest, AdvisorResponse, Provider};
 use diskwise_executor::{execute, Plan, UndoEntry};
 use diskwise_scaffold::{
-    compile_all, detect_compiled, detect_for, expand_env, load_dir, CompiledScaffold, Scaffold,
+    compile_all, detect_compiled, detect_for, expand_env, load_dir, CompiledScaffold,
+    RecycleGranularity, Scaffold,
 };
 use diskwise_scanner::{sample_paths, scan_with_stats, Node, ScanOptions, ScanStats};
 
@@ -278,6 +279,90 @@ fn path_passes_wxid(path: &Path, wxid_filter: Option<&[String]>) -> bool {
     true
 }
 
+/// True when `path` has an `envs/<name>` segment whose `<name>` is in `allow`,
+/// OR has no `envs/` segment at all (paths from non-env scopes pass through —
+/// `pkgs/cache/foo`, `<conda-root>/python.exe`, etc.). Mirrors `path_passes_wxid`'s
+/// "filter only narrows the targeted layer" semantics so a single
+/// `execute_scope` call can carry both filters across mixed scopes.
+/// `None` or empty allow-list disables the filter entirely.
+fn path_passes_env(path: &Path, env_filter: Option<&[String]>) -> bool {
+    let Some(allowed) = env_filter else { return true };
+    if allowed.is_empty() {
+        return true;
+    }
+    let mut comps = path.components().peekable();
+    while let Some(c) = comps.next() {
+        if let Some(s) = c.as_os_str().to_str() {
+            if s.eq_ignore_ascii_case("envs") {
+                if let Some(next) = comps.peek() {
+                    if let Some(name) = next.as_os_str().to_str() {
+                        return allowed.iter().any(|n| n == name);
+                    }
+                }
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Walk `root` and return directories whose path matches `glob_set`, after
+/// pruning any candidate whose ancestor is also matched. Used by directory-
+/// granularity scopes (recycle the directory as one unit, not file-by-file).
+///
+/// **Why ancestor dedup**: globset is configured with `literal_separator(false)`
+/// for backwards compat with media-bucket file scopes — meaning `*` crosses
+/// `/`. A glob like `**/pkgs/*` matches both `pkgs/numpy` AND `pkgs/numpy/info`;
+/// dedup keeps only the shallowest match per subtree so the recycle plan
+/// touches each logical unit exactly once. `path == root` is dropped
+/// unconditionally — even if a misconfigured glob hits root, recycling the
+/// scan root would nuke the user's whole conda install.
+fn find_matching_dirs(
+    root: &Path,
+    glob_set: &globset::GlobSet,
+    wxid_filter: Option<&[String]>,
+    env_filter: Option<&[String]>,
+    older_than_days: Option<u32>,
+) -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for entry in jwalk::WalkDir::new(root)
+        .skip_hidden(false)
+        .follow_links(false)
+        .into_iter()
+        .flatten()
+    {
+        if !entry.file_type().is_dir() {
+            continue;
+        }
+        let path = entry.path();
+        if path == root {
+            continue;
+        }
+        if !path_passes_wxid(&path, wxid_filter) || !path_passes_env(&path, env_filter) {
+            continue;
+        }
+        let metadata = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if !mtime_older_than(&metadata, older_than_days) {
+            continue;
+        }
+        let path_str = path.to_string_lossy().replace('\\', "/");
+        if glob_set.is_match(&path_str) {
+            candidates.push(path);
+        }
+    }
+    candidates.sort_by(|a, b| a.as_os_str().len().cmp(&b.as_os_str().len()));
+    let mut keep: Vec<PathBuf> = Vec::with_capacity(candidates.len());
+    for c in candidates {
+        if !keep.iter().any(|k| c.starts_with(k)) {
+            keep.push(c);
+        }
+    }
+    keep
+}
+
 /// True when `metadata.modified()` is older than `now - days * 86400s`.
 /// `days = None` skips the filter. Files whose mtime can't be read pass —
 /// we don't silently drop data the user expects to see because of a transient
@@ -302,6 +387,7 @@ async fn scope_sizes(
     root_path: String,
     scope_days: Option<HashMap<String, u32>>,
     wxid_filter: Option<Vec<String>>,
+    env_filter: Option<Vec<String>>,
 ) -> Result<Vec<ScopeSize>, String> {
     let scaffold = state
         .scaffolds
@@ -312,7 +398,15 @@ async fn scope_sizes(
         .cloned()
         .ok_or_else(|| format!("scaffold not found: {scaffold_id}"))?;
 
-    let mut sets: Vec<(String, globset::GlobSet)> = Vec::with_capacity(scaffold.scopes.len());
+    // Partition scopes by granularity. File scopes share one walk; directory
+    // scopes each get find_matching_dirs + per-dir size sum. Mixed-granularity
+    // scaffolds walk twice but each walk only does its own work.
+    struct ScopeBuild {
+        id: String,
+        set: globset::GlobSet,
+        granularity: RecycleGranularity,
+    }
+    let mut builds: Vec<ScopeBuild> = Vec::with_capacity(scaffold.scopes.len());
     for sc in &scaffold.scopes {
         let pattern = expand_env(&sc.glob);
         let glob = globset::GlobBuilder::new(&pattern)
@@ -322,55 +416,107 @@ async fn scope_sizes(
             .map_err(|e| format!("scope `{}` has invalid glob `{}`: {e}", sc.id, sc.glob))?;
         let mut b = globset::GlobSetBuilder::new();
         b.add(glob);
-        sets.push((sc.id.clone(), b.build().map_err(|e| e.to_string())?));
+        builds.push(ScopeBuild {
+            id: sc.id.clone(),
+            set: b.build().map_err(|e| e.to_string())?,
+            granularity: sc.recycle_granularity,
+        });
     }
 
     let root = PathBuf::from(&root_path);
     let wxid_filter_owned = wxid_filter;
+    let env_filter_owned = env_filter;
     let scope_days_owned = scope_days;
-    tokio::task::spawn_blocking(move || {
-        let mut tally: Vec<(u64, u64)> = vec![(0, 0); sets.len()];
-        for entry in jwalk::WalkDir::new(&root)
-            .skip_hidden(false)
-            .follow_links(false)
-            .into_iter()
-            .flatten()
-        {
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let path = entry.path();
-            let metadata = match entry.metadata() {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
-            if !path_passes_wxid(&path, wxid_filter_owned.as_deref()) {
-                continue;
-            }
-            let path_str = path.to_string_lossy().replace('\\', "/");
-            let size = metadata.len();
-            for (i, (scope_id, set)) in sets.iter().enumerate() {
-                if !set.is_match(&path_str) {
+    tokio::task::spawn_blocking(move || -> Vec<ScopeSize> {
+        let mut results: Vec<ScopeSize> = Vec::with_capacity(builds.len());
+        let file_indices: Vec<usize> = builds
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.granularity == RecycleGranularity::File)
+            .map(|(i, _)| i)
+            .collect();
+        let dir_indices: Vec<usize> = builds
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.granularity == RecycleGranularity::Directory)
+            .map(|(i, _)| i)
+            .collect();
+
+        // ── File scopes: single walk, tally per-file across all file scopes.
+        let mut file_tally: Vec<(u64, u64)> = vec![(0, 0); builds.len()];
+        if !file_indices.is_empty() {
+            for entry in jwalk::WalkDir::new(&root)
+                .skip_hidden(false)
+                .follow_links(false)
+                .into_iter()
+                .flatten()
+            {
+                if !entry.file_type().is_file() {
                     continue;
                 }
-                let days = scope_days_owned
-                    .as_ref()
-                    .and_then(|m| m.get(scope_id).copied());
-                if !mtime_older_than(&metadata, days) {
+                let path = entry.path();
+                let metadata = match entry.metadata() {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                };
+                if !path_passes_wxid(&path, wxid_filter_owned.as_deref())
+                    || !path_passes_env(&path, env_filter_owned.as_deref())
+                {
                     continue;
                 }
-                tally[i].0 = tally[i].0.saturating_add(size);
-                tally[i].1 = tally[i].1.saturating_add(1);
+                let path_str = path.to_string_lossy().replace('\\', "/");
+                let size = metadata.len();
+                for &i in &file_indices {
+                    let b = &builds[i];
+                    if !b.set.is_match(&path_str) {
+                        continue;
+                    }
+                    let days = scope_days_owned
+                        .as_ref()
+                        .and_then(|m| m.get(&b.id).copied());
+                    if !mtime_older_than(&metadata, days) {
+                        continue;
+                    }
+                    file_tally[i].0 = file_tally[i].0.saturating_add(size);
+                    file_tally[i].1 = file_tally[i].1.saturating_add(1);
+                }
             }
         }
-        sets.into_iter()
-            .zip(tally)
-            .map(|((scope_id, _), (bytes, file_count))| ScopeSize {
-                scope_id,
-                bytes,
-                file_count,
-            })
-            .collect()
+
+        // ── Directory scopes: each gets its own dir walk + size sum.
+        for &i in &dir_indices {
+            let b = &builds[i];
+            let days = scope_days_owned
+                .as_ref()
+                .and_then(|m| m.get(&b.id).copied());
+            let dirs = find_matching_dirs(
+                &root,
+                &b.set,
+                wxid_filter_owned.as_deref(),
+                env_filter_owned.as_deref(),
+                days,
+            );
+            let mut bytes: u64 = 0;
+            let mut count: u64 = 0;
+            for d in &dirs {
+                bytes = bytes.saturating_add(dir_size_excluding(d, &[]));
+                // file_count = number of dirs (each dir = one Recycle Bin entry).
+                // Showing "matched files inside" would require another walk;
+                // dir count is the more useful number for directory-granularity.
+                count = count.saturating_add(1);
+            }
+            file_tally[i] = (bytes, count);
+        }
+
+        // Build output preserving builds order.
+        for (i, b) in builds.into_iter().enumerate() {
+            results.push(ScopeSize {
+                scope_id: b.id,
+                bytes: file_tally[i].0,
+                file_count: file_tally[i].1,
+            });
+        }
+        results
     })
     .await
     .map_err(|e| e.to_string())
@@ -390,6 +536,7 @@ async fn execute_scope(
     dry_run: bool,
     older_than_days: Option<u32>,
     wxid_filter: Option<Vec<String>>,
+    env_filter: Option<Vec<String>>,
 ) -> Result<Vec<UndoEntry>, String> {
     let (scaffold, scope) = {
         let scaffolds = state.scaffolds.lock().unwrap();
@@ -419,33 +566,48 @@ async fn execute_scope(
 
     let root = PathBuf::from(&root_path);
     let wxid_filter_owned = wxid_filter;
-    let matched: Vec<PathBuf> = tokio::task::spawn_blocking(move || {
-        let mut out = Vec::new();
-        for entry in jwalk::WalkDir::new(&root)
-            .skip_hidden(false)
-            .follow_links(false)
-            .into_iter()
-            .flatten()
-        {
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let p = entry.path();
-            let metadata = match entry.metadata() {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
-            if !path_passes_wxid(&p, wxid_filter_owned.as_deref())
-                || !mtime_older_than(&metadata, older_than_days)
-            {
-                continue;
-            }
-            let s = p.to_string_lossy().replace('\\', "/");
-            if set.is_match(&s) {
-                out.push(p);
+    let env_filter_owned = env_filter;
+    let granularity = scope.recycle_granularity;
+
+    let matched: Vec<PathBuf> = tokio::task::spawn_blocking(move || -> Vec<PathBuf> {
+        match granularity {
+            RecycleGranularity::Directory => find_matching_dirs(
+                &root,
+                &set,
+                wxid_filter_owned.as_deref(),
+                env_filter_owned.as_deref(),
+                older_than_days,
+            ),
+            RecycleGranularity::File => {
+                let mut out = Vec::new();
+                for entry in jwalk::WalkDir::new(&root)
+                    .skip_hidden(false)
+                    .follow_links(false)
+                    .into_iter()
+                    .flatten()
+                {
+                    if !entry.file_type().is_file() {
+                        continue;
+                    }
+                    let p = entry.path();
+                    let metadata = match entry.metadata() {
+                        Ok(m) => m,
+                        Err(_) => continue,
+                    };
+                    if !path_passes_wxid(&p, wxid_filter_owned.as_deref())
+                        || !path_passes_env(&p, env_filter_owned.as_deref())
+                        || !mtime_older_than(&metadata, older_than_days)
+                    {
+                        continue;
+                    }
+                    let s = p.to_string_lossy().replace('\\', "/");
+                    if set.is_match(&s) {
+                        out.push(p);
+                    }
+                }
+                out
             }
         }
-        out
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -454,10 +616,22 @@ async fn execute_scope(
         return Ok(Vec::new());
     }
 
-    let action = match scope.mode {
-        diskwise_scaffold::Mode::Recycle => diskwise_executor::Action::Recycle,
-        diskwise_scaffold::Mode::Quarantine => diskwise_executor::Action::Quarantine,
-        diskwise_scaffold::Mode::Delete => diskwise_executor::Action::Delete,
+    // Directory granularity is locked to Recycle regardless of scope.mode —
+    // an entire directory removal is high cost to undo (rebuild conda env =
+    // minutes to hours, project node_modules = redownload everything),
+    // recoverability via Recycle Bin is non-negotiable. File granularity
+    // honors the scope's declared mode (recycle/quarantine/delete) as before.
+    let action = match (granularity, scope.mode) {
+        (RecycleGranularity::Directory, _) => diskwise_executor::Action::Recycle,
+        (RecycleGranularity::File, diskwise_scaffold::Mode::Recycle) => {
+            diskwise_executor::Action::Recycle
+        }
+        (RecycleGranularity::File, diskwise_scaffold::Mode::Quarantine) => {
+            diskwise_executor::Action::Quarantine
+        }
+        (RecycleGranularity::File, diskwise_scaffold::Mode::Delete) => {
+            diskwise_executor::Action::Delete
+        }
     };
     let plan = Plan {
         action,
@@ -465,6 +639,125 @@ async fn execute_scope(
         reason: format!("Diskwise scaffold {}/{} (Studio)", scaffold.id, scope.id),
     };
     execute(&plan, dry_run, &state.undo_log, &state.quarantine_root).map_err(|e| e.to_string())
+}
+
+/// Per-env metadata for the conda card's env list. `last_active_ts` is the
+/// mtime of `<env>/conda-meta/history`, conda's own "last operation" timestamp
+/// (install/remove/update). Pure `conda activate` does NOT update history —
+/// "every-day-but-don't-install" envs may show stale; mode = recycle keeps
+/// that recoverable. `default_checked` is the backend's recommendation
+/// (!is_base && stale > 90d) that the UI uses to seed checkbox state.
+#[derive(serde::Serialize, Clone)]
+struct CondaEnv {
+    name: String,
+    path: String,
+    size_bytes: u64,
+    last_active_ts: Option<u64>,
+    is_base: bool,
+    default_checked: bool,
+}
+
+const CONDA_STALE_DAYS: u64 = 90;
+
+#[tauri::command]
+async fn list_conda_envs(conda_root: String) -> Result<Vec<CondaEnv>, String> {
+    let root = PathBuf::from(&conda_root);
+    if !root.exists() {
+        return Err(format!("conda root does not exist: {conda_root}"));
+    }
+    tokio::task::spawn_blocking(move || -> Vec<CondaEnv> {
+        let mut out = Vec::new();
+        let now_secs = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let stale_cutoff_secs = CONDA_STALE_DAYS * 86_400;
+
+        // Base env occupies <root>/ itself. Exclude envs/ and pkgs/ subtrees
+        // when summing — those have their own scope cards and shouldn't be
+        // double-counted in the base row's size.
+        let envs_subdir = root.join("envs");
+        let pkgs_subdir = root.join("pkgs");
+        let base_history = root.join("conda-meta/history");
+        let base_last = read_mtime_secs(&base_history);
+        let base_size = dir_size_excluding(&root, &[envs_subdir.clone(), pkgs_subdir]);
+        out.push(CondaEnv {
+            name: "base".to_string(),
+            path: root.to_string_lossy().replace('\\', "/"),
+            size_bytes: base_size,
+            last_active_ts: base_last,
+            is_base: true,
+            default_checked: false,
+        });
+
+        // User envs at <root>/envs/<name>/
+        if let Ok(rd) = std::fs::read_dir(&envs_subdir) {
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if !p.is_dir() {
+                    continue;
+                }
+                let name = match p.file_name() {
+                    Some(n) => n.to_string_lossy().into_owned(),
+                    None => continue,
+                };
+                let history = p.join("conda-meta/history");
+                let last = read_mtime_secs(&history);
+                let size = dir_size_excluding(&p, &[]);
+                let default_checked = match last {
+                    Some(ts) => now_secs.saturating_sub(ts) > stale_cutoff_secs,
+                    // No history → no signal. Conservative: don't auto-select.
+                    None => false,
+                };
+                out.push(CondaEnv {
+                    name,
+                    path: p.to_string_lossy().replace('\\', "/"),
+                    size_bytes: size,
+                    last_active_ts: last,
+                    is_base: false,
+                    default_checked,
+                });
+            }
+        }
+        out
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+fn read_mtime_secs(p: &Path) -> Option<u64> {
+    let md = std::fs::metadata(p).ok()?;
+    let modified = md.modified().ok()?;
+    modified.duration_since(SystemTime::UNIX_EPOCH).ok().map(|d| d.as_secs())
+}
+
+/// Recursive byte sum under `dir`, skipping any file whose path starts with
+/// one of the `excludes` prefixes (after normalizing slashes + lowercasing).
+/// Used to compute base env size without counting the envs/ + pkgs/ subtrees.
+fn dir_size_excluding(dir: &Path, excludes: &[PathBuf]) -> u64 {
+    let exclude_prefixes: Vec<String> = excludes
+        .iter()
+        .map(|p| p.to_string_lossy().replace('\\', "/").to_lowercase())
+        .collect();
+    let mut total: u64 = 0;
+    for entry in jwalk::WalkDir::new(dir)
+        .skip_hidden(false)
+        .follow_links(false)
+        .into_iter()
+        .flatten()
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let p = entry.path().to_string_lossy().replace('\\', "/").to_lowercase();
+        if exclude_prefixes.iter().any(|e| p.starts_with(e)) {
+            continue;
+        }
+        if let Ok(md) = entry.metadata() {
+            total = total.saturating_add(md.len());
+        }
+    }
+    total
 }
 
 #[tauri::command]
@@ -564,6 +857,7 @@ pub fn run() {
             detect_scaffold,
             scope_sizes,
             execute_scope,
+            list_conda_envs,
             advise,
             inspect_path,
             execute_plan,

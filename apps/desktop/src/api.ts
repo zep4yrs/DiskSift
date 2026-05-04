@@ -6,6 +6,7 @@ import type {
   AdvisorResponse,
   Plan,
   UndoEntry,
+  CondaEnv,
 } from './types';
 import { isTauri } from './env';
 import * as mocks from './mocks';
@@ -25,6 +26,7 @@ export const api = {
     rootPath: string,
     scopeDays?: Record<string, number>,
     wxidFilter?: string[],
+    envFilter?: string[],
   ) =>
     isTauri
       ? invoke<{ scope_id: string; bytes: number; file_count: number }[]>('scope_sizes', {
@@ -32,6 +34,7 @@ export const api = {
           rootPath,
           scopeDays: scopeDays ?? null,
           wxidFilter: wxidFilter ?? null,
+          envFilter: envFilter ?? null,
         })
       : mocks.scopeSizes(scaffoldId, rootPath),
 
@@ -42,6 +45,7 @@ export const api = {
     dryRun: boolean,
     olderThanDays?: number,
     wxidFilter?: string[],
+    envFilter?: string[],
   ) =>
     isTauri
       ? invoke<UndoEntry[]>('execute_scope', {
@@ -51,8 +55,14 @@ export const api = {
           dryRun,
           olderThanDays: olderThanDays ?? null,
           wxidFilter: wxidFilter ?? null,
+          envFilter: envFilter ?? null,
         })
       : Promise.resolve([] as UndoEntry[]),
+
+  listCondaEnvs: (condaRoot: string) =>
+    isTauri
+      ? invoke<CondaEnv[]>('list_conda_envs', { condaRoot })
+      : Promise.resolve([] as CondaEnv[]),
 
   advise: (req: AdvisorRequest) =>
     isTauri ? invoke<AdvisorResponse>('advise', { req }) : mocks.advise(req),
