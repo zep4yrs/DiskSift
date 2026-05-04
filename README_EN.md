@@ -12,7 +12,7 @@ Open-source disk cleaner. Scan a whole drive in seconds to see where the bytes w
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB.svg)](https://tauri.app)
 [![Platform](https://img.shields.io/badge/Win%20·%20macOS%20·%20Linux-lightgrey.svg)](#download)
 
-[Download](#download) · [Demo](#demo) · [Features](#three-things) · [Usage](#usage) · [Architecture](#architecture) · [Roadmap](#roadmap) · [Contributing](#contributing) · [Acknowledgments](#acknowledgments)
+[Download](#download) · [Demo](#demo) · [Three things](#three-things) · [Usage](#usage) · [Architecture](#architecture) · [Roadmap](#roadmap) · [Contributing](#contributing) · [Acknowledgments](#acknowledgments)
 
 **[简体中文](README.md) | English**
 
