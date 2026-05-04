@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 #[cfg(windows)]
 mod mft;
@@ -68,6 +69,23 @@ pub struct ScanProgress {
     pub current_path: String,
 }
 
+/// Phase-level timings for a scan. Diagnostic only — emit via the Tauri command
+/// alongside the tree so the UI / packaged binary can show "where the time went"
+/// without needing RUST_LOG=info.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ScanStats {
+    pub mode: String,           // "mft" | "walkdir"
+    pub mft_attempted: bool,
+    pub mft_succeeded: bool,
+    pub mft_ms: u64,            // total time spent in the MFT branch (success or fallback)
+    pub walk_ms: u64,           // jwalk consume loop (only set in walkdir mode)
+    pub build_tree_ms: u64,     // build_tree recursion + 2nd read_dir pass
+    pub total_ms: u64,
+    pub files_seen: u64,
+    pub bytes_seen: u64,
+    pub dirs_in_acc: u64,       // accs.len() — proxy for memory pressure (walkdir mode only)
+}
+
 pub fn scan<P: AsRef<Path>>(root: P) -> anyhow::Result<Node> {
     scan_with(root, ScanOptions::default(), |_| {})
 }
@@ -77,7 +95,24 @@ where
     P: AsRef<Path>,
     F: Fn(&ScanProgress) + Send + Sync,
 {
+    scan_with_stats(root, opts, on_progress).map(|(n, _)| n)
+}
+
+/// Same as `scan_with`, but also returns phase-level timings. Internal API for
+/// the desktop app's diagnostics bar — keeps `scan` / `scan_with` unchanged.
+pub fn scan_with_stats<P, F>(
+    root: P,
+    opts: ScanOptions,
+    on_progress: F,
+) -> anyhow::Result<(Node, ScanStats)>
+where
+    P: AsRef<Path>,
+    F: Fn(&ScanProgress) + Send + Sync,
+{
     let root = root.as_ref().to_path_buf();
+    let total_t0 = Instant::now();
+    let mut stats = ScanStats::default();
+    tracing::info!("scan: start root={:?}", root);
 
     // Try the MFT fast path on Windows when the root is on an NTFS volume.
     #[cfg(windows)]
@@ -85,6 +120,8 @@ where
         if let Some(letter) = drive_letter_of(&root) {
             let subroot = if is_drive_root(&root) { None } else { Some(root.as_path()) };
             let progress = &on_progress;
+            stats.mft_attempted = true;
+            let mft_t0 = Instant::now();
             match mft::scan_volume(letter, subroot, |records, bytes| {
                 progress(&ScanProgress {
                     files_seen: records,
@@ -93,20 +130,38 @@ where
                 });
             }) {
                 Ok(n) => {
+                    stats.mft_ms = mft_t0.elapsed().as_millis() as u64;
+                    stats.mft_succeeded = true;
+                    stats.mode = "mft".into();
+                    stats.files_seen = n.file_count;
+                    stats.bytes_seen = n.size;
+                    stats.total_ms = total_t0.elapsed().as_millis() as u64;
+                    tracing::info!(
+                        "scan: mode=mft mft_ms={} total_ms={} files={} bytes={}",
+                        stats.mft_ms,
+                        stats.total_ms,
+                        stats.files_seen,
+                        stats.bytes_seen,
+                    );
                     progress(&ScanProgress {
                         files_seen: n.file_count,
                         bytes_seen: n.size,
                         current_path: "done (mft)".into(),
                     });
-                    return Ok(n);
+                    return Ok((n, stats));
                 }
                 Err(e) => {
-                    tracing::warn!("MFT scan failed, falling back to walkdir: {e:#}");
+                    stats.mft_ms = mft_t0.elapsed().as_millis() as u64;
+                    tracing::warn!(
+                        "MFT scan failed after {} ms, falling back to walkdir: {e:#}",
+                        stats.mft_ms
+                    );
                 }
             }
         }
     }
 
+    stats.mode = "walkdir".into();
     let files_seen = Arc::new(AtomicU64::new(0));
     let bytes_seen = Arc::new(AtomicU64::new(0));
     let last_emit = Arc::new(AtomicU64::new(0));
@@ -123,6 +178,7 @@ where
     }
 
     let mut accs: HashMap<PathBuf, DirAcc> = HashMap::new();
+    let walk_t0 = Instant::now();
 
     for entry in walker.into_iter().flatten() {
         if !entry.file_type().is_file() {
@@ -170,13 +226,36 @@ where
         }
     }
 
+    stats.walk_ms = walk_t0.elapsed().as_millis() as u64;
+    stats.files_seen = files_seen.load(Ordering::Relaxed);
+    stats.bytes_seen = bytes_seen.load(Ordering::Relaxed);
+    stats.dirs_in_acc = accs.len() as u64;
+    tracing::info!(
+        "scan: walk done walk_ms={} files={} bytes={} dirs_in_acc={}",
+        stats.walk_ms,
+        stats.files_seen,
+        stats.bytes_seen,
+        stats.dirs_in_acc,
+    );
+
     on_progress(&ScanProgress {
-        files_seen: files_seen.load(Ordering::Relaxed),
-        bytes_seen: bytes_seen.load(Ordering::Relaxed),
+        files_seen: stats.files_seen,
+        bytes_seen: stats.bytes_seen,
         current_path: "done".into(),
     });
 
-    Ok(build_tree(&root, &accs, opts.keep_files_per_dir))
+    let build_t0 = Instant::now();
+    let tree = build_tree(&root, &accs, opts.keep_files_per_dir);
+    stats.build_tree_ms = build_t0.elapsed().as_millis() as u64;
+    stats.total_ms = total_t0.elapsed().as_millis() as u64;
+    tracing::info!(
+        "scan: mode=walkdir walk_ms={} build_tree_ms={} total_ms={} dirs_in_acc={}",
+        stats.walk_ms,
+        stats.build_tree_ms,
+        stats.total_ms,
+        stats.dirs_in_acc,
+    );
+    Ok((tree, stats))
 }
 
 fn build_tree(dir: &Path, accs: &HashMap<PathBuf, DirAcc>, keep_files: Option<usize>) -> Node {

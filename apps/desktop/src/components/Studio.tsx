@@ -115,7 +115,15 @@ export function Studio() {
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
+  // Differential A/B knob: localStorage.setItem('diskwise.hideStudio','1')
+  // skips both the useMemo DFS and the render so we can measure their cost.
+  const hidden = (() => {
+    try { return localStorage.getItem('diskwise.hideStudio') === '1'; } catch { return false; }
+  })();
+
   const allCards: CardData[] = useMemo(() => {
+    if (hidden) return [];
+    const t0 = performance.now();
     const items: CardData[] = scaffolds.map((sc) => {
       const m = detectedNodeFor(root, sc);
       return { scaffold: sc, match: m, size: m?.size ?? 0 };
@@ -127,8 +135,24 @@ export function Studio() {
       if (a.match && b.match) return b.size - a.size;
       return a.scaffold.name.localeCompare(b.scaffold.name);
     });
+    const ms = performance.now() - t0;
+    if (root) {
+      // eslint-disable-next-line no-console
+      console.log(`[diskwise.diag] Studio.useMemo ${ms.toFixed(1)}ms · ${scaffolds.length} scaffolds × full-tree DFS`);
+    }
     return items;
-  }, [scaffolds, root]);
+  }, [scaffolds, root, hidden]);
+
+  if (hidden) {
+    return (
+      <div className="studio">
+        <div className="studio-head">
+          <span>Studio</span>
+          <span className="muted small">已隐藏（diskwise.hideStudio=1）</span>
+        </div>
+      </div>
+    );
+  }
 
   const featured = allCards.filter((c) => FEATURED_IDS.includes(c.scaffold.id));
   const others = allCards.filter((c) => !FEATURED_IDS.includes(c.scaffold.id));

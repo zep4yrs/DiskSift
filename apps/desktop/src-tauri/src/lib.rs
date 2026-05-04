@@ -3,8 +3,10 @@ use std::sync::Mutex;
 
 use diskwise_advisor::{advise as advise_provider, AdvisorRequest, AdvisorResponse, Provider};
 use diskwise_executor::{execute, Plan, UndoEntry};
-use diskwise_scaffold::{detect_for, expand_env, load_dir, Scaffold};
-use diskwise_scanner::{sample_paths, scan_with, Node, ScanOptions};
+use diskwise_scaffold::{
+    compile_all, detect_compiled, detect_for, expand_env, load_dir, CompiledScaffold, Scaffold,
+};
+use diskwise_scanner::{sample_paths, scan_with_stats, Node, ScanOptions, ScanStats};
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -23,11 +25,23 @@ struct AppState {
 }
 
 #[tauri::command]
-async fn scan_path(app: AppHandle, path: String) -> Result<Node, String> {
+async fn scan_path(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Node, String> {
     let p = PathBuf::from(&path);
     let app_for_progress = app.clone();
-    tokio::task::spawn_blocking(move || {
-        scan_with(p, ScanOptions::default(), |progress| {
+    let app_for_stats = app.clone();
+    let cmd_t0 = std::time::Instant::now();
+
+    // Compile scaffolds outside spawn_blocking so we don't carry the AppState
+    // Mutex across thread boundaries. The compiled form is `Send` and used by
+    // the post-scan walk to fill `Node.scaffold_id`.
+    let compiled = compile_all(&state.scaffolds.lock().unwrap().clone());
+
+    let result = tokio::task::spawn_blocking(move || {
+        let scan_result = scan_with_stats(p, ScanOptions::default(), |progress| {
             let _ = app_for_progress.emit(
                 "scan-progress",
                 ScanProgressEvent {
@@ -36,11 +50,92 @@ async fn scan_path(app: AppHandle, path: String) -> Result<Node, String> {
                     current_path: progress.current_path.clone(),
                 },
             );
-        })
+        });
+        // After the scan returns, walk the tree once to fill scaffold_id and
+        // apply the depth-based breadth caps that the frontend's tagScaffolds
+        // used to apply. Doing both here in one pass with pre-compiled
+        // GlobSets replaces the previous per-directory IPC storm.
+        let tag_t0 = std::time::Instant::now();
+        let scan_result = scan_result.map(|(mut node, stats)| {
+            tag_and_truncate(&mut node, &compiled, 0);
+            (node, stats, tag_t0.elapsed().as_millis() as u64)
+        });
+        scan_result
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+
+    match result {
+        Ok((node, stats, tag_ms)) => {
+            let cmd_ms = cmd_t0.elapsed().as_millis() as u64;
+            tracing::info!(
+                "scan_path: cmd_ms={} scanner_ms={} tag_ms={} overhead={}ms",
+                cmd_ms,
+                stats.total_ms,
+                tag_ms,
+                cmd_ms.saturating_sub(stats.total_ms).saturating_sub(tag_ms),
+            );
+            let _ = app_for_stats.emit("scan-stats", &ScanStatsEvent::from((cmd_ms, tag_ms, &stats)));
+            Ok(node)
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Walks `node` in place, filling `scaffold_id` for directories and truncating
+/// each level's children to the same depth-based caps the old frontend
+/// `tagScaffolds` applied (depth<2 → 100, depth<4 → 50, else → 20). Children
+/// arrive sorted by size desc from `build_tree`, so truncating preserves the
+/// "biggest N" subset the UI used to render.
+fn tag_and_truncate(node: &mut Node, compiled: &[CompiledScaffold], depth: usize) {
+    if node.is_dir {
+        node.scaffold_id = detect_compiled(compiled, std::path::Path::new(&node.path));
+    }
+    let cap = if depth < 2 { 100 } else if depth < 4 { 50 } else { 20 };
+    if node.children.len() > cap {
+        node.children.truncate(cap);
+    }
+    for c in &mut node.children {
+        tag_and_truncate(c, compiled, depth + 1);
+    }
+}
+
+#[derive(serde::Serialize, Clone)]
+struct ScanStatsEvent {
+    mode: String,
+    mft_attempted: bool,
+    mft_succeeded: bool,
+    mft_ms: u64,
+    walk_ms: u64,
+    build_tree_ms: u64,
+    /// Time inside `scan_with_stats` (mft_ms + walk_ms + build_tree_ms + overhead).
+    scanner_total_ms: u64,
+    /// Time spent in the post-scan tag-and-truncate pass (replaces frontend tagScaffolds).
+    tag_ms: u64,
+    /// Time inside the `scan_path` command (scanner_total_ms + tag_ms + spawn_blocking overhead).
+    cmd_total_ms: u64,
+    files_seen: u64,
+    bytes_seen: u64,
+    dirs_in_acc: u64,
+}
+
+impl From<(u64, u64, &ScanStats)> for ScanStatsEvent {
+    fn from((cmd_ms, tag_ms, s): (u64, u64, &ScanStats)) -> Self {
+        Self {
+            mode: s.mode.clone(),
+            mft_attempted: s.mft_attempted,
+            mft_succeeded: s.mft_succeeded,
+            mft_ms: s.mft_ms,
+            walk_ms: s.walk_ms,
+            build_tree_ms: s.build_tree_ms,
+            scanner_total_ms: s.total_ms,
+            tag_ms,
+            cmd_total_ms: cmd_ms,
+            files_seen: s.files_seen,
+            bytes_seen: s.bytes_seen,
+            dirs_in_acc: s.dirs_in_acc,
+        }
+    }
 }
 
 #[tauri::command]

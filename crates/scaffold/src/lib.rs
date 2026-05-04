@@ -191,6 +191,77 @@ fn make_globset(patterns: &[&str]) -> anyhow::Result<globset::GlobSet> {
     Ok(b.build()?)
 }
 
+/// Pre-compiled form of a `Scaffold` for hot-path matching. Holds the union of
+/// all `detect` globs as a single `GlobSet`, plus lower-cased copies of the
+/// fragment lists. Callers that need to detect against many paths (e.g. tag
+/// every directory in a scan tree) should call `compile_all` once and then
+/// `detect_compiled` per path — vs `detect_for`, which rebuilds globsets on
+/// every call.
+pub struct CompiledScaffold {
+    pub id: String,
+    detect_globs: globset::GlobSet,
+    name_fragments_lc: Vec<String>,
+    must_have_child: Vec<String>,
+}
+
+/// Compile a list of scaffolds to the matching-friendly form. Bad globs are
+/// logged and skipped (preserving `detect_for`'s permissive behavior — a single
+/// broken pattern doesn't disable the whole scaffold).
+pub fn compile_all(scaffolds: &[Scaffold]) -> Vec<CompiledScaffold> {
+    scaffolds
+        .iter()
+        .map(|s| {
+            let patterns: Vec<String> = s
+                .detect
+                .iter()
+                .map(|d| norm(&expand_env(d)).to_lowercase())
+                .collect();
+            let pattern_refs: Vec<&str> = patterns.iter().map(String::as_str).collect();
+            let detect_globs = match make_globset(&pattern_refs) {
+                Ok(set) => set,
+                Err(e) => {
+                    tracing::warn!("scaffold {}: globset compile failed ({}); falling back to empty set", s.id, e);
+                    globset::GlobSetBuilder::new().build().expect("empty globset")
+                }
+            };
+            CompiledScaffold {
+                id: s.id.clone(),
+                detect_globs,
+                name_fragments_lc: s
+                    .matcher
+                    .name_contains
+                    .iter()
+                    .map(|n| n.to_lowercase())
+                    .collect(),
+                must_have_child: s.matcher.must_have_child.clone(),
+            }
+        })
+        .collect()
+}
+
+/// Same matching semantics as `detect_for`, but uses pre-compiled scaffolds.
+/// Returns the first matching scaffold's id, or `None`.
+pub fn detect_compiled(compiled: &[CompiledScaffold], path: &Path) -> Option<String> {
+    let path_norm_lc = norm(&path.to_string_lossy()).to_lowercase();
+    let basename_lc = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+
+    for c in compiled {
+        if c.detect_globs.is_match(&path_norm_lc) {
+            return Some(c.id.clone());
+        }
+        if !c.name_fragments_lc.is_empty()
+            && c.name_fragments_lc.iter().any(|n| basename_lc.contains(n))
+            && c.must_have_child.iter().all(|child| path.join(child).exists())
+        {
+            return Some(c.id.clone());
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

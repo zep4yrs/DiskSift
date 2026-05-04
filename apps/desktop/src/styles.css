@@ -275,6 +275,32 @@ input:focus, select:focus {
   letter-spacing: -0.01em;
 }
 
+/* ── Diagnostics ───────────────────────────────────────────────────── */
+.diag-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--paper-2);
+  border-bottom: 2px solid var(--ink);
+  color: var(--ink);
+}
+.diag-bar .diag-label {
+  font-weight: 700;
+  background: var(--ink);
+  color: var(--paper);
+  padding: 1px 6px;
+  border-radius: 2px;
+  letter-spacing: 0.02em;
+}
+.diag-bar .diag-stats {
+  flex: 1;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
 /* ── Banner ────────────────────────────────────────────────────────── */
 .banner {
   padding: 8px 16px;

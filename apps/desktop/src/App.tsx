@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Folder, ScanLine, Settings as SettingsIcon } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
@@ -18,6 +18,29 @@ import { loadSettings, isConfigured } from './advisorClient';
 function isDriveRoot(p: string): boolean {
   // C: / C:\ / C:/  — anything beyond is a subfolder
   return /^[A-Za-z]:[\\/]?$/.test(p);
+}
+
+interface ScanStatsEvent {
+  mode: string;
+  mft_attempted: boolean;
+  mft_succeeded: boolean;
+  mft_ms: number;
+  walk_ms: number;
+  build_tree_ms: number;
+  scanner_total_ms: number;
+  tag_ms: number;             // post-scan walk: detect_compiled + truncation
+  cmd_total_ms: number;
+  files_seen: number;
+  bytes_seen: number;
+  dirs_in_acc: number;
+}
+
+interface ScanDiag {
+  backend: ScanStatsEvent | null;
+  ipcMs: number | null;       // null when backend stats event didn't arrive
+  scanCallMs: number;         // total api.scan() round-trip
+  setRootMs: number;          // setRoot+select sync work
+  totalMs: number;            // entire scan() handler
 }
 
 const DEFAULT_LEFT = 620;
@@ -41,6 +64,10 @@ export default function App() {
   const [pickedPath, setPickedPath] = useState<string>('');
   const [showSettings, setShowSettings] = useState(false);
   const [advisorTag, setAdvisorTag] = useState<{ provider: string } | null>(null);
+  const [diag, setDiag] = useState<ScanDiag | null>(null);
+  // Holds the latest scan-stats event so we can merge it into ScanDiag once
+  // api.scan() returns. Tauri emits the event right before the command resolves.
+  const lastBackendStats = useRef(null as ScanStatsEvent | null);
 
   const refreshAdvisorTag = () => {
     const s = loadSettings();
@@ -85,6 +112,14 @@ export default function App() {
     return () => { unlisten.then((u) => u()); };
   }, []);
 
+  useEffect(() => {
+    if (!isTauri) return;
+    const unlisten = listen<ScanStatsEvent>('scan-stats', (e) => {
+      lastBackendStats.current = e.payload;
+    });
+    return () => { unlisten.then((u) => u()); };
+  }, []);
+
   const pickDirectory = async () => {
     if (!isTauri) {
       const p = window.prompt('浏览器预览模式：输入一个路径（任意值都可以）', 'C:\\');
@@ -97,7 +132,8 @@ export default function App() {
 
   const scan = async () => {
     if (!pickedPath) return;
-    setErr(null); setScanning(true); setScanProgress(null); setScanTotalBytes(null);
+    setErr(null); setScanning(true); setScanProgress(null); setScanTotalBytes(null); setDiag(null);
+    lastBackendStats.current = null;
     if (isTauri) {
       if (isDriveRoot(pickedPath)) {
         // Drive root: ask the OS for used bytes — instant, exact.
@@ -113,28 +149,45 @@ export default function App() {
           .catch(() => {});
       }
     }
+    const tTotal0 = performance.now();
     try {
+      const tScan0 = performance.now();
       const node = await api.scan(pickedPath);
-      const tagged = await tagScaffolds(node);
-      setRoot(tagged);
-      select(tagged.path);
+      const tScan1 = performance.now();
+
+      const tSet0 = performance.now();
+      setRoot(node);
+      select(node.path);
+      const tSet1 = performance.now();
+
+      const totalMs = tSet1 - tTotal0;
+      // Cast through the ref accessor: TS narrows `.current` to the last
+      // assignment it sees in this flow (the `= null` reset earlier), missing
+      // the listener's assignment from another effect.
+      const backend = (lastBackendStats.current as unknown) as ScanStatsEvent | null;
+      const ipcMs: number | null =
+        backend !== null ? Math.max(0, (tScan1 - tScan0) - backend.cmd_total_ms) : null;
+      const next: ScanDiag = {
+        backend,
+        ipcMs,
+        scanCallMs: tScan1 - tScan0,
+        setRootMs: tSet1 - tSet0,
+        totalMs,
+      };
+      setDiag(next);
+      // eslint-disable-next-line no-console
+      console.log('[diskwise.diag]', {
+        backend,
+        scanCallMs: next.scanCallMs.toFixed(1),
+        ipcMs: ipcMs?.toFixed(1) ?? null,
+        setRootMs: next.setRootMs.toFixed(1),
+        totalMs: totalMs.toFixed(1),
+      });
     } catch (e) {
       setErr(String(e));
     } finally {
       setScanning(false);
     }
-  };
-
-  const tagScaffolds = async (n: any, depth = 0): Promise<any> => {
-    const id = n.is_dir ? await api.detectScaffold(n.path).catch(() => null) : null;
-    const cap = depth < 2 ? 100 : depth < 4 ? 50 : 20;
-    return {
-      ...n,
-      scaffold_id: id,
-      children: await Promise.all(
-        (n.children ?? []).slice(0, cap).map((c: any) => tagScaffolds(c, depth + 1)),
-      ),
-    };
   };
 
   return (
@@ -183,6 +236,7 @@ export default function App() {
           </div>
         </div>
       )}
+      {diag && !scanning && <DiagnosticsBar diag={diag} />}
       {err && <div className="banner error">{err}</div>}
 
       <main style={{ gridTemplateColumns: `${leftWidth}px 4px 1fr 4px ${rightWidth}px` }}>
@@ -220,6 +274,37 @@ function EmptyLeft() {
     <div className="empty">
       <div className="empty-title">还没扫描</div>
       <div className="empty-sub">在顶栏选一个文件夹，然后点「扫描」。<br />扫完之后，左侧会列出每个文件夹和文件。</div>
+    </div>
+  );
+}
+
+function fmtMs(ms: number | null | undefined): string {
+  if (ms == null) return '—';
+  if (ms < 1000) return `${ms.toFixed(0)}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+}
+
+function DiagnosticsBar({ diag }: { diag: ScanDiag }) {
+  const b = diag.backend;
+  const parts: string[] = [];
+  if (b) {
+    parts.push(`mode=${b.mode}`);
+    if (b.mft_attempted) parts.push(`mft=${b.mft_succeeded ? 'ok' : 'fail'}/${fmtMs(b.mft_ms)}`);
+    if (b.mode === 'walkdir') {
+      parts.push(`walk=${fmtMs(b.walk_ms)}`);
+      parts.push(`build_tree=${fmtMs(b.build_tree_ms)}`);
+      parts.push(`dirs=${b.dirs_in_acc.toLocaleString()}`);
+    }
+    parts.push(`scanner=${fmtMs(b.scanner_total_ms)}`);
+    parts.push(`tag=${fmtMs(b.tag_ms)}`);
+  }
+  parts.push(`ipc=${fmtMs(diag.ipcMs)}`);
+  parts.push(`setRoot=${fmtMs(diag.setRootMs)}`);
+  parts.push(`total=${fmtMs(diag.totalMs)}`);
+  return (
+    <div className="diag-bar" title="扫描各阶段耗时 — localStorage 开关：diskwise.hideStudio">
+      <span className="diag-label">诊断</span>
+      <span className="diag-stats">{parts.join(' · ')}</span>
     </div>
   );
 }
