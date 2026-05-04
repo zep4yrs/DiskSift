@@ -1195,113 +1195,270 @@ footer {
 .chat-hero h3 { font-family: var(--font-mono); margin: 4px 0 0; font-size: 18px; }
 .chat-hero p { margin: 0; color: var(--ink-2); font-weight: 500; line-height: 1.6; font-size: 13px; }
 .chat-hero p.muted { font-size: 11px; }
-.chat-turn { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
-.chat-turn.user { align-items: flex-end; }
-.chat-turn.assistant { align-items: flex-start; }
-.chat-turn.system { align-items: center; }
-.chat-bubble {
-  max-width: 88%;
-  padding: 14px 16px;
-  border: 2.5px solid var(--ink);
-  border-radius: 14px;
-  background: var(--card);
-  box-shadow: var(--shadow-sm);
-  line-height: 1.7;
-  font-weight: 500;
-  font-size: 13.5px;
+/* === Chat layout =========================================================== */
+.chat-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 18px;
+  animation: chat-fade-in 220ms ease-out both;
 }
-.chat-turn.user .chat-bubble { background: var(--pink); color: var(--ink); white-space: pre-wrap; }
-.chat-turn.assistant .chat-bubble { background: var(--card); }
+.chat-turn.user { align-items: flex-end; }
+.chat-turn.assistant { align-items: stretch; max-width: 100%; }
+.chat-turn.system { align-items: center; }
+
+@keyframes chat-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* === Common bubble base ==================================================== */
+.chat-bubble {
+  font-size: 13.5px;
+  font-weight: 450;
+  line-height: 1.78;
+  letter-spacing: 0.005em;
+  word-break: break-word;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* User bubble — keep the cute pink card, tighten typography */
+.chat-turn.user .chat-bubble {
+  max-width: 88%;
+  padding: 12px 16px;
+  border: 2px solid var(--ink);
+  border-radius: 16px 16px 4px 16px;
+  background: var(--pink);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+  white-space: pre-wrap;
+  font-weight: 500;
+}
+
+/* Assistant bubble — clean editorial card, no heavy black border, full width
+   with a thin pink accent ribbon on the left to mark the AI side. */
+.chat-turn.assistant .chat-bubble {
+  position: relative;
+  width: 100%;
+  padding: 14px 18px 14px 22px;
+  border: 1px solid rgba(21, 8, 24, 0.08);
+  border-left: 3px solid var(--pink);
+  border-radius: 4px 14px 14px 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #fffafc 100%);
+  box-shadow:
+    0 1px 0 rgba(21, 8, 24, 0.02),
+    0 6px 18px -10px rgba(226, 63, 134, 0.12);
+  color: var(--ink-2);
+}
+
+/* System bubble — small mint pill */
 .chat-turn.system .chat-bubble {
   background: var(--mint);
   font-size: 11px;
   font-weight: 700;
-  padding: 6px 10px;
-  box-shadow: var(--shadow-sm);
+  padding: 5px 12px;
+  border-radius: 999px;
   white-space: pre-wrap;
+  color: var(--ink);
 }
+
 .chat-turn.pending .chat-bubble { opacity: 0.6; font-style: italic; }
 
-/* Markdown rendering in assistant bubbles */
+/* === Markdown inside assistant bubble ====================================== */
 .chat-turn.assistant .chat-bubble > *:first-child { margin-top: 0; }
 .chat-turn.assistant .chat-bubble > *:last-child { margin-bottom: 0; }
-.chat-turn.assistant .chat-bubble p { margin: 0 0 10px; line-height: 1.75; }
+
+/* Paragraphs */
+.chat-turn.assistant .chat-bubble p {
+  margin: 0 0 12px;
+  line-height: 1.82;
+  color: var(--ink-2);
+}
 .chat-turn.assistant .chat-bubble p:last-child { margin-bottom: 0; }
+
+/* Headings — quiet hierarchy, no shouty weight, with a pink dot for h2/h3 */
 .chat-turn.assistant .chat-bubble h1,
 .chat-turn.assistant .chat-bubble h2,
 .chat-turn.assistant .chat-bubble h3,
 .chat-turn.assistant .chat-bubble h4 {
-  margin: 14px 0 8px;
-  font-weight: 700;
-  line-height: 1.3;
+  margin: 18px 0 8px;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--ink);
+  letter-spacing: -0.005em;
 }
 .chat-turn.assistant .chat-bubble h1 { font-size: 17px; }
-.chat-turn.assistant .chat-bubble h2 { font-size: 15.5px; }
-.chat-turn.assistant .chat-bubble h3 { font-size: 14px; }
-.chat-turn.assistant .chat-bubble h4 { font-size: 13.5px; }
+.chat-turn.assistant .chat-bubble h2 {
+  font-size: 15.5px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(226, 63, 134, 0.12);
+}
+.chat-turn.assistant .chat-bubble h3 {
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.chat-turn.assistant .chat-bubble h3::before {
+  content: "";
+  display: inline-block;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--pink);
+  flex-shrink: 0;
+}
+.chat-turn.assistant .chat-bubble h4 { font-size: 13px; color: var(--ink-2); }
+
+/* Strong / em — restrained pink emphasis */
+.chat-turn.assistant .chat-bubble strong {
+  font-weight: 650;
+  color: var(--ink);
+  background: linear-gradient(180deg, transparent 60%, rgba(226, 63, 134, 0.14) 60%);
+  padding: 0 1px;
+}
+.chat-turn.assistant .chat-bubble em { font-style: italic; color: var(--ink-2); }
+
+/* Lists with custom pink markers */
 .chat-turn.assistant .chat-bubble ul,
 .chat-turn.assistant .chat-bubble ol {
-  margin: 6px 0 12px;
-  padding-left: 22px;
+  margin: 8px 0 14px;
+  padding-left: 4px;
+  list-style: none;
 }
-.chat-turn.assistant .chat-bubble li { margin: 3px 0; line-height: 1.7; }
-.chat-turn.assistant .chat-bubble li > p { margin: 0; }
-.chat-turn.assistant .chat-bubble strong { font-weight: 700; color: var(--pink-deep); }
-.chat-turn.assistant .chat-bubble em { font-style: italic; }
+.chat-turn.assistant .chat-bubble li {
+  margin: 4px 0;
+  line-height: 1.78;
+  padding-left: 22px;
+  position: relative;
+}
+.chat-turn.assistant .chat-bubble ul > li::before {
+  content: "";
+  position: absolute;
+  left: 8px; top: 0.7em;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--pink);
+  opacity: 0.85;
+}
+.chat-turn.assistant .chat-bubble ol {
+  counter-reset: ord;
+}
+.chat-turn.assistant .chat-bubble ol > li {
+  counter-increment: ord;
+}
+.chat-turn.assistant .chat-bubble ol > li::before {
+  content: counter(ord) ".";
+  position: absolute;
+  left: 0; top: 0;
+  font-weight: 650;
+  color: var(--pink-deep);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  line-height: 1.78;
+  width: 22px;
+  text-align: right;
+  padding-right: 6px;
+}
+.chat-turn.assistant .chat-bubble li > p { margin: 0; display: inline; }
+.chat-turn.assistant .chat-bubble li > ul,
+.chat-turn.assistant .chat-bubble li > ol {
+  margin: 4px 0 4px;
+}
+
+/* Inline code — soft pink chip */
 .chat-turn.assistant .chat-bubble code {
-  background: rgba(0, 0, 0, 0.06);
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: var(--pink-bg);
+  border: 1px solid rgba(226, 63, 134, 0.18);
   border-radius: 4px;
-  padding: 1px 5px;
+  padding: 1px 6px;
   font-family: var(--font-mono, ui-monospace, "JetBrains Mono", "SFMono-Regular", Consolas, monospace);
   font-size: 12px;
+  color: var(--pink-deep);
+  font-weight: 500;
+  white-space: nowrap;
 }
+
+/* Code blocks — dark editorial card with pink language tag */
 .chat-turn.assistant .chat-bubble pre {
-  background: rgba(0, 0, 0, 0.05);
-  border: 1.5px solid var(--ink);
-  border-radius: 8px;
-  padding: 10px 12px;
-  margin: 8px 0 12px;
+  position: relative;
+  background: #1a1220;
+  border: none;
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 12px 0 14px;
   overflow-x: auto;
   font-size: 12px;
-  line-height: 1.55;
+  line-height: 1.65;
+  box-shadow: 0 4px 16px -8px rgba(21, 8, 24, 0.35);
 }
 .chat-turn.assistant .chat-bubble pre code {
   background: transparent;
   border: none;
   padding: 0;
+  color: #f5e8ee;
+  white-space: pre;
+  font-weight: 400;
 }
+
+/* Blockquote — quiet pink left rail with tinted bg */
 .chat-turn.assistant .chat-bubble blockquote {
-  margin: 8px 0 12px;
-  padding: 6px 12px;
+  margin: 10px 0 14px;
+  padding: 8px 14px;
   border-left: 3px solid var(--pink);
-  background: rgba(255, 105, 180, 0.06);
-  color: rgba(0, 0, 0, 0.75);
+  background: var(--pink-bg);
+  border-radius: 0 8px 8px 0;
+  color: var(--ink-2);
+  font-style: normal;
 }
+.chat-turn.assistant .chat-bubble blockquote p { margin: 0; }
+
+/* Links */
 .chat-turn.assistant .chat-bubble a {
-  color: var(--pink-deep, #d63384);
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  color: var(--pink-deep);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(226, 63, 134, 0.4);
+  transition: border-color 120ms ease;
 }
+.chat-turn.assistant .chat-bubble a:hover { border-bottom-color: var(--pink-deep); }
+
+/* Horizontal rules */
 .chat-turn.assistant .chat-bubble hr {
   border: none;
-  border-top: 1.5px dashed rgba(0, 0, 0, 0.15);
-  margin: 12px 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(226, 63, 134, 0.25), transparent);
+  margin: 16px 0;
 }
+
+/* Tables */
 .chat-turn.assistant .chat-bubble table {
-  border-collapse: collapse;
-  margin: 8px 0 12px;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 10px 0 14px;
   font-size: 12px;
+  width: 100%;
+  border: 1px solid rgba(21, 8, 24, 0.08);
+  border-radius: 8px;
+  overflow: hidden;
 }
 .chat-turn.assistant .chat-bubble th,
 .chat-turn.assistant .chat-bubble td {
-  border: 1.5px solid var(--ink);
-  padding: 4px 8px;
+  border-bottom: 1px solid rgba(21, 8, 24, 0.06);
+  padding: 6px 10px;
   text-align: left;
 }
+.chat-turn.assistant .chat-bubble tr:last-child td { border-bottom: none; }
 .chat-turn.assistant .chat-bubble th {
-  background: var(--pink-soft, rgba(255, 105, 180, 0.1));
-  font-weight: 700;
+  background: var(--pink-bg);
+  font-weight: 650;
+  color: var(--pink-deep);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.chat-turn.assistant .chat-bubble tr:nth-child(even) td {
+  background: rgba(255, 234, 242, 0.35);
 }
 .chat-actions {
   display: flex;
