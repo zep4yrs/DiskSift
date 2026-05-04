@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ChevronRight, ChevronDown } from 'lucide-react';
 import type { Node } from '../types';
 import { formatBytes, formatCount } from '../format';
+import { api } from '../api';
 
 type Props = {
   root: Node;
@@ -102,13 +103,17 @@ function Row({
       <div
         className={'tree-row' + (sel ? ' selected' : '') + (node.is_dir ? '' : ' is-file')}
         onClick={() => onSelect(node.path)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          api.revealInExplorer(node.path).catch(() => { /* path may have been deleted */ });
+        }}
         draggable
         onDragStart={(e) => {
           e.dataTransfer.setData('application/x-diskwise-path', node.path);
           e.dataTransfer.setData('application/x-diskwise-name', node.name);
           e.dataTransfer.effectAllowed = 'copy';
         }}
-        title={node.path}
+        title={node.path + '  ·  右键在文件管理器打开'}
       >
         <div className="col-name" style={{ paddingLeft: 4 + depth * 14 }}>
           <span

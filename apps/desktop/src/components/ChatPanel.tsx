@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Send, Trash2, FolderInput, ShieldCheck, ShieldAlert, ShieldX, X, MessageSquare, Sparkles, Folder, File } from 'lucide-react';
+import { Send, Trash2, ShieldCheck, ShieldAlert, ShieldX, X, MessageSquare, Sparkles, Folder, File } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { api } from '../api';
 import { isTauri } from '../env';
 import { useStore } from '../store';
 import { formatBytes } from '../format';
 import { freeChat, overviewChat } from '../advisorClient';
-import type { Node, AdvisorRequest, AdvisorResponse, Scaffold, Plan } from '../types';
+import type { Node, AdvisorRequest, AdvisorResponse, Scaffold } from '../types';
 
 function uid() {
   return Math.random().toString(36).slice(2);
@@ -295,20 +297,6 @@ export function ChatPanel() {
     }
   };
 
-  const runScaffoldScope = async (sc: Scaffold, scopeId: string) => {
-    if (!node) return;
-    const scope = sc.scopes.find((x) => x.id === scopeId);
-    if (!scope) return;
-    try {
-      const plan: Plan = { action: scope.mode, paths: [node.path], reason: `Diskwise scaffold ${sc.id}/${scopeId} (chat)` };
-      await api.execute(plan, false);
-      addReclaimed(node.size);
-      pushTurn({ id: uid(), role: 'system', text: `已执行 · ${sc.name} · ${scope.label}` });
-    } catch (e) {
-      pushTurn({ id: uid(), role: 'system', text: `脚本执行失败：${String(e)}` });
-    }
-  };
-
   const empty = chat.turns.length === 0;
 
   return (
@@ -350,25 +338,23 @@ export function ChatPanel() {
             <p>AI 正在生成整体解析…</p>
           </div>
         )}
-        {chat.turns.map((t) => {
-          const sc = t.scaffoldId ? scaffolds.find((s) => s.id === t.scaffoldId) : null;
-          return (
-            <div key={t.id} className={'chat-turn ' + t.role + (t.pending ? ' pending' : '')}>
-              {t.role === 'assistant' && t.advice && <AdviceCard advice={t.advice} />}
-              <div className="chat-bubble">{t.text}</div>
-              {t.role === 'assistant' && t.advice?.action === 'recycle' && !t.advice?.needs_inspection && node && (
-                <div className="chat-actions">
-                  <button className="primary" onClick={() => recycleNode(node, t.advice?.reasoning ?? 'AI suggested')}>
-                    <Trash2 size={13} /> 回收 {formatBytes(node.size)}
-                  </button>
-                </div>
-              )}
-              {t.role === 'assistant' && sc && (
-                <ScaffoldChips scaffold={sc} onRun={(scopeId) => runScaffoldScope(sc, scopeId)} />
-              )}
+        {chat.turns.map((t) => (
+          <div key={t.id} className={'chat-turn ' + t.role + (t.pending ? ' pending' : '')}>
+            {t.role === 'assistant' && t.advice && <AdviceCard advice={t.advice} />}
+            <div className="chat-bubble">
+              {t.role === 'assistant'
+                ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{t.text}</ReactMarkdown>
+                : t.text}
             </div>
-          );
-        })}
+            {t.role === 'assistant' && t.advice?.action === 'recycle' && !t.advice?.needs_inspection && node && (
+              <div className="chat-actions">
+                <button className="primary" onClick={() => recycleNode(node, t.advice?.reasoning ?? 'AI suggested')}>
+                  <Trash2 size={13} /> 回收 {formatBytes(node.size)}
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
         {chat.busy && <div className="chat-typing">AI 正在打字…</div>}
       </div>
 
@@ -425,16 +411,3 @@ function AdviceCard({ advice }: { advice: AdvisorResponse }) {
   );
 }
 
-function ScaffoldChips({ scaffold, onRun }: { scaffold: Scaffold; onRun: (scopeId: string) => void }) {
-  return (
-    <div className="chat-actions">
-      <span className="muted" style={{ fontSize: 11 }}>清理脚本：</span>
-      {scaffold.scopes.map((sc) => (
-        <button key={sc.id} className="secondary" onClick={() => onRun(sc.id)} title={sc.glob}>
-          <FolderInput size={12} /> {sc.label}
-          <span className="muted" style={{ marginLeft: 4 }}>{sc.mode}</span>
-        </button>
-      ))}
-    </div>
-  );
-}

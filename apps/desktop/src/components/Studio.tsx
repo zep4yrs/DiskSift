@@ -83,11 +83,6 @@ interface ScopeSize {
   file_count: number;
 }
 
-/// Sentinel id used by the merged cache button to participate in the
-/// existing `armedScope` / `busyScope` two-step-confirm machinery without
-/// colliding with any real scope id.
-const BULK_CACHE_ID = '__bulk_cache__';
-
 /// Detect which product variants ("3.x" / "4.x" for WeChat) are present in
 /// the matched paths. Used to hide scopes whose `variant` doesn't apply to
 /// the user's install — e.g. WeChat 4.x users never see `[3.x]` rows.
@@ -108,65 +103,12 @@ function detectVariants(matches: Node[]): Set<string> {
 
 const FEATURED_IDS = [
   'wechat-pc',
-  'qq-pc',
-  'feishu',
-  'dingtalk',
-  'chrome',
-  'edge',
-  'cursor',
-  'vscode',
-  'jetbrains',
-  'docker',
-  'steam',
-  'huggingface',
-  'ollama',
-  'npm',
-  'pnpm',
-  'cargo',
-  'crash-dumps',
-  'windows-temp',
-  'recycle-bin',
+  'conda',
 ];
 
 const ICONS: Record<string, string> = {
-  'wechat-pc':     '💬',
-  'qq-pc':         '🐧',
-  'feishu':        '🪶',
-  'dingtalk':      '🔔',
-  'chrome':        '🌐',
-  'edge':          '🪟',
-  'firefox':       '🦊',
-  'brave':         '🦁',
-  'slack':         '💼',
-  'discord':       '🎮',
-  'telegram':      '✈️',
-  'teams':         '👥',
-  'cursor':        '🖱️',
-  'vscode':        '📝',
-  'jetbrains':     '🧠',
-  'docker':        '🐳',
-  'steam':         '🎯',
-  'epicgames':     '🎮',
-  'battlenet':     '⚔️',
-  'huggingface':   '🤗',
-  'ollama':        '🦙',
-  'spotify':       '🎵',
-  'obs':           '📹',
-  'npm':           '📦',
-  'pnpm':          '📦',
-  'yarn':          '🧶',
-  'pip':           '🐍',
-  'cargo':         '🦀',
-  'go-mod':        '🐹',
-  'gradle':        '🐘',
-  'maven':         '🪶',
-  'nuget':         '🔷',
-  'conda':         '🐍',
-  'crash-dumps':   '💥',
-  'windows-temp':  '🗑️',
-  'windows-old':   '🗂️',
-  'recycle-bin':   '♻️',
-  'node-modules':  '📚',
+  'wechat-pc': '💬',
+  'conda':     '🐍',
 };
 
 /// Collect every top-level node tagged with `scaffoldId`. We deliberately
@@ -528,73 +470,6 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mediaScopes.map((s) => s.id).join('|'), scopeSizes]);
 
-  // Aggregate cache bytes/files for the merged button label.
-  const cacheTotal = useMemo(() => {
-    if (!scopeSizes) return { bytes: 0, files: 0 };
-    return cacheScopes.reduce(
-      (acc, s) => {
-        const row = scopeSizes.find((r) => r.scope_id === s.id);
-        return { bytes: acc.bytes + (row?.bytes ?? 0), files: acc.files + (row?.file_count ?? 0) };
-      },
-      { bytes: 0, files: 0 },
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cacheScopes.map((s) => s.id).join('|'), scopeSizes]);
-
-  // Bulk cache run: fan out per cache scope per match. Backend stays split —
-  // we just call executeScope individually for each, so per-bucket logs and
-  // failure isolation are preserved (debug-friendly), only the UI is merged.
-  const runBulkCache = async () => {
-    if (cacheScopes.length === 0 || matches.length === 0) return;
-    setArmedScope(null);
-    setBusyScope(BULK_CACHE_ID);
-    setScopeMsg(null);
-    const beforeBytes = cacheTotal.bytes;
-    try {
-      const allEntries = await Promise.all(
-        cacheScopes.flatMap((scope) =>
-          matches.map((m) =>
-            api
-              .executeScope(sc.id, scope.id, m.path, false, daysByScope[scope.id], wxidFilterArg)
-              .catch((e) => {
-                // eslint-disable-next-line no-console
-                console.warn(`[diskwise] bulk: ${scope.id} on ${m.path} failed:`, e);
-                return [];
-              }),
-          ),
-        ),
-      );
-      const totalEntries = allEntries.reduce((s, arr) => s + arr.length, 0);
-      addReclaimed(beforeBytes);
-      setScopeMsg(
-        `已清理 ${totalEntries} 个文件 · 约 ${formatBytes(beforeBytes)} · 共 ${cacheScopes.length} 个桶`,
-      );
-      const rowsList = await Promise.all(
-        matches.map((m) =>
-          api.scopeSizes(sc.id, m.path, daysByScope, wxidFilterArg).catch(() => [] as ScopeSize[]),
-        ),
-      );
-      setScopeSizes(aggregateScopeSizes(rowsList));
-    } catch (e) {
-      setScopeMsg(`清理失败：${String(e)}`);
-    } finally {
-      setBusyScope(null);
-    }
-  };
-
-  const handleBulkClick = () => {
-    if (busyScope) return;
-    if (armedScope === BULK_CACHE_ID) {
-      runBulkCache();
-    } else {
-      setArmedScope(BULK_CACHE_ID);
-      setScopeMsg(null);
-      window.setTimeout(() => {
-        setArmedScope((cur) => (cur === BULK_CACHE_ID ? null : cur));
-      }, 5000);
-    }
-  };
-
   // Aggregate of currently-selected envs (count + bytes). Drives the cleanup
   // button label and the disabled state — empty selection → no-op + disabled.
   const selectedEnvsTotal = useMemo(() => {
@@ -767,7 +642,11 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
                         e.dataTransfer.setData('application/x-diskwise-name', m.name);
                         e.dataTransfer.effectAllowed = 'copy';
                       }}
-                      title="拖到中间问 AI"
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        api.revealInExplorer(m.path).catch(() => { /* path may have been deleted */ });
+                      }}
+                      title="拖到中间问 AI · 右键在文件管理器打开"
                     >
                       {m.path}
                       {matches.length > 1 && (
@@ -855,33 +734,7 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
                     <>
                       <div className="studio-detail-label" style={{ marginTop: 8 }}>缓存与临时数据</div>
                       <ul className="studio-scopes">
-                        <li
-                          className="studio-scope-row bulk"
-                          title={`合并清理 ${cacheScopes.length} 个无害桶（缓存 / 临时 / 日志 / 遥测）；后端仍按单 scope 执行`}
-                        >
-                          <span className="studio-scope-label">一键清理（{cacheScopes.length} 个桶）</span>
-                          <span className="mono-num studio-scope-size">
-                            {scopeSizes === null
-                              ? '—'
-                              : `${formatBytes(cacheTotal.bytes)}${cacheTotal.files ? ` · ${cacheTotal.files.toLocaleString()}` : ''}`}
-                          </span>
-                          <button
-                            className={'secondary studio-scope-btn' + (armedScope === BULK_CACHE_ID ? ' armed' : '')}
-                            disabled={
-                              busyScope !== null ||
-                              scopeLoading ||
-                              scopeSizes === null ||
-                              cacheTotal.bytes === 0
-                            }
-                            onClick={handleBulkClick}
-                          >
-                            {busyScope === BULK_CACHE_ID
-                              ? <><Loader2 size={11} className="spin" /> 清理中</>
-                              : armedScope === BULK_CACHE_ID
-                                ? <><Trash2 size={11} /> 再点确认</>
-                                : <><Trash2 size={11} /> 清理</>}
-                          </button>
-                        </li>
+                        {cacheScopes.map((scope) => renderScopeRow(scope))}
                       </ul>
                     </>
                   )}
@@ -912,7 +765,11 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
                           e.dataTransfer.setData('application/x-diskwise-name', c.name);
                           e.dataTransfer.effectAllowed = 'copy';
                         }}
-                        title={c.path}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          api.revealInExplorer(c.path).catch(() => { /* path may have been deleted */ });
+                        }}
+                        title={c.path + '  ·  右键在文件管理器打开'}
                       >
                         <span className="studio-child-name">{c.is_dir ? '📁' : '📄'} {c.name}</span>
                         <span className="mono-num">{formatBytes(c.size)}</span>

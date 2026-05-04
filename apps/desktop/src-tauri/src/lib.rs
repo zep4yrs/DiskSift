@@ -776,6 +776,55 @@ fn inspect_path(path: String, sample_count: usize) -> Vec<String> {
     sample_paths(&path, sample_count)
 }
 
+/// Open the OS file manager and reveal `path`. On Windows this uses
+/// `explorer.exe /select,...` for files (so the file is highlighted) or just
+/// the directory itself for directories. On macOS it's `open -R`. On Linux
+/// it's `xdg-open` of the parent directory (no portable "select" verb).
+#[tauri::command]
+fn reveal_in_explorer(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("path does not exist: {path}"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if p.is_dir() {
+            std::process::Command::new("explorer")
+                .arg(p)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        } else {
+            std::process::Command::new("explorer")
+                .arg(format!("/select,{}", p.display()))
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(p)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let target = if p.is_dir() {
+            p.to_path_buf()
+        } else {
+            p.parent().unwrap_or(p).to_path_buf()
+        };
+        std::process::Command::new("xdg-open")
+            .arg(target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+}
+
 #[tauri::command]
 fn execute_plan(
     state: State<'_, AppState>,
@@ -860,6 +909,7 @@ pub fn run() {
             list_conda_envs,
             advise,
             inspect_path,
+            reveal_in_explorer,
             execute_plan,
             set_advisor,
             volume_info,

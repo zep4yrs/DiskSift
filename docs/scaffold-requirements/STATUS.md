@@ -1,6 +1,6 @@
 # Scaffold 进度台账
 
-> 跟踪 38 个 scaffold 在 14-phase 工作流（[`.claude/commands/add-scaffold.md`](../../.claude/commands/add-scaffold.md)）下的状态。新增/重写后请同步更新本表。
+> 跟踪 scaffold 在 14-phase 工作流（[`.claude/commands/add-scaffold.md`](../../.claude/commands/add-scaffold.md)）下的状态。新增/重写后请同步更新本表。
 
 ## 列含义
 
@@ -15,80 +15,18 @@
 
 | Scaffold | Req doc | TOML | Safety test | UI 验证 | 备注 |
 |---|:---:|:---:|:---:|:---:|---|
-| wechat-pc | ✅ | ✅ | ✅ | ⏳ | 含 4.x 主线 + 3.x legacy 共 16 scope |
-| qq | ⏳ | ✅(legacy) | ❌ | ❌ | 待按本流程 review |
-| dingtalk | ⏳ | ✅(legacy) | ❌ | ❌ | 待 review |
-| feishu | ⏳ | ✅(legacy) | ❌ | ❌ | 待 review |
-| slack | ⏳ | ✅(legacy) | ❌ | ❌ | 待 review |
-| discord | ⏳ | ✅(legacy) | ❌ | ❌ | 待 review |
-| telegram | ⏳ | ✅(legacy) | ❌ | ❌ | 待 review |
-| teams | ⏳ | ✅(legacy) | ❌ | ❌ | 待 review |
-
-## Browsers
-
-类别需求文档：⏳ 待写
-
-| Scaffold | Req doc | TOML | Safety test | UI 验证 | 备注 |
-|---|:---:|:---:|:---:|:---:|---|
-| chrome | ❌ | ✅(legacy) | ❌ | ❌ | |
-| edge | ❌ | ✅(legacy) | ❌ | ❌ | |
-| firefox | ❌ | ✅(legacy) | ❌ | ❌ | |
-| brave | ❌ | ✅(legacy) | ❌ | ❌ | |
+| wechat-pc | ✅ | ✅ | ✅ | ⏳ | 4.x 主线 13 scope + 3.x legacy 9 scope |
 
 ## Dev tools
 
-类别需求文档：⏳ 待写
-
 | Scaffold | Req doc | TOML | Safety test | UI 验证 | 备注 |
 |---|:---:|:---:|:---:|:---:|---|
-| cursor | ❌ | ✅(legacy) | ❌ | ❌ | |
-| vscode | ❌ | ✅(legacy) | ❌ | ❌ | |
-| jetbrains | ❌ | ✅(legacy) | ❌ | ❌ | |
-| docker | ❌ | ✅(legacy) | ❌ | ❌ | |
-| cargo | ❌ | ✅(legacy) | ❌ | ❌ | |
-| npm | ❌ | ✅(legacy) | ❌ | ❌ | |
-| pnpm | ❌ | ✅(legacy) | ❌ | ❌ | |
-| yarn | ❌ | ✅(legacy) | ❌ | ❌ | |
-| pip | ❌ | ✅(legacy) | ❌ | ❌ | |
-| conda | ❌ | ✅(legacy) | ❌ | ❌ | |
-| go-mod | ❌ | ✅(legacy) | ❌ | ❌ | |
-| gradle | ❌ | ✅(legacy) | ❌ | ❌ | |
-| maven | ❌ | ✅(legacy) | ❌ | ❌ | |
-| nuget | ❌ | ✅(legacy) | ❌ | ❌ | |
-| node-modules | ❌ | ✅(legacy) | ❌ | ❌ | |
-
-## Games
-
-类别需求文档：⏳ 待写
-
-| Scaffold | Req doc | TOML | Safety test | UI 验证 | 备注 |
-|---|:---:|:---:|:---:|:---:|---|
-| steam | ❌ | ✅(legacy) | ❌ | ❌ | |
-| epicgames | ❌ | ✅(legacy) | ❌ | ❌ | |
-| battlenet | ❌ | ✅(legacy) | ❌ | ❌ | |
-
-## Media / AI
-
-类别需求文档：⏳ 待写
-
-| Scaffold | Req doc | TOML | Safety test | UI 验证 | 备注 |
-|---|:---:|:---:|:---:|:---:|---|
-| huggingface | ❌ | ✅(legacy) | ❌ | ❌ | |
-| ollama | ❌ | ✅(legacy) | ❌ | ❌ | |
-| spotify | ❌ | ✅(legacy) | ❌ | ❌ | |
-| obs | ❌ | ✅(legacy) | ❌ | ❌ | |
-
-## System
-
-类别需求文档：⏳ 待写（红线最少，可能合并到通用文档）
-
-| Scaffold | Req doc | TOML | Safety test | UI 验证 | 备注 |
-|---|:---:|:---:|:---:|:---:|---|
-| crash-dumps | ❌ | ✅(legacy) | ❌ | ❌ | |
-| windows-temp | ❌ | ✅(legacy) | ❌ | ❌ | |
-| windows-old | ❌ | ✅(legacy) | ❌ | ❌ | |
-| recycle-bin | ❌ | ✅(legacy) | ❌ | ❌ | 操作即清空，需 confirm |
+| conda | ⏳ | ✅ | ✅ | ⏳ | env 卡片专用 UI；整目录 recycle |
 
 ---
 
-**图例**：✅ 完成 / ⏳ 进行中 / ❌ 未开始 / `(legacy)` 在本流程之前就有 TOML，但未按 14-phase 验证过
+**图例**：✅ 完成 / ⏳ 进行中 / ❌ 未开始
+
+## 历史
+
+2026-05-05：删除 36 个未经 14-phase 验证的 legacy scaffold（qq · feishu · dingtalk · slack · discord · telegram · teams · chrome · edge · firefox · brave · cursor · vscode · jetbrains · docker · cargo · npm · pnpm · yarn · pip · go-mod · gradle · maven · nuget · node-modules · steam · epicgames · battlenet · huggingface · ollama · spotify · obs · crash-dumps · windows-temp · windows-old · recycle-bin）。原因：legacy scaffold 都没有 safety test，glob 边界没人验过，存在误删用户数据的风险（典型例子：`node-modules` 把 Cursor / VSCode / 游戏内嵌的 node_modules 也命中了）。未来按 14-phase 流程逐个重新加回。

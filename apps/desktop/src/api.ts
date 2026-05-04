@@ -70,6 +70,9 @@ export const api = {
   inspect: (path: string, sampleCount: number) =>
     isTauri ? invoke<string[]>('inspect_path', { path, sampleCount }) : mocks.inspect(path, sampleCount),
 
+  revealInExplorer: (path: string) =>
+    isTauri ? invoke<void>('reveal_in_explorer', { path }) : Promise.resolve(),
+
   execute: (plan: Plan, dryRun: boolean) =>
     isTauri ? invoke<UndoEntry[]>('execute_plan', { plan, dryRun }) : mocks.execute(plan, dryRun),
 
