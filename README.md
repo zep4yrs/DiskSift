@@ -37,10 +37,16 @@
 ## 看效果
 
 <p align="center">
-  <img src="docs/screenshots/hero.png" alt="Pinkbin 主界面" width="100%">
+  <img src="docs/screenshots/hero.png" alt="实际使用 · 扫完 D 盘后拖文件夹给 AI + 展开 Studio conda 卡片" width="100%">
 </p>
 
-<p align="center"><sub>主界面 · 左侧 WizTree 风格树状视图 · 中间 AI 拖拽分析面板 · 右侧 Studio 清理脚本卡片</sub></p>
+<p align="center"><sub>实际使用 · 左：D:\ 树状视图（每行带占用百分比条）· 中：拖 <code>D:\steam\steamapps</code> 给 AI，AI 用 markdown 回答这是什么、能不能删 · 右：Studio 卡片展开 Conda packages cache（5.12 GB · 150,867 文件）</sub></p>
+
+<p align="center">
+  <img src="docs/screenshots/empty.png" alt="初始空态 · 还没扫描时的三栏布局" width="100%">
+</p>
+
+<p align="center"><sub>初始空态 · 顶部"选择磁盘或文件夹"→ 点扫描后才会有内容；右侧 Studio 已经认出 WeChat / Conda 两个脚本（脚本默认路径还没扫到，所以是"未扫到"状态）</sub></p>
 
 ---
 

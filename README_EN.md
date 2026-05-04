@@ -37,10 +37,16 @@ Open-source disk cleaner. Scan a whole drive in seconds to see where the bytes w
 ## Demo
 
 <p align="center">
-  <img src="docs/screenshots/hero.png" alt="Pinkbin main UI" width="100%">
+  <img src="docs/screenshots/hero.png" alt="In use · drag a folder into the AI after scanning + expand Studio's conda card" width="100%">
 </p>
 
-<p align="center"><sub>Main UI · Left: WizTree-style tree view · Center: drag-to-AI analysis · Right: Studio cleanup-script cards</sub></p>
+<p align="center"><sub>In use · Left: <code>D:\</code> tree view (each row shows a usage % bar) · Center: drag <code>D:\steam\steamapps</code> into the AI, it answers in markdown — what this is and whether it's safe to delete · Right: Studio card expanded for Conda packages cache (5.12 GB · 150,867 files)</sub></p>
+
+<p align="center">
+  <img src="docs/screenshots/empty.png" alt="Empty state · the three-pane layout before scanning" width="100%">
+</p>
+
+<p align="center"><sub>Empty state · Top "Pick a disk or folder" → click Scan to populate; the right-hand Studio already recognizes WeChat / Conda (showing "not detected" because the scaffold's default paths haven't been scanned yet)</sub></p>
 
 ---
 
