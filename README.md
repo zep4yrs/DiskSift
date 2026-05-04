@@ -125,7 +125,7 @@ Windows 上直读 NTFS Master File Table（其他平台用 jwalk 跨平台 walke
 
 ---
 
-## 怎么贡献
+## 帮帮孩子吧
 
 最有价值的贡献是**写新的清理脚本**。每加一个 App 支持就是一份 PR：
 
