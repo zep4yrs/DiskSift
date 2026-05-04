@@ -69,7 +69,11 @@ code, .mono {
   display: grid;
   grid-template-rows: 52px auto 1fr 26px;
   height: 100vh;
+  min-height: 0;
 }
+.app > header { grid-row: 1; }
+.app > main { grid-row: 3; min-height: 0; }
+.app > footer { grid-row: 4; }
 .scan-progress {
   font-family: var(--font-mono);
   font-size: 11px;
