@@ -28,7 +28,7 @@
 
 | 平台 | 文件 | 备注 |
 |---|---|---|
-| **Windows 10/11** | [`Diskwise_x.x.x_x64-setup.exe`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest)（NSIS）<br>[`Diskwise_x.x.x_x64_en-US.msi`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest)（MSI） | 首次启动 SmartScreen 拦截：点"更多信息"→"仍要运行"。NTFS MFT 直读需要管理员权限，安装包带 manifest 自动 UAC |
+| **Windows** | [`Diskwise_x.x.x_x64-setup.exe`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest)（NSIS）<br>[`Diskwise_x.x.x_x64_en-US.msi`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest)（MSI） | 首次启动 SmartScreen 拦截：点"更多信息"→"仍要运行"。NTFS MFT 直读需要管理员权限，安装包带 manifest 自动 UAC |
 | **macOS** | [`Diskwise_x.x.x_universal.dmg`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) | 首次需在系统设置→隐私与安全里允许运行 |
 | **Linux** | [`Diskwise_x.x.x_amd64.AppImage`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) / `.deb` | AppImage `chmod +x` 后双击；fallback 到跨平台 walker，比 Windows 慢 |
 
