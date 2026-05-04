@@ -12,7 +12,7 @@
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB.svg)](https://tauri.app)
 [![Platform](https://img.shields.io/badge/Win%20·%20macOS%20·%20Linux-lightgrey.svg)](#下载)
 
-[下载](#下载) · [看效果](#看效果) · [三件事](#三件事) · [怎么用](#怎么用) · [架构](#架构) · [路线图](#路线图) · [怎么贡献](#怎么贡献) · [致谢](#致谢)
+[下载](#下载) · [看效果](#看效果) · [三件事](#三件事) · [怎么用](#怎么用) · [架构](#架构) · [路线图](#路线图) · [帮帮孩子吧](#怎么贡献) · [致谢](#致谢)
 
 **简体中文 | [English](README_EN.md)**
 
