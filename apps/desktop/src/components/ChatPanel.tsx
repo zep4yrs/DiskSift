@@ -101,36 +101,68 @@ export function ChatPanel() {
     scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight, behavior: 'smooth' });
   }, [chat.turns.length, chat.busy]);
 
-  const findScaffoldNode = (sc: Scaffold): Node | null => {
-    if (!root) return null;
-    const dfs = (n: Node): Node | null => {
-      if (n.scaffold_id === sc.id) return n;
-      for (const c of n.children) {
-        const f = dfs(c);
-        if (f) return f;
-      }
-      return null;
+  // Walk root, collect ALL nodes tagged with this scaffold. Mirrors Studio's
+  // findAllMatchesByScaffold — a scaffold legitimately matches in multiple
+  // places (e.g. wechat-pc hits Documents\WeChat Files + AppData\Roaming\Tencent\WeChat
+  // + ProgramData\Tencent\WeChat etc.). We don't recurse into a subtree that
+  // already matched, so each match is the topmost root of its scaffold-tagged
+  // region — sizes/children are disjoint by construction.
+  const findAllScaffoldNodes = (sc: Scaffold): Node[] => {
+    if (!root) return [];
+    const out: Node[] = [];
+    const dfs = (n: Node) => {
+      if (n.scaffold_id === sc.id) { out.push(n); return; }
+      for (const c of n.children ?? []) dfs(c);
     };
-    return dfs(root);
+    dfs(root);
+    out.sort((a, b) => b.size - a.size);
+    return out;
   };
 
   const runStudioPrompt = async (sc: Scaffold) => {
-    const matched = findScaffoldNode(sc);
+    const matches = findAllScaffoldNodes(sc);
+    const totalSize = matches.reduce((s, m) => s + m.size, 0);
+    const totalFiles = matches.reduce((s, m) => s + m.file_count, 0);
 
     // Phrase the question from the user's POV: they're looking at the right-
-    // side card and asking "what's actually in this thing".
-    const userText = matched
-      ? `右侧显示扫描里检测到了【${sc.name}】(${formatBytes(matched.size)}, \`${matched.path}\`)。这个文件夹里具体都是什么？哪些是可以删的？`
-      : `右侧的【${sc.name}】这次扫描里没扫到。它一般会在哪些路径下？里面通常存什么？`;
+    // side card and asking "what's actually in this thing across ALL matched
+    // locations". Important: don't pick a single path — wechat-pc has 5
+    // legitimate locations, and earlier we were sending only the first DFS hit
+    // which was sometimes the empty Temp\WeChat Files folder.
+    const userText = matches.length === 0
+      ? `右侧的【${sc.name}】这次扫描里没扫到。它一般会在哪些路径下？里面通常存什么？`
+      : matches.length === 1
+        ? `右侧显示扫描里检测到了【${sc.name}】(${formatBytes(totalSize)}, \`${matches[0].path}\`)。这个文件夹里具体都是什么？哪些是可以删的？`
+        : `右侧扫描里检测到了【${sc.name}】，分布在 ${matches.length} 个位置，合计 ${formatBytes(totalSize)} / ${totalFiles.toLocaleString()} 文件：\n${matches.map((m) => `- \`${m.path}\` (${formatBytes(m.size)})`).join('\n')}\n\n这些文件夹各自都是什么？哪些是可以删的？`;
     pushTurn({ id: uid(), role: 'user', text: userText });
 
     setBusy(true);
     const turnId = uid();
     pushTurn({ id: turnId, role: 'assistant', text: `正在分析 ${sc.name}…`, pending: true, scaffoldId: sc.id });
     try {
-      const samples = matched && matched.is_dir
-        ? await api.inspect(matched.path, 25).catch(() => [] as string[])
-        : [];
+      // Sample each match (cap 8 paths per match → 24-40 total samples for
+      // typical 3-5 location scaffolds). Drop the empty roots so the AI doesn't
+      // spend tokens on "and there's an empty folder too".
+      const nonEmpty = matches.filter((m) => m.size > 0 || (m.children?.length ?? 0) > 0);
+      const sampledMatches = await Promise.all(
+        nonEmpty.map(async (m) => {
+          const samples = m.is_dir
+            ? await api.inspect(m.path, 8).catch(() => [] as string[])
+            : [];
+          return {
+            path: m.path,
+            size: formatBytes(m.size),
+            file_count: m.file_count,
+            top_extensions: (m.top_extensions ?? []).slice(0, 5),
+            top_children: (m.children ?? []).slice(0, 8).map((c) => ({
+              name: c.name,
+              size: formatBytes(c.size),
+              is_dir: c.is_dir,
+            })),
+            sample_paths: samples,
+          };
+        }),
+      );
       const ctx = {
         app: sc.name,
         scaffold_id: sc.id,
@@ -138,23 +170,13 @@ export function ChatPanel() {
         disclaimer: sc.disclaimer,
         declared_paths: sc.detect,
         cleanable_scopes: sc.scopes.map((s) => ({ id: s.id, label: s.label, mode: s.mode, glob: s.glob })),
-        scanned_match: matched
-          ? {
-              path: matched.path,
-              size: formatBytes(matched.size),
-              file_count: matched.file_count,
-              top_extensions: (matched.top_extensions ?? []).slice(0, 6),
-              top_children: (matched.children ?? []).slice(0, 12).map((c) => ({
-                name: c.name,
-                size: formatBytes(c.size),
-                is_dir: c.is_dir,
-              })),
-              sample_paths: samples,
-            }
+        scanned_matches: sampledMatches,
+        scanned_total: matches.length > 0
+          ? { location_count: matches.length, total_size: formatBytes(totalSize), total_files: totalFiles }
           : null,
       };
       const reply = await freeChat(
-        `用户在 Studio 里点了【${sc.name}】这张卡片。下面是这个清理脚本的元数据，以及本次扫描中真实匹配到的目录（含子项 + 抽样路径，如果扫到了的话）：\n${JSON.stringify(ctx, null, 2)}`,
+        `用户在 Studio 里点了【${sc.name}】这张卡片。下面是这个清理脚本的元数据，以及本次扫描中匹配到的所有位置（每个位置含 top children + 抽样路径）。请按位置分别说明里面是什么、哪些可以删、用什么方式删——不要只挑一个位置说：\n${JSON.stringify(ctx, null, 2)}`,
         userText,
       );
       patchTurn(turnId, { text: reply, pending: false });
