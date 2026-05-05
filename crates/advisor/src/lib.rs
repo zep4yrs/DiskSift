@@ -120,7 +120,7 @@ pub async fn advise(provider: &Provider, req: &AdvisorRequest) -> anyhow::Result
         } => {
             let body = serde_json::json!({
                 "model": model,
-                "max_tokens": 1024,
+                "max_tokens": 2048,
                 "system": SYSTEM,
                 "messages": [{ "role": "user", "content": user_prompt }]
             });
@@ -133,10 +133,29 @@ pub async fn advise(provider: &Provider, req: &AdvisorRequest) -> anyhow::Result
                 .await?
                 .error_for_status()?;
             let v: serde_json::Value = r.json().await?;
-            v["content"][0]["text"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("anthropic: missing content[0].text"))?
-                .to_string()
+            // extended-thinking 模型先返 {type:"thinking",...} 再返 {type:"text",...},
+            // 不能假设 content[0] 是 text；遍历 content 数组拼所有 text block。
+            let text = v["content"]
+                .as_array()
+                .map(|blocks| {
+                    blocks
+                        .iter()
+                        .filter(|b| b["type"] == "text")
+                        .filter_map(|b| b["text"].as_str())
+                        .collect::<Vec<_>>()
+                        .join("")
+                })
+                .unwrap_or_default();
+            if text.trim().is_empty() {
+                let stop = v["stop_reason"].as_str().unwrap_or("unknown");
+                if stop == "max_tokens" {
+                    anyhow::bail!(
+                        "anthropic: 没拿到 text block (stop_reason=max_tokens) — 模型在 thinking 阶段被截断, 把 max_tokens 调大重试"
+                    );
+                }
+                anyhow::bail!("anthropic: 没拿到 text block (stop_reason={stop})");
+            }
+            text
         }
         Provider::Gemini {
             api_key,

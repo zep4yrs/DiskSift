@@ -63,6 +63,28 @@ function stripCodeFence(s: string): string {
   return t.trim();
 }
 
+// Anthropic 响应里 content 是 block 数组，extended-thinking 模型（如 DeepSeek
+// 的 anthropic 兼容端点）会先返一个 {type:"thinking",...} 再返 {type:"text",...}，
+// 不能假设 content[0] 是 text。stop_reason="max_tokens" 时还可能根本没 text
+// block（thinking 把额度吃光），给明确错误而不是静默返回空串。
+function extractAnthropicText(data: unknown): string {
+  const d = data as { content?: Array<{ type?: string; text?: string }>; stop_reason?: string };
+  const blocks = d?.content ?? [];
+  const text = blocks
+    .filter((b) => b?.type === 'text')
+    .map((b) => b?.text ?? '')
+    .join('')
+    .trim();
+  if (!text) {
+    const stop = d?.stop_reason ?? 'unknown';
+    if (stop === 'max_tokens') {
+      throw new Error('AI 在 thinking 阶段被截断（max_tokens 太小，思考把额度吃光了）。把 max_tokens 调大重试。');
+    }
+    throw new Error(`Anthropic: 没拿到 text block（stop_reason=${stop}）`);
+  }
+  return text;
+}
+
 export async function callAdvisor(
   settings: AdvisorSettings,
   req: AdvisorRequest,
@@ -102,14 +124,14 @@ export async function callAdvisor(
       },
       body: JSON.stringify({
         model: settings.model,
-        max_tokens: 1024,
+        max_tokens: 2048,
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userPrompt }],
       }),
     });
     if (!r.ok) throw new Error(`Anthropic ${r.status}: ${await r.text()}`);
     const data = await r.json();
-    raw = data?.content?.[0]?.text ?? '';
+    raw = extractAnthropicText(data);
   } else if (settings.provider === 'gemini') {
     const url = (settings.baseUrl || 'https://generativelanguage.googleapis.com').replace(/\/$/, '');
     const r = await fetch(
@@ -249,14 +271,14 @@ async function runChatRaw(system: string, user: string, images?: ChatImage[]): P
       },
       body: JSON.stringify({
         model: settings.model,
-        max_tokens: 600,
+        max_tokens: 4096,
         system,
         messages: [{ role: 'user', content: userContent }],
       }),
     });
     if (!r.ok) throw new Error(`Anthropic ${r.status}: ${await r.text()}`);
     const data = await r.json();
-    return data?.content?.[0]?.text?.trim() ?? '';
+    return extractAnthropicText(data);
   }
   if (settings.provider === 'gemini') {
     const url = (settings.baseUrl || 'https://generativelanguage.googleapis.com').replace(/\/$/, '');
