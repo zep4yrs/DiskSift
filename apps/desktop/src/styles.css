@@ -1854,3 +1854,695 @@ footer {
 }
 .chat-image-pill button:hover { background: #ffd5e1; }
 
+/* ===== Tool card (Studio "工具" section) ============================ */
+
+.tool-card-wrap .tool-card {
+  /* Same surface dimensions as studio-card; visually distinguish tools
+     from scaffolds with a lavender border accent + lavender icon background
+     so users can tell at a glance "this is an external panel, not a
+     cleanup script". */
+  border-color: var(--lavender);
+}
+.tool-card .tool-card-arrow { color: var(--ink-3); }
+.tool-card .tool-card-icon {
+  background: var(--lavender);
+  color: var(--ink);
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* ===== Steam Inspector modal ======================================== */
+
+.steam-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(21, 8, 24, 0.45);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  animation: steam-modal-fade 0.18s ease-out;
+}
+@keyframes steam-modal-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.steam-modal-dialog {
+  width: 92vw;
+  max-width: 1400px;
+  height: 88vh;
+  max-height: 900px;
+  background: var(--paper);
+  border: 2.5px solid var(--ink);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: steam-modal-pop 0.2s ease-out;
+}
+@keyframes steam-modal-pop {
+  from { transform: translateY(8px) scale(0.99); opacity: 0; }
+  to   { transform: translateY(0)    scale(1);    opacity: 1; }
+}
+
+.steam-modal-head {
+  position: relative;
+  padding: 14px 56px 12px 18px;
+  border-bottom: 2px solid var(--ink);
+  background: var(--card);
+  flex-shrink: 0;
+}
+.steam-modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+  display: flex; align-items: center; gap: 6px;
+}
+.steam-modal-subtitle {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  margin-top: 2px;
+}
+.steam-modal-close {
+  position: absolute;
+  top: 14px; right: 14px;
+  width: 28px; height: 28px;
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  background: var(--card);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.steam-modal-close:hover { background: var(--paper-3); transform: translate(-1px, -1px); }
+.steam-modal-close:active { transform: none; }
+
+.steam-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+/* Inspector inside the modal fills body height. The component already
+   uses height: 100% — this just makes sure its parent provides one. */
+.steam-modal-body > * { height: 100%; min-height: 0; }
+
+/* ----- Workshop sub-modal (smaller dialog for the per-game popup) ----- */
+
+.steam-workshop-dialog {
+  width: 640px;
+  max-width: 92vw;
+  height: auto;
+  max-height: 80vh;
+}
+.steam-workshop-body {
+  padding: 14px 18px 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.steam-workshop-body > * { height: auto; }
+
+.steam-workshop-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+.steam-workshop-toolbar-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.steam-workshop-sortbtn {
+  border: 1.5px solid var(--ink-3);
+  background: var(--card);
+  color: var(--ink-2);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.steam-workshop-sortbtn:hover { background: var(--paper-2); }
+.steam-workshop-sortbtn.active {
+  background: var(--pink);
+  color: white;
+  border-color: var(--ink);
+}
+
+.steam-workshop-loading,
+.steam-workshop-error,
+.steam-workshop-empty {
+  padding: 24px 14px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--ink-3);
+  background: var(--paper-2);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.steam-workshop-error { color: var(--err); background: #ffe0e3; }
+
+.steam-workshop-caveat {
+  padding: 10px 12px;
+  background: var(--paper-2);
+  border: 1.5px dashed var(--ink-3);
+  border-radius: 10px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+.steam-workshop-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.steam-workshop-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1.5px solid var(--paper-3);
+  border-radius: 10px;
+  background: var(--card);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.steam-workshop-item:hover {
+  border-color: var(--ink-3);
+  background: var(--paper-2);
+}
+.steam-workshop-item-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.steam-workshop-item-id {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.steam-workshop-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: workshop-title-fade 0.25s ease-out;
+}
+@keyframes workshop-title-fade {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.steam-workshop-item-id-secondary {
+  font-family: var(--font-mono);
+  color: var(--ink-3);
+  font-size: 10.5px;
+}
+
+.steam-workshop-titles-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--paper-2);
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+.steam-workshop-titles-status--error {
+  background: var(--paper-3);
+  color: var(--ink-2);
+}
+.steam-workshop-titles-status > span { flex: 1; }
+.steam-workshop-retry-btn {
+  display: inline-flex;
+  align-items: center; gap: 4px;
+  border: 1.5px solid var(--ink);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 11px;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.steam-workshop-retry-btn:hover {
+  background: var(--paper-2);
+  transform: translate(-1px, -1px);
+}
+.steam-workshop-item-meta {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.steam-workshop-item-time { color: var(--ink-2); }
+.steam-workshop-item-size {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.steam-workshop-item-link {
+  display: flex; align-items: center; gap: 4px;
+  border: 1.5px solid var(--ink);
+  background: var(--card);
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.steam-workshop-item-link:hover {
+  background: var(--paper-2);
+  transform: translate(-1px, -1px);
+}
+
+/* ===== Steam Inspector ============================================== */
+
+.steam-inspector {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  position: relative;
+  overflow: hidden;
+}
+
+.steam-progress,
+.steam-teach,
+.steam-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 2px solid var(--ink);
+  font-size: 12px;
+}
+.steam-progress { background: var(--paper-2); }
+.steam-teach { background: var(--pink-bg); position: relative; }
+.steam-teach b { font-weight: 700; }
+.steam-teach-close {
+  margin-left: auto;
+  border: 2px solid var(--ink);
+  background: var(--card);
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; padding: 0;
+}
+.steam-teach-close:hover { background: var(--paper-3); }
+.steam-error { background: #ffe0e3; color: var(--err); font-weight: 600; }
+
+.steam-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 220px 1fr auto;
+  min-height: 0;
+}
+
+/* ----- LEFT: filters & pivots ----- */
+.steam-filters {
+  border-right: 2px solid var(--ink);
+  background: var(--paper-2);
+  padding: 14px 12px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 16px;
+}
+.steam-filter-section h4 {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0 0 8px;
+}
+.steam-filter-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.steam-filter-row:hover { background: var(--paper-3); }
+.steam-filter-row input[type="checkbox"] { margin: 0; flex-shrink: 0; }
+.steam-filter-row-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.steam-filter-row-name { font-size: 12px; font-weight: 600; color: var(--ink); }
+.steam-filter-row-meta { font-size: 10px; color: var(--ink-3); }
+
+.steam-pivot-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.steam-pivot-row:hover { background: var(--paper-3); }
+.steam-pivot-row.active { background: var(--pink-bg); font-weight: 600; }
+.steam-pivot-row input[type="radio"] { margin: 0; flex-shrink: 0; }
+.steam-pivot-row span { flex: 1; }
+
+.steam-kbd {
+  display: inline-flex;
+  align-items: center; justify-content: center;
+  min-width: 18px;
+  padding: 1px 5px;
+  border: 1.5px solid var(--ink-2);
+  border-radius: 4px;
+  background: var(--card);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-2);
+  line-height: 1;
+}
+
+.steam-filter-meta {
+  margin-top: auto;
+  font-size: 11px;
+  color: var(--ink-3);
+  display: flex; align-items: center; gap: 6px;
+  padding-top: 12px;
+  border-top: 1.5px dashed var(--paper-3);
+}
+
+.steam-icon-btn {
+  display: inline-flex;
+  align-items: center; justify-content: center;
+  width: 22px; height: 22px;
+  border: 1.5px solid var(--ink);
+  background: var(--card);
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.steam-icon-btn:hover { background: var(--paper-3); transform: translate(-1px, -1px); }
+.steam-icon-btn:active { transform: none; }
+
+/* ----- MIDDLE: list ----- */
+.steam-list-wrap {
+  display: flex; flex-direction: column;
+  min-width: 0;
+}
+.steam-search {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 2px solid var(--ink);
+  background: var(--card);
+}
+.steam-search input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font: inherit;
+  font-size: 13px;
+  background: transparent;
+  color: var(--ink);
+}
+.steam-search input::placeholder { color: var(--ink-3); }
+.steam-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+.steam-list-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 13px;
+}
+
+.steam-row {
+  display: grid;
+  grid-template-columns: 24px 1fr 90px 100px 18px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 4px;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: var(--card);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  user-select: none;
+}
+.steam-row:hover {
+  background: var(--paper-2);
+  border-color: var(--ink-3);
+}
+.steam-row.recommended {
+  background: var(--pink-bg);
+  border-left: 4px solid var(--lavender);
+  padding-left: 10px;
+}
+.steam-row.ghost {
+  background: #fff3e0;
+  border-left: 4px solid var(--warn);
+  padding-left: 10px;
+}
+.steam-row.selected {
+  border-color: var(--ink);
+  box-shadow: var(--shadow-sm);
+  transform: translate(-1px, -1px);
+}
+
+.steam-row-icon {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink-2);
+}
+.steam-row.recommended .steam-row-icon { color: var(--pink-deep); }
+.steam-row.ghost .steam-row-icon { color: var(--warn); }
+
+.steam-row-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.steam-row-name-primary {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.steam-row-name-alt {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.steam-row-reason {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--pink-deep);
+  margin-top: 2px;
+}
+.steam-row.ghost .steam-row-reason { color: var(--warn); }
+
+.steam-row-size {
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+.steam-row-time {
+  font-size: 12px;
+  color: var(--ink-3);
+  text-align: right;
+}
+.steam-row-chevron {
+  color: var(--ink-3);
+  display: flex; align-items: center;
+}
+
+/* ----- RIGHT: detail rail ----- */
+.steam-detail {
+  width: 360px;
+  border-left: 2px solid var(--ink);
+  background: var(--card);
+  overflow-y: auto;
+  padding: 16px;
+  display: flex; flex-direction: column; gap: 14px;
+  animation: rail-slide-in 0.2s ease-out;
+}
+@keyframes rail-slide-in {
+  from { transform: translateX(20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.steam-detail-head { position: relative; padding-right: 28px; }
+.steam-detail-title { font-size: 16px; font-weight: 700; color: var(--ink); line-height: 1.3; }
+.steam-detail-subtitle { font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
+.steam-detail-close {
+  position: absolute;
+  top: 0; right: 0;
+}
+
+.steam-ghost-banner {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 10px 12px;
+  background: #fff3e0;
+  border: 2px solid var(--warn);
+  border-radius: 10px;
+  color: var(--ink);
+}
+.steam-ghost-banner > svg { color: var(--warn); flex-shrink: 0; margin-top: 2px; }
+.steam-ghost-banner b { display: block; font-size: 12.5px; margin-bottom: 4px; }
+.steam-ghost-banner p { font-size: 11.5px; line-height: 1.5; margin: 0; color: var(--ink-2); }
+
+.steam-detail-meta {
+  border: 1.5px solid var(--paper-3);
+  border-radius: 10px;
+  background: var(--paper);
+  padding: 10px 12px;
+  font-size: 12px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.steam-detail-meta > div { display: flex; justify-content: space-between; gap: 12px; }
+.steam-detail-meta span { color: var(--ink-3); }
+.steam-detail-meta b {
+  font-weight: 600; color: var(--ink);
+  text-align: right; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.steam-detail-reason {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 10px 12px;
+  background: var(--pink-bg);
+  border: 2px solid var(--lavender);
+  border-radius: 10px;
+}
+.steam-detail-reason > svg { color: var(--pink-deep); flex-shrink: 0; margin-top: 2px; }
+.steam-detail-reason b { display: block; font-size: 12px; color: var(--ink); margin-bottom: 2px; }
+.steam-detail-reason p { font-size: 12px; color: var(--ink-2); margin: 0; }
+
+.steam-detail-citations {
+  display: flex; flex-direction: column; gap: 4px;
+}
+.steam-citation-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 4px;
+}
+.steam-citation {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px;
+  border: 1.5px solid var(--paper-3);
+  border-radius: 8px;
+  background: var(--paper);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.steam-citation:hover {
+  background: var(--paper-3);
+  border-color: var(--ink-3);
+}
+.steam-citation-static { cursor: default; }
+.steam-citation-static:hover { background: var(--paper); border-color: var(--paper-3); }
+.steam-citation-text {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1; min-width: 0;
+}
+.steam-citation > svg { color: var(--ink-3); flex-shrink: 0; }
+
+.steam-detail-actions {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-top: 4px;
+}
+.steam-action {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  background: var(--card);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+.steam-action:hover {
+  background: var(--paper-2);
+  transform: translate(-1px, -1px);
+  box-shadow: var(--shadow-sm);
+}
+.steam-action:active { transform: none; box-shadow: none; }
+.steam-action span { flex: 1; }
+.steam-action-primary {
+  background: var(--pink);
+  color: white;
+  border-color: var(--ink);
+}
+.steam-action-primary:hover { background: var(--pink-deep); }
+.steam-action-primary .steam-kbd { background: white; color: var(--ink); }
+
+/* ----- Empty / not-found states ----- */
+.steam-empty-state {
+  padding: 40px 32px;
+  max-width: 600px;
+  margin: 40px auto;
+  border: 2px solid var(--ink);
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+.steam-empty-title { font-size: 18px; font-weight: 700; margin: 0 0 12px; }
+.steam-empty-state p { font-size: 13px; line-height: 1.6; color: var(--ink-2); margin: 0 0 12px; }
+.steam-empty-state code {
+  font-family: var(--font-mono); font-size: 12px;
+  background: var(--paper-2); padding: 1px 6px; border-radius: 4px;
+}
+.steam-path-list {
+  list-style: none; padding: 0; margin: 0 0 12px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.steam-path-list li {
+  font-family: var(--font-mono); font-size: 11.5px;
+  padding: 6px 10px;
+  background: var(--paper-2); border-radius: 6px;
+  color: var(--ink-2);
+}
+.steam-empty-hint { color: var(--ink-3) !important; font-size: 12px !important; }
+
+/* ----- Toast ----- */
+.steam-toast {
+  position: absolute;
+  bottom: 16px; left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  background: var(--ink);
+  color: var(--paper);
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: var(--shadow-sm);
+  animation: toast-pop 0.18s ease-out;
+  pointer-events: none;
+  z-index: 100;
+  white-space: nowrap;
+  max-width: 80%;
+}
+@keyframes toast-pop {
+  from { transform: translate(-50%, 6px); opacity: 0; }
+  to   { transform: translate(-50%, 0);   opacity: 1; }
+}
+

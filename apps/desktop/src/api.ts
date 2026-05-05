@@ -7,6 +7,8 @@ import type {
   Plan,
   UndoEntry,
   CondaEnv,
+  SteamInventory,
+  WorkshopItem,
 } from './types';
 import { isTauri } from './env';
 import * as mocks from './mocks';
@@ -98,4 +100,25 @@ export const api = {
           baseUrl: baseUrl ?? null,
         })
       : Promise.resolve(),
+
+  listSteamGames: () =>
+    isTauri
+      ? invoke<SteamInventory>('list_steam_games')
+      : Promise.resolve(mocks.STEAM_INVENTORY),
+
+  listSteamWorkshopItems: (libraryRoot: string, appid: number) =>
+    isTauri
+      ? invoke<WorkshopItem[]>('list_steam_workshop_items', { libraryRoot, appid })
+      : Promise.resolve(mocks.steamWorkshopItems(appid)),
+
+  fetchWorkshopTitles: (ids: number[]) =>
+    isTauri
+      ? invoke<Record<number, string>>('fetch_workshop_titles', { ids })
+      : Promise.resolve(mocks.workshopTitles(ids)),
+
+  openSteamUrl: (
+    action: 'uninstall' | 'rungameid' | 'validate' | 'nav' | 'workshop_page',
+    appid: number,
+  ) =>
+    isTauri ? invoke<void>('open_steam_url', { action, appid }) : Promise.resolve(),
 };

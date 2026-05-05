@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronRight, ChevronDown, Sparkles, MessageSquare, Trash2, FolderOpen, Copy } from 'lucide-react';
+import { ChevronRight, ChevronDown, Sparkles, MessageSquare, Trash2, FolderOpen, Copy, ExternalLink, Gamepad2 } from 'lucide-react';
 import { useStore } from '../store';
 import { formatBytes } from '../format';
 import { api } from '../api';
@@ -7,6 +7,7 @@ import type { Node, Scaffold } from '../types';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
 import { CleanupModal } from './CleanupModal';
+import { SteamInspectorModal } from './SteamInspectorModal';
 
 const FEATURED_IDS = [
   'wechat-pc',
@@ -66,6 +67,7 @@ export function Studio() {
   const requestStudio = useStore((s) => s.requestStudio);
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [openTool, setOpenTool] = useState<null | 'steam-inspector'>(null);
 
   const hidden = (() => {
     try { return localStorage.getItem('pinkbin.hideStudio') === '1'; } catch { return false; }
@@ -125,8 +127,16 @@ export function Studio() {
         <span className="muted small">{allCards.length} 个脚本</span>
       </div>
 
-      <div className="studio-section-label">推荐 · 按占用排序</div>
+      <div className="studio-section-label">推荐</div>
       <div className="studio-grid">
+        <ErrorBoundary fallbackLabel="Steam Inspector 卡片渲染失败">
+          <ToolCard
+            icon={<Gamepad2 size={14} />}
+            name="Steam Inspector"
+            blurb="哪些游戏好久没玩 · 一键唤起 Steam 卸载"
+            onClick={() => setOpenTool('steam-inspector')}
+          />
+        </ErrorBoundary>
         {featured.map((c) => (
           <ErrorBoundary key={c.scaffold.id} fallbackLabel={`${c.scaffold.name} 卡片渲染失败`}>
             <Card card={c} expanded={expanded.has(c.scaffold.id)} onToggle={() => toggle(c.scaffold.id)} onAsk={() => requestStudio(c.scaffold.id)} />
@@ -146,6 +156,40 @@ export function Studio() {
           </div>
         </>
       )}
+
+      {openTool === 'steam-inspector' && (
+        <SteamInspectorModal onClose={() => setOpenTool(null)} />
+      )}
+    </div>
+  );
+}
+
+/// Tool cards live in Studio alongside scaffold cards but behave differently:
+/// no inline expansion, no "X 个位置" detection meta — just a card-shaped
+/// entry point that opens a dedicated modal. Steam Inspector is the first
+/// tool; future "always-on" panels (Epic / GOG inspectors, library reports)
+/// can reuse this shape.
+function ToolCard({
+  icon,
+  name,
+  blurb,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  name: string;
+  blurb: string;
+  onClick: () => void;
+}) {
+  return (
+    <div className="studio-card-wrap risk-low tool-card-wrap">
+      <button className="studio-card tool-card" onClick={onClick} title={blurb}>
+        <ExternalLink size={12} className="studio-caret tool-card-arrow" />
+        <div className="studio-card-icon tool-card-icon">{icon}</div>
+        <div className="studio-card-body">
+          <div className="studio-card-name">{name}</div>
+          <div className="studio-card-meta">{blurb}</div>
+        </div>
+      </button>
     </div>
   );
 }

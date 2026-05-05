@@ -31,8 +31,13 @@ tracing.workspace            = true
 tracing-subscriber.workspace = true
 jwalk.workspace              = true
 globset.workspace            = true
+reqwest.workspace            = true
 
-pinkbin-scanner  = { path = "../../../crates/scanner" }
-pinkbin-scaffold = { path = "../../../crates/scaffold" }
-pinkbin-executor = { path = "../../../crates/executor" }
-pinkbin-advisor  = { path = "../../../crates/advisor" }
+pinkbin-scanner          = { path = "../../../crates/scanner" }
+pinkbin-scaffold         = { path = "../../../crates/scaffold" }
+pinkbin-executor         = { path = "../../../crates/executor" }
+pinkbin-advisor          = { path = "../../../crates/advisor" }
+pinkbin-steam-inspector  = { path = "../../../crates/steam-inspector" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace    = true

@@ -100,3 +100,55 @@ export interface CondaEnv {
 /// for display only; the actual file-vs-dir branching happens in the Tauri
 /// backend's execute_scope / scope_sizes commands.
 export type RecycleGranularity = 'file' | 'directory';
+
+// ---------------------------------------------------------------------------
+// Steam Inspector — mirror of crates/steam-inspector/src/lib.rs
+// ---------------------------------------------------------------------------
+
+/// Mirror of Rust's SteamGame. Returned (nested in SteamLibrary) by the
+/// list_steam_games Tauri command. The Inspector is **read-only** — there is
+/// no "uninstall" or "delete" command; the right-rail [Steam 中卸载] button
+/// triggers the steam:// deep link in the frontend, letting Steam itself
+/// handle the destructive action.
+export interface SteamGame {
+  appid: number;
+  name_en: string;
+  name_cn: string | null;
+  install_dir_name: string;
+  install_path: string;
+  appmanifest_path: string;
+  size_bytes: number;
+  last_played_ts: number | null;
+  library_root: string;
+  state_flags: number;
+  is_fully_installed: boolean;
+  is_ghost: boolean;
+  default_recommended: boolean;
+  recommendation_reason: string | null;
+  workshop_item_count: number;
+}
+
+/// Mirror of Rust's WorkshopItem. Returned by list_steam_workshop_items.
+/// `last_modified_ts` is folder mtime — a proxy for "Steam last updated this
+/// item", **not** "user last used this item" (Steam doesn't record that).
+/// UI must label it as "上次更新" not "上次使用".
+export interface WorkshopItem {
+  id: number;
+  size_bytes: number;
+  last_modified_ts: number;
+  path: string;
+}
+
+export interface SteamLibrary {
+  root: string;
+  games: SteamGame[];
+  total_size_bytes: number;
+}
+
+export interface SteamInventory {
+  /// Where Steam was found, or null when nothing was. When null, the empty-
+  /// state UI shows `candidates_checked` so the user knows where we looked.
+  steam_root: string | null;
+  candidates_checked: string[];
+  libraries: SteamLibrary[];
+}

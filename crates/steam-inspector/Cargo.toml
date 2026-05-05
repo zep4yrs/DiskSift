@@ -1,0 +1,19 @@
+[package]
+name        = "pinkbin-steam-inspector"
+version.workspace     = true
+edition.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+
+[dependencies]
+serde.workspace        = true
+anyhow.workspace       = true
+thiserror.workspace    = true
+tracing.workspace      = true
+dirs.workspace         = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace  = true
+
+[dev-dependencies]
+tempfile.workspace     = true

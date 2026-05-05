@@ -1,4 +1,4 @@
-import type { Node, Scaffold, AdvisorRequest, AdvisorResponse, UndoEntry, Plan } from './types';
+import type { Node, Scaffold, AdvisorRequest, AdvisorResponse, UndoEntry, Plan, SteamInventory, WorkshopItem } from './types';
 import { callAdvisor, isConfigured, loadSettings } from './advisorClient';
 
 const GB = 1024 ** 3;
@@ -338,4 +338,152 @@ export async function scopeSizes(
 ): Promise<{ scope_id: string; bytes: number; file_count: number; total_bytes: number; total_files: number }[]> {
   await wait(50);
   return [];
+}
+
+const NOW = Math.floor(Date.now() / 1000);
+const DAY = 86400;
+
+export const STEAM_INVENTORY: SteamInventory = {
+  steam_root: 'C:/Program Files (x86)/Steam',
+  candidates_checked: [
+    'C:/Program Files (x86)/Steam',
+    'C:/Program Files/Steam',
+  ],
+  libraries: [
+    {
+      root: 'C:/Program Files (x86)/Steam',
+      total_size_bytes: 80 * GB,
+      games: [
+        {
+          appid: 730,
+          name_en: 'Counter-Strike 2',
+          name_cn: null,
+          install_dir_name: 'Counter-Strike Global Offensive',
+          install_path: 'C:/Program Files (x86)/Steam/steamapps/common/Counter-Strike Global Offensive',
+          appmanifest_path: 'C:/Program Files (x86)/Steam/steamapps/appmanifest_730.acf',
+          size_bytes: 35 * GB,
+          last_played_ts: NOW - DAY,
+          library_root: 'C:/Program Files (x86)/Steam',
+          state_flags: 4,
+          is_fully_installed: true,
+          is_ghost: false,
+          default_recommended: false,
+          recommendation_reason: null,
+          workshop_item_count: 7,
+        },
+        {
+          appid: 440,
+          name_en: 'Team Fortress 2',
+          name_cn: null,
+          install_dir_name: 'Team Fortress 2',
+          install_path: 'C:/Program Files (x86)/Steam/steamapps/common/Team Fortress 2',
+          appmanifest_path: 'C:/Program Files (x86)/Steam/steamapps/appmanifest_440.acf',
+          size_bytes: 45 * GB,
+          last_played_ts: NOW - 270 * DAY,
+          library_root: 'C:/Program Files (x86)/Steam',
+          state_flags: 4,
+          is_fully_installed: true,
+          is_ghost: false,
+          default_recommended: true,
+          recommendation_reason: '45GB · 9 个月未启动',
+          workshop_item_count: 0,
+        },
+      ],
+    },
+    {
+      root: 'D:/SteamLibrary',
+      total_size_bytes: 192 * GB,
+      games: [
+        {
+          appid: 1091500,
+          name_en: 'Cyberpunk 2077',
+          name_cn: null,
+          install_dir_name: 'Cyberpunk 2077',
+          install_path: 'D:/SteamLibrary/steamapps/common/Cyberpunk 2077',
+          appmanifest_path: 'D:/SteamLibrary/steamapps/appmanifest_1091500.acf',
+          size_bytes: 72 * GB,
+          last_played_ts: null,
+          library_root: 'D:/SteamLibrary',
+          state_flags: 4,
+          is_fully_installed: true,
+          is_ghost: false,
+          default_recommended: true,
+          recommendation_reason: '72GB · 从未启动',
+          workshop_item_count: 0,
+        },
+        {
+          appid: 1174180,
+          name_en: 'Red Dead Redemption 2',
+          name_cn: null,
+          install_dir_name: 'Red Dead Redemption 2',
+          install_path: 'D:/SteamLibrary/steamapps/common/Red Dead Redemption 2',
+          appmanifest_path: 'D:/SteamLibrary/steamapps/appmanifest_1174180.acf',
+          size_bytes: 119 * GB,
+          last_played_ts: NOW - 540 * DAY,
+          library_root: 'D:/SteamLibrary',
+          state_flags: 4,
+          is_fully_installed: true,
+          is_ghost: false,
+          default_recommended: true,
+          recommendation_reason: '119GB · 1 年未启动',
+          workshop_item_count: 0,
+        },
+        {
+          appid: 999,
+          name_en: 'Forgotten Game',
+          name_cn: null,
+          install_dir_name: 'Forgotten Game',
+          install_path: 'D:/SteamLibrary/steamapps/common/Forgotten Game',
+          appmanifest_path: 'D:/SteamLibrary/steamapps/appmanifest_999.acf',
+          size_bytes: 1 * GB,
+          last_played_ts: null,
+          library_root: 'D:/SteamLibrary',
+          state_flags: 4,
+          is_fully_installed: false,
+          is_ghost: true,
+          default_recommended: true,
+          recommendation_reason: 'ACF 存在但安装目录缺失',
+          workshop_item_count: 0,
+        },
+      ],
+    },
+  ],
+};
+
+export function steamWorkshopItems(appid: number): WorkshopItem[] {
+  if (appid !== 730) return [];
+  return [
+    {
+      id: 2185699891,
+      size_bytes: 145 * 1024 * 1024,
+      last_modified_ts: NOW - 5 * DAY,
+      path: `C:/Program Files (x86)/Steam/steamapps/workshop/content/${appid}/2185699891`,
+    },
+    {
+      id: 3010055,
+      size_bytes: 320 * 1024 * 1024,
+      last_modified_ts: NOW - 90 * DAY,
+      path: `C:/Program Files (x86)/Steam/steamapps/workshop/content/${appid}/3010055`,
+    },
+    {
+      id: 3010099,
+      size_bytes: 78 * 1024 * 1024,
+      last_modified_ts: NOW - 400 * DAY,
+      path: `C:/Program Files (x86)/Steam/steamapps/workshop/content/${appid}/3010099`,
+    },
+  ];
+}
+
+export function workshopTitles(ids: number[]): Record<number, string> {
+  const knownTitles: Record<number, string> = {
+    2185699891: 'CSGOHUB Skills Training Map by csstats.gg',
+    3010055: 'Aim Practice Pack',
+    // 3010099 intentionally omitted — simulates a deleted/private item
+    // that Steam's API skips, so the UI shows the ID-only fallback path.
+  };
+  const out: Record<number, string> = {};
+  for (const id of ids) {
+    if (knownTitles[id]) out[id] = knownTitles[id];
+  }
+  return out;
 }

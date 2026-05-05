@@ -896,6 +896,342 @@ fn execute_plan(
     execute(&plan, dry_run, &state.undo_log, &state.quarantine_root).map_err(|e| e.to_string())
 }
 
+/// Inspect the Steam install (registry + default paths). Returns a full
+/// inventory: every library root, every installed/ghost game, with
+/// recommendation flags pre-computed in the backend per design doc §6.5.
+/// Frontend never has to recompute the dormancy heuristic.
+#[tauri::command]
+async fn list_steam_games() -> Result<pinkbin_steam_inspector::SteamInventory, String> {
+    tokio::task::spawn_blocking(pinkbin_steam_inspector::inspect)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("steam inspect failed: {e:#}"))
+}
+
+/// Lazily enumerate every Workshop item under one game's
+/// `<library>/steamapps/workshop/content/<appid>/`. Each item entry includes
+/// the recursive size and folder mtime — slow enough that we do this on
+/// click rather than during the bulk inspect.
+#[tauri::command]
+async fn list_steam_workshop_items(
+    library_root: String,
+    appid: u32,
+) -> Result<Vec<pinkbin_steam_inspector::WorkshopItem>, String> {
+    let path = PathBuf::from(library_root);
+    tokio::task::spawn_blocking(move || pinkbin_steam_inspector::list_workshop_items(&path, appid))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("workshop scan failed: {e:#}"))
+}
+
+/// Resolve workshop item IDs to human-readable titles via Steam's public
+/// `ISteamRemoteStorage/GetPublishedFileDetails` endpoint. No API key, no
+/// auth — just a batched POST. Returns ID → title for every item Steam
+/// reports `result: 1` (OK); deleted/private items are simply absent from
+/// the map and the frontend renders the bare ID as fallback.
+///
+/// Network resilience: in mainland China `api.steampowered.com` is often
+/// reachable only through a proxy, so we honor the Windows system proxy
+/// (`HKCU\...\Internet Settings\ProxyEnable + ProxyServer`) — most VPN
+/// clients (Clash, V2RayN, Shadowrocket-PC, etc.) write that key when
+/// they're on. One automatic retry with 800ms backoff smooths transient
+/// flakes. Frontend caches successful results in localStorage so demos
+/// don't need to re-fetch over an unstable connection.
+///
+/// Privacy: the IDs we send are the same ones the user already received
+/// from Steam by virtue of subscribing. We're not sending paths, names of
+/// other games, or anything Steam doesn't already have. This goes to
+/// Steam directly — never to an LLM (where opaque numeric IDs would be
+/// useless anyway).
+#[tauri::command]
+async fn fetch_workshop_titles(ids: Vec<u64>) -> Result<HashMap<u64, String>, String> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Resp {
+        response: RespInner,
+    }
+    #[derive(serde::Deserialize)]
+    struct RespInner {
+        #[serde(default)]
+        publishedfiledetails: Vec<Item>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Item {
+        publishedfileid: String,
+        result: i32,
+        #[serde(default)]
+        title: Option<String>,
+    }
+
+    let mut form: Vec<(String, String)> = Vec::with_capacity(ids.len() + 1);
+    form.push(("itemcount".to_string(), ids.len().to_string()));
+    for (i, id) in ids.iter().enumerate() {
+        form.push((format!("publishedfileids[{i}]"), id.to_string()));
+    }
+
+    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(10));
+    if let Some(proxy_str) = system_https_proxy() {
+        match reqwest::Proxy::all(&proxy_str) {
+            Ok(p) => {
+                tracing::info!("workshop title fetch: using system proxy {}", proxy_str);
+                builder = builder.proxy(p);
+            }
+            Err(e) => {
+                tracing::warn!("workshop title fetch: ignoring malformed system proxy {:?}: {}", proxy_str, e);
+            }
+        }
+    }
+    let client = builder
+        .build()
+        .map_err(|e| format!("steam api client build failed: {e}"))?;
+
+    let url = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
+    let mut last_err: Option<String> = None;
+    let mut resp_opt: Option<reqwest::Response> = None;
+    for attempt in 0..2u32 {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(800)).await;
+        }
+        match client.post(url).form(&form).send().await {
+            Ok(r) => {
+                resp_opt = Some(r);
+                last_err = None;
+                break;
+            }
+            Err(e) => {
+                tracing::warn!("workshop title fetch attempt {} failed: {}", attempt + 1, e);
+                last_err = Some(e.to_string());
+            }
+        }
+    }
+    let resp = resp_opt.ok_or_else(|| {
+        format!(
+            "Steam 服务器无响应（重试 1 次后仍失败）: {}",
+            last_err.unwrap_or_else(|| "unknown".to_string())
+        )
+    })?;
+    if !resp.status().is_success() {
+        return Err(format!("Steam 服务器返回 HTTP {}", resp.status()));
+    }
+    let parsed: Resp = resp
+        .json()
+        .await
+        .map_err(|e| format!("Steam 服务器响应解析失败: {e}"))?;
+    let mut out: HashMap<u64, String> = HashMap::new();
+    for item in parsed.response.publishedfiledetails {
+        if item.result != 1 {
+            continue; // 9 = deleted, 16 = banned, etc. — fall back to ID display.
+        }
+        if let (Ok(id), Some(title)) = (item.publishedfileid.parse::<u64>(), item.title) {
+            if !title.is_empty() {
+                out.insert(id, title);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Read the system HTTPS proxy if one is configured, normalized into a URL
+/// reqwest can consume. Windows-only — on mac/linux reqwest already honors
+/// `HTTPS_PROXY` env var by default, which is the standard convention.
+#[cfg(windows)]
+fn system_https_proxy() -> Option<String> {
+    let raw = read_windows_proxy_server()?;
+    parse_proxy_server(&raw)
+}
+
+#[cfg(not(windows))]
+fn system_https_proxy() -> Option<String> {
+    None
+}
+
+/// Read `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`
+/// and return the `ProxyServer` REG_SZ value when `ProxyEnable` is non-zero.
+/// Returns the raw string Steam-side parsing will normalize.
+#[cfg(windows)]
+fn read_windows_proxy_server() -> Option<String> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ,
+        REG_DWORD, REG_SZ,
+    };
+
+    let subkey: Vec<u16> =
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\0"
+            .encode_utf16()
+            .collect();
+
+    unsafe {
+        let mut hkey: HKEY = std::ptr::null_mut();
+        if RegOpenKeyExW(HKEY_CURRENT_USER, subkey.as_ptr(), 0, KEY_READ, &mut hkey)
+            != ERROR_SUCCESS
+        {
+            return None;
+        }
+
+        // ProxyEnable (DWORD) — 0 = disabled.
+        let mut proxy_enable: u32 = 0;
+        let mut size = std::mem::size_of::<u32>() as u32;
+        let mut ty: u32 = 0;
+        let name: Vec<u16> = "ProxyEnable\0".encode_utf16().collect();
+        let res = RegQueryValueExW(
+            hkey,
+            name.as_ptr(),
+            std::ptr::null_mut(),
+            &mut ty,
+            &mut proxy_enable as *mut _ as *mut u8,
+            &mut size,
+        );
+        if res != ERROR_SUCCESS || ty != REG_DWORD || proxy_enable == 0 {
+            let _ = RegCloseKey(hkey);
+            return None;
+        }
+
+        // ProxyServer (REG_SZ).
+        let mut buf = [0u16; 512];
+        let mut len = (buf.len() * 2) as u32;
+        let mut ty: u32 = 0;
+        let name: Vec<u16> = "ProxyServer\0".encode_utf16().collect();
+        let res = RegQueryValueExW(
+            hkey,
+            name.as_ptr(),
+            std::ptr::null_mut(),
+            &mut ty,
+            buf.as_mut_ptr() as *mut u8,
+            &mut len,
+        );
+        let _ = RegCloseKey(hkey);
+        if res != ERROR_SUCCESS || ty != REG_SZ {
+            return None;
+        }
+        let u16_len = (len as usize / 2).saturating_sub(1);
+        let s = OsString::from_wide(&buf[..u16_len]);
+        s.to_str().map(|s| s.to_string())
+    }
+}
+
+/// Normalize the IE `ProxyServer` value into a single URL reqwest can use.
+/// Accepts the two formats Windows writes:
+///   "127.0.0.1:7890"                                 → http://127.0.0.1:7890
+///   "http=127.0.0.1:7890;https=127.0.0.1:7890;..."   → pick the https= entry
+fn parse_proxy_server(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let with_scheme = |s: &str| -> String {
+        if s.starts_with("http://") || s.starts_with("https://") || s.starts_with("socks5://") {
+            s.to_string()
+        } else {
+            format!("http://{s}")
+        }
+    };
+    if raw.contains('=') {
+        // Per-protocol form. Prefer https=, fall back to http=.
+        let parts: Vec<&str> = raw.split(';').map(|p| p.trim()).collect();
+        if let Some(p) = parts.iter().find_map(|p| p.strip_prefix("https=")) {
+            return Some(with_scheme(p));
+        }
+        if let Some(p) = parts.iter().find_map(|p| p.strip_prefix("http=")) {
+            return Some(with_scheme(p));
+        }
+        return None;
+    }
+    Some(with_scheme(raw))
+}
+
+#[cfg(test)]
+mod proxy_parse_tests {
+    use super::parse_proxy_server;
+
+    #[test]
+    fn single_value_gets_http_scheme() {
+        assert_eq!(
+            parse_proxy_server("127.0.0.1:7890").as_deref(),
+            Some("http://127.0.0.1:7890"),
+        );
+    }
+
+    #[test]
+    fn already_scheme_kept_as_is() {
+        assert_eq!(
+            parse_proxy_server("http://10.0.0.1:8080").as_deref(),
+            Some("http://10.0.0.1:8080"),
+        );
+    }
+
+    #[test]
+    fn per_protocol_prefers_https() {
+        assert_eq!(
+            parse_proxy_server("http=127.0.0.1:7890;https=127.0.0.1:7891;ftp=127.0.0.1:7892")
+                .as_deref(),
+            Some("http://127.0.0.1:7891"),
+        );
+    }
+
+    #[test]
+    fn per_protocol_falls_back_to_http_only() {
+        assert_eq!(
+            parse_proxy_server("http=127.0.0.1:7890;ftp=127.0.0.1:7891").as_deref(),
+            Some("http://127.0.0.1:7890"),
+        );
+    }
+
+    #[test]
+    fn empty_returns_none() {
+        assert_eq!(parse_proxy_server(""), None);
+        assert_eq!(parse_proxy_server("   "), None);
+    }
+}
+
+/// Hand off to Steam via its custom URI scheme. Action whitelist + numeric
+/// id means the URL surface can't be poisoned by arbitrary frontend
+/// strings — this is the only way a Steam Inspector destructive intent
+/// (uninstall) leaves the app, and it's Steam itself that runs the action.
+/// `id` is appid for game actions, or workshop file id for `url/CommunityFilePage`.
+#[tauri::command]
+fn open_steam_url(action: String, appid: u64) -> Result<(), String> {
+    // Whitelist actions; `url/CommunityFilePage` is the workshop-item page.
+    let url = match action.as_str() {
+        "uninstall" | "rungameid" | "validate" | "nav" => format!("steam://{action}/{appid}"),
+        "workshop_page" => format!("steam://url/CommunityFilePage/{appid}"),
+        other => return Err(format!("unsupported steam action: {other}")),
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        // `cmd /c start "" "<url>"` is the standard Windows recipe for
+        // launching a registered URL handler without inheriting the parent
+        // window. The empty `""` is the start command's required title arg.
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", &url])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+}
+
 #[tauri::command]
 fn set_advisor(
     state: State<'_, AppState>,
@@ -979,6 +1315,10 @@ pub fn run() {
             execute_plan,
             set_advisor,
             volume_info,
+            list_steam_games,
+            list_steam_workshop_items,
+            fetch_workshop_titles,
+            open_steam_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
