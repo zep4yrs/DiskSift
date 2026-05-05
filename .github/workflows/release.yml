@@ -1,5 +1,9 @@
 name: Release
 
+# Windows-only for now. macOS / Linux 当前没有签名证书，也没在真实机器上验过；
+# 没法保证用户体面体验，就不提供二进制——想用的人自己 `pnpm tauri build`。
+# 等有签名 + 验证通道后再把矩阵加回来（git history 里有 4 平台版本可参考）。
+
 on:
   push:
     tags: ["v*"]
@@ -9,15 +13,7 @@ jobs:
   build:
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: macos-latest,   target: "aarch64-apple-darwin"   }
-          - { os: macos-latest,   target: "x86_64-apple-darwin"    }
-          - { os: ubuntu-latest,  target: "x86_64-unknown-linux-gnu" }
-          - { os: windows-latest, target: "x86_64-pc-windows-msvc" }
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -29,14 +25,8 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
-
-      - name: Install Linux Tauri deps
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsoup-3.0-dev
 
       - run: pnpm install --frozen-lockfile=false
 
@@ -46,7 +36,7 @@ jobs:
         with:
           projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
-          releaseName: "Diskwise ${{ github.ref_name }}"
+          releaseName: "Pinkbin ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: false
-          args: --target ${{ matrix.target }}
+          args: --target x86_64-pc-windows-msvc
