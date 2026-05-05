@@ -1,9 +1,12 @@
 name: CodeQL
 
 on:
-  push: { branches: [main] }
-  pull_request: { branches: [main] }
-  schedule: [{ cron: "0 5 * * 1" }]
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 5 * * 1"
 
 jobs:
   analyze:
@@ -18,6 +21,9 @@ jobs:
         language: [javascript-typescript]
     steps:
       - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
-        with: { languages: ${{ matrix.language }} }
-      - uses: github/codeql-action/analyze@v3
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
