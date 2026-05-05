@@ -116,12 +116,13 @@ Windows 上直读 NTFS Master File Table（其他平台用 jwalk 跨平台 walke
 
 ## 路线图
 
-- [x] **v0.1** —— 基础扫描 + treemap + 树视图 + 拖拽 AI 分析
-- [x] **v0.2** —— Windows NTFS MFT 直读（88× 提速）+ WeChat 4.x 重写 + Conda env 卡片 + 砍 36 个未验证 scaffold
-- [ ] **v0.3** —— 撤销 UI（消费 `undo.jsonl`）+ zoomable treemap 下钻 + Markdown 渲染美化（已上）
-- [ ] **v0.4** —— **更多内置清理脚本**：Steam · Chrome · Docker · HuggingFace · npm/pnpm/pip · OBS · IDE 索引……每份配 safety test 守红线
-- [ ] **v0.5** —— macOS / Linux native fast scanner（APFS Spotlight / btrfs subvol）
-- [ ] **v0.6** —— Scaffold marketplace（用户提交、社区验证、版本控制）
+- [x] 整盘秒扫，看到每个文件夹占多少
+- [x] 拖任意文件夹给 AI 问"这是什么、能不能删"
+- [x] 微信、Conda 已经支持一键清理
+- [ ] 加一个"撤销"按钮，删错了能一键找回
+- [ ] 把更多常见软件加进来：Steam、Chrome、Docker、npm/pip、HuggingFace、OBS、各种 IDE 缓存……
+- [ ] macOS 和 Linux 上也做到秒扫
+- [ ] 让用户能自己写、自己分享清理脚本
 
 ---
 

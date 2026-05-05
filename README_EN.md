@@ -116,12 +116,13 @@ All deletes go to the **system Recycle Bin** by default — recoverable. Every a
 
 ## Roadmap
 
-- [x] **v0.1** — basic scan + treemap + tree view + drag-to-AI analysis
-- [x] **v0.2** — Windows NTFS MFT direct read (88× faster) + WeChat 4.x rewrite + Conda env card + cut 36 unverified scaffolds
-- [ ] **v0.3** — undo UI (consume `undo.jsonl`) + zoomable treemap drilldown + Markdown rendering polish (shipped)
-- [ ] **v0.4** — **more built-in cleanup scaffolds**: Steam · Chrome · Docker · HuggingFace · npm/pnpm/pip · OBS · IDE indices… every one with safety tests guarding red lines
-- [ ] **v0.5** — native fast scanner on macOS / Linux (APFS Spotlight / btrfs subvol)
-- [ ] **v0.6** — scaffold marketplace (user submissions, community-validated, version-controlled)
+- [x] Whole-disk scan in seconds — see how much every folder takes
+- [x] Drag any folder into the AI to ask "what is this, can I delete it?"
+- [x] One-click cleanup for WeChat and Conda
+- [ ] An "undo" button so you can recover anything you deleted by mistake
+- [ ] Support more common apps: Steam, Chrome, Docker, npm/pip, HuggingFace, OBS, IDE caches…
+- [ ] Make the scan equally fast on macOS and Linux
+- [ ] Let users write and share their own cleanup scripts
 
 ---
 
