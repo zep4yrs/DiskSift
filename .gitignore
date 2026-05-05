@@ -27,6 +27,9 @@ Thumbs.db
 *.swp
 *~
 
+# Claude Code（每台机器独立的本地权限/设置；shared 的 settings.json 仍入库）
+.claude/settings.local.json
+
 # Local env / secrets
 .env
 .env.local
