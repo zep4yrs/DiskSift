@@ -80,7 +80,7 @@ Windows 上直读 NTFS Master File Table（其他平台用 jwalk 跨平台 walke
 ## 怎么用
 
 1. **下载安装包**[（上面）](#下载)，双击安装，桌面出现 Diskwise 图标
-2. **打开 → 右上角 ⚙ 配 AI**——推荐先用本地 [Ollama](https://ollama.com/download)（免费免 key），或者填 Anthropic / OpenAI / Gemini 的 API Key
+2. **打开 → 右上角 ⚙ 配 AI**——填LLM的API Key
 3. **顶部"选择磁盘或文件夹"→ 点扫描**——2-5 秒后看到 treemap + 树
 4. **遇到陌生大文件夹**——拖到中间聊天框问 AI；或者右侧 Studio 已经认出了的（微信、conda）直接看清理面板
 5. **删除前**：默认进回收站；高风险操作（chat-backups 等）会两步确认；勾选 dry-run 可以先看要删什么
