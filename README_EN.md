@@ -10,7 +10,7 @@ Open-source disk cleaner. Scan a whole drive in seconds to see where the bytes w
 
 [![License](https://img.shields.io/badge/License-MIT-ff69b4.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB.svg)](https://tauri.app)
-[![Platform](https://img.shields.io/badge/Win%20·%20macOS%20·%20Linux-lightgrey.svg)](#download)
+[![Platform](https://img.shields.io/badge/Windows-lightgrey.svg)](#download)
 
 [Download](#download) · [Demo](#demo) · [Three things](#three-things) · [Usage](#usage) · [Architecture](#architecture) · [Roadmap](#roadmap) · [Contributing](#contributing) · [Acknowledgments](#acknowledgments)
 
@@ -28,9 +28,9 @@ Open-source disk cleaner. Scan a whole drive in seconds to see where the bytes w
 
 | Platform | File | Notes |
 |---|---|---|
-| **Windows** | [`Diskwise_x.x.x_x64-setup.exe`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) (NSIS)<br>[`Diskwise_x.x.x_x64_en-US.msi`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) (MSI) | First launch: SmartScreen will block — click "More info" → "Run anyway". NTFS MFT direct read needs admin; the installer ships a manifest that auto-elevates via UAC. |
-| **macOS** | [`Diskwise_x.x.x_universal.dmg`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) | First launch: allow it under System Settings → Privacy & Security. |
-| **Linux** | [`Diskwise_x.x.x_amd64.AppImage`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) / `.deb` | `chmod +x` the AppImage and double-click. Falls back to cross-platform walker, slower than Windows. |
+| **Windows 10 / 11 (x64)** | [`Diskwise_x.x.x_x64-setup.exe`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) (NSIS)<br>[`Diskwise_x.x.x_x64_en-US.msi`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) (MSI) | First launch: SmartScreen will block — click "More info" → "Run anyway". NTFS MFT direct read needs admin; the installer ships a manifest that auto-elevates via UAC. |
+
+> No prebuilt macOS / Linux binaries yet (no signing cert for macOS, and we haven't validated the Linux build on real hardware). You can build them yourself with `pnpm tauri build` — the CI pipeline (`.github/workflows/release.yml`) already has the three-platform matrix wired up; PRs to get them shipping are welcome.
 
 ---
 
@@ -121,7 +121,7 @@ All deletes go to the **system Recycle Bin** by default — recoverable. Every a
 - [x] One-click cleanup for WeChat and Conda
 - [ ] An "undo" button so you can recover anything you deleted by mistake
 - [ ] Support more common apps: Steam, Chrome, Docker, npm/pip, HuggingFace, OBS, IDE caches…
-- [ ] Make the scan equally fast on macOS and Linux
+- [ ] Ship prebuilt macOS / Linux binaries (need signing cert + real-hardware validation first)
 - [ ] Let users write and share their own cleanup scripts
 
 ---

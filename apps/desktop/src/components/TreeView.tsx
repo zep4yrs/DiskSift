@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { ChevronRight, ChevronDown } from 'lucide-react';
+import { ChevronRight, ChevronDown, FolderOpen, Copy } from 'lucide-react';
 import type { Node } from '../types';
 import { formatBytes, formatCount } from '../format';
 import { api } from '../api';
+import { ContextMenu, type ContextMenuState } from './ContextMenu';
 
 type Props = {
   root: Node;
@@ -11,6 +12,28 @@ type Props = {
 };
 
 export function TreeView({ root, selectedPath, onSelect }: Props) {
+  const [ctx, setCtx] = useState<ContextMenuState | null>(null);
+
+  const openCtx = (e: React.MouseEvent, node: Node) => {
+    e.preventDefault();
+    setCtx({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          label: '在文件管理器中打开',
+          icon: <FolderOpen size={12} />,
+          onClick: () => { api.revealInExplorer(node.path).catch(() => { /* path may have been deleted */ }); },
+        },
+        {
+          label: '复制路径',
+          icon: <Copy size={12} />,
+          onClick: () => { navigator.clipboard?.writeText(node.path).catch(() => { /* ignore */ }); },
+        },
+      ],
+    });
+  };
+
   return (
     <div className="treeview">
       <div className="tree-headrow">
@@ -26,9 +49,11 @@ export function TreeView({ root, selectedPath, onSelect }: Props) {
           depth={0}
           selectedPath={selectedPath}
           onSelect={onSelect}
+          onCtx={openCtx}
           initialOpen
         />
       </div>
+      <ContextMenu state={ctx} onClose={() => setCtx(null)} />
     </div>
   );
 }
@@ -84,6 +109,7 @@ function Row({
   depth,
   selectedPath,
   onSelect,
+  onCtx,
   initialOpen = false,
 }: {
   node: Node;
@@ -91,6 +117,7 @@ function Row({
   depth: number;
   selectedPath: string | null;
   onSelect: (p: string) => void;
+  onCtx: (e: React.MouseEvent, node: Node) => void;
   initialOpen?: boolean;
 }) {
   const [open, setOpen] = useState(initialOpen);
@@ -103,17 +130,14 @@ function Row({
       <div
         className={'tree-row' + (sel ? ' selected' : '') + (node.is_dir ? '' : ' is-file')}
         onClick={() => onSelect(node.path)}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          api.revealInExplorer(node.path).catch(() => { /* path may have been deleted */ });
-        }}
+        onContextMenu={(e) => onCtx(e, node)}
         draggable
         onDragStart={(e) => {
           e.dataTransfer.setData('application/x-diskwise-path', node.path);
           e.dataTransfer.setData('application/x-diskwise-name', node.name);
           e.dataTransfer.effectAllowed = 'copy';
         }}
-        title={node.path + '  ·  右键在文件管理器打开'}
+        title={node.path + '  ·  右键查看选项'}
       >
         <div className="col-name" style={{ paddingLeft: 4 + depth * 14 }}>
           <span
@@ -145,6 +169,7 @@ function Row({
           depth={depth + 1}
           selectedPath={selectedPath}
           onSelect={onSelect}
+          onCtx={onCtx}
         />
       ))}
     </>
