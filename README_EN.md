@@ -80,7 +80,7 @@ All deletes go to the **system Recycle Bin** by default — recoverable. Every a
 ## Usage
 
 1. **Download the installer** [(above)](#download), install, the Diskwise icon shows up on your desktop
-2. **Open → top-right ⚙ to configure AI** — recommended: local [Ollama](https://ollama.com/download) (free, no key); or paste your Anthropic / OpenAI / Gemini API key
+2. **Open → top-right ⚙ to configure AI** — paste your API key
 3. **Top "Pick a disk or folder" → click Scan** — 2–5 seconds later you see the treemap + tree view
 4. **Hit an unfamiliar large folder?** Drag it into the chat panel and ask the AI; or look at the right-side Studio for any already-detected scaffolds (WeChat, conda)
 5. **Before deleting**: defaults to Recycle Bin; high-risk operations (chat-backups etc.) require two-step confirmation; tick dry-run to preview what would be deleted
