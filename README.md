@@ -89,6 +89,8 @@ Windows 上直读 NTFS Master File Table（其他平台用 jwalk 跨平台 walke
 
 ## 架构
 
+> 想看人话解释（不堆术语，普通用户也能看懂）：📖 **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
+
 ```
 ┌────────────────────┐     ┌─────────────────────┐
 │   React + Tauri    │────>│  Rust workspace     │

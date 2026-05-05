@@ -89,6 +89,8 @@ All deletes go to the **system Recycle Bin** by default — recoverable. Every a
 
 ## Architecture
 
+> Want a plain-language walkthrough (no jargon, written for non-technical readers — Chinese for now): 📖 **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
+
 ```
 ┌────────────────────┐     ┌─────────────────────┐
 │   React + Tauri    │────>│  Rust workspace     │
