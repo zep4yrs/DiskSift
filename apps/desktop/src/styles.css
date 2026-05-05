@@ -848,6 +848,7 @@ footer {
   box-shadow: 2px 2px 0 var(--ink);
 }
 .hint svg { flex-shrink: 0; margin-top: 2px; color: var(--pink-deep); }
+.hint > span { flex: 1; min-width: 0; }
 .hint a { color: var(--pink-deep); font-weight: 700; }
 .hint code {
   background: var(--card);

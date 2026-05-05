@@ -6,14 +6,23 @@ import { loadSettings, saveSettings, clearSettings, type Provider } from '../adv
 
 type Props = { onClose: () => void };
 
+// Detect which on-the-wire protocol to use from the Base URL alone, so the
+// user doesn't have to think about "协议". Heuristics cover the cases users
+// actually run into; everything else falls through to OpenAI (the de-facto
+// universal standard for relays + national providers).
+function detectProvider(baseUrl: string): Provider {
+  const u = baseUrl.toLowerCase();
+  if (!u) return 'openai';
+  if (u.includes('11434') || u.includes('localhost') || u.includes('127.0.0.1') || u.includes('/api/chat')) return 'ollama';
+  if (u.includes('anthropic.com') || u.includes('/v1/messages')) return 'anthropic';
+  if (u.includes('googleapis.com') || u.includes('generativelanguage')) return 'gemini';
+  return 'openai';
+}
+
 export function Settings({ onClose }: Props) {
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
-  // 大多数中转和国内厂商都"兼容 OpenAI 协议"，所以默认选它。需要 Claude
-  // 官方 / Gemini / 本地 Ollama 的少数用户点"高级"展开自己改。
-  const [provider, setProvider] = useState<Provider>('openai');
-  const [advanced, setAdvanced] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -22,24 +31,25 @@ export function Settings({ onClose }: Props) {
   useEffect(() => {
     const existing = loadSettings();
     if (existing) {
-      setProvider(existing.provider);
       setModel(existing.model);
       setApiKey(existing.apiKey);
       setBaseUrl(existing.baseUrl);
       setSaved(true);
-      if (existing.provider !== 'openai') setAdvanced(true);
     }
   }, []);
+
+  const provider = detectProvider(baseUrl);
+  const needsKey = provider !== 'ollama';
 
   const save = async () => {
     setErr(null); setMsg(null);
     if (!baseUrl.trim()) { setErr('请填 Base URL'); return; }
     if (!model.trim())   { setErr('请填 Model 名'); return; }
-    if (provider !== 'ollama' && !apiKey.trim()) { setErr('请填 API Key'); return; }
+    if (needsKey && !apiKey.trim()) { setErr('请填 API Key'); return; }
     try {
       saveSettings({ provider, model, apiKey, baseUrl });
       if (isTauri) {
-        await api.setAdvisor(provider, model, provider === 'ollama' ? undefined : apiKey, baseUrl);
+        await api.setAdvisor(provider, model, needsKey ? apiKey : undefined, baseUrl);
       }
       setMsg('已保存 · key 只存在你本机 localStorage');
       setSaved(true);
@@ -53,8 +63,6 @@ export function Settings({ onClose }: Props) {
     setApiKey('');
     setBaseUrl('');
     setModel('');
-    setProvider('openai');
-    setAdvanced(false);
     setSaved(false);
     setMsg('已清除本地保存的配置');
   };
@@ -69,7 +77,7 @@ export function Settings({ onClose }: Props) {
 
         <p className="hint">
           <Info size={12} />
-          填你服务商给你的 <strong>Base URL</strong>、<strong>API Key</strong> 和 <strong>模型名</strong>。OpenAI、DeepSeek、Kimi、MiniMax、OpenRouter、各种中转……绝大多数都"兼容 OpenAI 协议"，直接填就能用。少数（官方 Claude / Gemini / 本地 Ollama）点下面的"高级"切换协议。
+          <span>填你服务商给你的 Base URL、API Key 和模型名。OpenAI、DeepSeek、Kimi、各种中转都直接填就能用；本地 Ollama 不用 Key。</span>
         </p>
 
         <label className="field">
@@ -81,7 +89,7 @@ export function Settings({ onClose }: Props) {
           />
         </label>
 
-        {provider !== 'ollama' && (
+        {needsKey && (
           <label className="field">
             <span>API Key（只存本机，永不上传）</span>
             <div style={{ display: 'flex', gap: 6 }}>
@@ -112,27 +120,6 @@ export function Settings({ onClose }: Props) {
             placeholder="gpt-4o-mini · deepseek-chat · claude-haiku-4-5 …"
           />
         </label>
-
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => setAdvanced((v) => !v)}
-          style={{ alignSelf: 'flex-start', fontSize: 11, padding: '2px 8px' }}
-        >
-          {advanced ? '收起高级' : '高级（切换协议）'}
-        </button>
-
-        {advanced && (
-          <label className="field">
-            <span>协议</span>
-            <select value={provider} onChange={(e) => setProvider(e.target.value as Provider)}>
-              <option value="openai">OpenAI 协议（默认 · 多数中转、国产模型都用这个）</option>
-              <option value="anthropic">Anthropic 协议（官方 Claude / 仿 Anthropic 中转）</option>
-              <option value="gemini">Gemini 协议（Google AI Studio）</option>
-              <option value="ollama">Ollama 本地（无需 API Key）</option>
-            </select>
-          </label>
-        )}
 
         {msg && <div className="ok">{msg}</div>}
         {err && <div className="error">{err}</div>}
