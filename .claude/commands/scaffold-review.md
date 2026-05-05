@@ -27,13 +27,13 @@ review `scaffolds/$ARGUMENTS.toml`，把它和 14-phase 工作流（见 `.claude
 - [ ] `detect` 含默认路径 + `**/<datafolder>` 通配
 - [ ] 多账号 glob 用 `**/<account-pattern>/...` 形态
 - [ ] prompt 类型与 L1/L2 默认行为约定一致
-- [ ] 用 `cargo run -p diskwise-scaffold-lint` 通过
+- [ ] 用 `cargo run -p pinkbin-scaffold-lint` 通过
 
 ### Phase 10 Safety test
 - [ ] `crates/scaffold/tests/<id>_safety.rs` 存在
 - [ ] 含正向断言（每个 scope ≥1 条命中路径）
 - [ ] 含红线断言（DB / config / login / Favorite 等）
-- [ ] `cargo test -p diskwise-scaffold --test <id>_safety` 通过
+- [ ] `cargo test -p pinkbin-scaffold --test <id>_safety` 通过
 
 ### Phase 14 STATUS
 - [ ] `docs/scaffold-requirements/STATUS.md` 里该 id 标记为已完成

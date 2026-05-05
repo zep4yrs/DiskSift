@@ -22,7 +22,7 @@ fn workspace_root() -> PathBuf {
     p
 }
 
-fn load_conda() -> diskwise_scaffold::Scaffold {
+fn load_conda() -> pinkbin_scaffold::Scaffold {
     let path = workspace_root().join("scaffolds/conda.toml");
     let text = std::fs::read_to_string(&path).expect("read conda.toml");
     toml::from_str(&text).expect("parse conda.toml")

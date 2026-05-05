@@ -5,7 +5,7 @@
 ## 列含义
 
 - **Req doc**：该应用所属类别的 `docs/scaffold-requirements/<category>.md` 已含本应用的"实测附录"节
-- **TOML**：`scaffolds/<id>.toml` 通过 `cargo run -p diskwise-scaffold-lint`
+- **TOML**：`scaffolds/<id>.toml` 通过 `cargo run -p pinkbin-scaffold-lint`
 - **Safety test**：`crates/scaffold/tests/<id>_safety.rs` 存在且 `cargo test` 通过
 - **UI 验证**：在桌面 dev app 里目视确认 scope 列表 + 大小 + 清理按钮工作正常
 

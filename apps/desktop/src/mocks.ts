@@ -288,7 +288,7 @@ export async function advise(req: AdvisorRequest): Promise<AdvisorResponse> {
     try {
       return await callAdvisor(settings, req);
     } catch (e) {
-      console.warn('[diskwise] real advisor failed, falling back to canned response:', e);
+      console.warn('[pinkbin] real advisor failed, falling back to canned response:', e);
       // fall through to canned mock
     }
   }
@@ -332,7 +332,10 @@ export async function execute(plan: Plan, _dryRun: boolean): Promise<UndoEntry[]
 
 function wait(ms: number) { return new Promise<void>((r) => setTimeout(r, ms)); }
 
-export async function scopeSizes(_scaffoldId: string, _rootPath: string): Promise<{ scope_id: string; bytes: number; file_count: number }[]> {
+export async function scopeSizes(
+  _scaffoldId: string,
+  _rootPath: string,
+): Promise<{ scope_id: string; bytes: number; file_count: number; total_bytes: number; total_files: number }[]> {
   await wait(50);
   return [];
 }

@@ -17,7 +17,7 @@ fn workspace_root() -> PathBuf {
     p
 }
 
-fn load_wechat_pc() -> diskwise_scaffold::Scaffold {
+fn load_wechat_pc() -> pinkbin_scaffold::Scaffold {
     let path = workspace_root().join("scaffolds/wechat-pc.toml");
     let text = std::fs::read_to_string(&path).expect("read wechat-pc.toml");
     toml::from_str(&text).expect("parse wechat-pc.toml")
@@ -206,7 +206,7 @@ fn wechat_pc_globs_are_safe() {
 fn wechat_pc_matcher_distinguishes_data_from_installs() {
     let scaffolds = vec![load_wechat_pc()];
     let tmp = std::env::temp_dir().join(format!(
-        "diskwise-wechat-matcher-test-{}",
+        "pinkbin-wechat-matcher-test-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -238,7 +238,7 @@ fn wechat_pc_matcher_distinguishes_data_from_installs() {
     std::fs::create_dir_all(neg_random.join("photos")).unwrap();
 
     let assert_match = |path: &Path, expected: Option<&str>, label: &str| {
-        let got = diskwise_scaffold::detect_for(&scaffolds, path);
+        let got = pinkbin_scaffold::detect_for(&scaffolds, path);
         assert_eq!(
             got.as_deref(),
             expected,
@@ -262,9 +262,9 @@ fn wechat_pc_matcher_distinguishes_data_from_installs() {
     assert_match(&neg_random, None, "MyWeChatBackup must not match");
 
     // Also confirm compile_all + detect_compiled agree (the production hot path).
-    let compiled = diskwise_scaffold::compile_all(&scaffolds);
+    let compiled = pinkbin_scaffold::compile_all(&scaffolds);
     let assert_compiled = |path: &Path, expected: Option<&str>, label: &str| {
-        let got = diskwise_scaffold::detect_compiled(&compiled, path);
+        let got = pinkbin_scaffold::detect_compiled(&compiled, path);
         assert_eq!(
             got.as_deref(),
             expected,

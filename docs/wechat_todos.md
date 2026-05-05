@@ -72,7 +72,7 @@ prompt = { kind = "days", default = 30, label = "Delete received images older th
 
 **对比 CleanMyWechat**：UI 上有"+自定义路径"按钮，输入任意路径。
 
-**修复面**：低优先级。可以延后到 v0.3。如果做，是 Studio Card 加"+自定义路径"按钮 → 写入 `localStorage.diskwise.scaffold_overrides`，scope_sizes / execute_scope 把 override 路径也算进去。
+**修复面**：低优先级。可以延后到 v0.3。如果做，是 Studio Card 加"+自定义路径"按钮 → 写入 `localStorage.pinkbin.scaffold_overrides`，scope_sizes / execute_scope 把 override 路径也算进去。
 
 **估算**：半天，纯前端 + Tauri 多接收一个 root 列表。
 

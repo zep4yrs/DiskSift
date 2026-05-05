@@ -1,6 +1,6 @@
 //! 模板：复制到 crates/scaffold/tests/<id>_safety.rs，把所有 TODO 替换为目标 scaffold 的实际值。
 //!
-//! 跑：`cargo test -p diskwise-scaffold --test <id>_safety`
+//! 跑：`cargo test -p pinkbin-scaffold --test <id>_safety`
 //!
 //! 这个测试是把需求文档（docs/scaffold-requirements/<category>.md）里的红线节
 //! 变成可执行检查。**红线断言失败 = scaffold glob 写宽了**——回去收紧 glob，
@@ -17,7 +17,7 @@ fn workspace_root() -> PathBuf {
     p
 }
 
-fn load_scaffold() -> diskwise_scaffold::Scaffold {
+fn load_scaffold() -> pinkbin_scaffold::Scaffold {
     let path = workspace_root().join(SCAFFOLD_FILE);
     let text = std::fs::read_to_string(&path).expect("read scaffold toml");
     toml::from_str(&text).expect("parse scaffold toml")

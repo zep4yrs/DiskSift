@@ -29,7 +29,7 @@ export const api = {
     envFilter?: string[],
   ) =>
     isTauri
-      ? invoke<{ scope_id: string; bytes: number; file_count: number }[]>('scope_sizes', {
+      ? invoke<{ scope_id: string; bytes: number; file_count: number; total_bytes: number; total_files: number }[]>('scope_sizes', {
           scaffoldId,
           rootPath,
           scopeDays: scopeDays ?? null,

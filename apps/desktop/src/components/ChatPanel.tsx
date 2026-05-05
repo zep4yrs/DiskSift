@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Send, Trash2, ShieldCheck, ShieldAlert, ShieldX, X, MessageSquare, Sparkles, Folder, File } from 'lucide-react';
+import { Send, Trash2, ShieldCheck, ShieldAlert, ShieldX, X, MessageSquare, Sparkles, Folder, File, ImagePlus } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '../api';
@@ -65,7 +65,9 @@ export function ChatPanel() {
 
   const [input, setInput] = useState('');
   const [pendingDrops, setPendingDrops] = useState<{ path: string; name: string }[]>([]);
+  const [pendingImages, setPendingImages] = useState<{ id: string; name: string; dataUrl: string; mimeType: string }[]>([]);
   const [dropping, setDropping] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const overviewFiredFor = useRef<string | null>(null);
 
@@ -208,22 +210,24 @@ export function ChatPanel() {
 
   const askFollowUp = async () => {
     const text = input.trim();
-    if (!text && pendingDrops.length === 0) return;
-    if (!root) return;
+    if (!text && pendingDrops.length === 0 && pendingImages.length === 0) return;
+    if (!root && pendingImages.length === 0) return;
     setInput('');
     const drops = pendingDrops.slice();
+    const images = pendingImages.slice();
     setPendingDrops([]);
+    setPendingImages([]);
 
-    const userText = drops.length > 0
-      ? `${text}${text ? '\n' : ''}（关于：${drops.map((d) => d.path).join('、')}）`
-      : text;
+    const dropDesc = drops.length > 0 ? `（关于：${drops.map((d) => d.path).join('、')}）` : '';
+    const imgDesc = images.length > 0 ? `（带 ${images.length} 张图片）` : '';
+    const userText = [text, dropDesc, imgDesc].filter(Boolean).join('\n');
     pushTurn({ id: uid(), role: 'user', text: userText });
     setBusy(true);
     const turnId = uid();
     pushTurn({ id: turnId, role: 'assistant', text: '思考中…', pending: true });
 
     try {
-      const targets = drops.length > 0
+      const targets = drops.length > 0 && root
         ? drops.map((d) => findNodeByPath(root, d.path)).filter(Boolean) as Node[]
         : node ? [node] : [];
 
@@ -236,10 +240,13 @@ export function ChatPanel() {
         top_extensions: (t.top_extensions ?? []).slice(0, 6),
         sample_children: (t.children ?? []).slice(0, 8).map((c) => ({ name: c.name, size: formatBytes(c.size), is_dir: c.is_dir })),
       }));
-      const reply = await freeChat(`目标对象：${JSON.stringify(ctx, null, 2)}`, text || '这些是什么？能不能删？');
+      const contextLine = ctx.length > 0 ? `目标对象：${JSON.stringify(ctx, null, 2)}` : '';
+      const reply = await freeChat(
+        contextLine,
+        text || (images.length > 0 ? '看看这张图，告诉我是什么、能不能删。' : '这些是什么？能不能删？'),
+        images.length > 0 ? images.map((i) => ({ dataUrl: i.dataUrl, mimeType: i.mimeType })) : undefined,
+      );
       patchTurn(turnId, { text: reply, pending: false });
-
-      // No refocus — keep the conversation continuous. Dropped items live as pills only.
     } catch (e) {
       patchTurn(turnId, { text: `AI 调用失败：${String(e)}`, pending: false });
     } finally {
@@ -247,11 +254,57 @@ export function ChatPanel() {
     }
   };
 
-  const onDrop = (e: React.DragEvent) => {
+  const fileToDataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const r = new FileReader();
+      r.onerror = () => reject(r.error);
+      r.onload = () => resolve(r.result as string);
+      r.readAsDataURL(file);
+    });
+
+  const addImageFile = async (file: File) => {
+    if (!file.type.startsWith('image/')) return;
+    if (file.size > 20 * 1024 * 1024) {
+      pushTurn({ id: uid(), role: 'system', text: `图片 ${file.name} 太大（>20MB），跳过` });
+      return;
+    }
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      setPendingImages((prev) => [
+        ...prev,
+        { id: uid(), name: file.name || 'image', dataUrl, mimeType: file.type || 'image/png' },
+      ]);
+    } catch (e) {
+      pushTurn({ id: uid(), role: 'system', text: `读取图片失败：${String(e)}` });
+    }
+  };
+
+  const onPaste = async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const it of items) {
+      if (it.kind === 'file') {
+        const f = it.getAsFile();
+        if (f && f.type.startsWith('image/')) {
+          e.preventDefault();
+          await addImageFile(f);
+        }
+      }
+    }
+  };
+
+  const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setDropping(false);
-    const path = e.dataTransfer.getData('application/x-diskwise-path');
-    const name = e.dataTransfer.getData('application/x-diskwise-name') || path.split(/[\\/]/).pop() || path;
+    // Image file drop (from filesystem / browser): take precedence over the
+    // internal Pinkbin path drop, since paths come with our custom mime type.
+    const files = Array.from(e.dataTransfer.files ?? []).filter((f) => f.type.startsWith('image/'));
+    if (files.length > 0) {
+      for (const f of files) await addImageFile(f);
+      return;
+    }
+    const path = e.dataTransfer.getData('application/x-pinkbin-path');
+    const name = e.dataTransfer.getData('application/x-pinkbin-name') || path.split(/[\\/]/).pop() || path;
     if (!path) return;
     // Just stage a pending pill — do NOT reset the conversation or refocus the
     // chat node. The user keeps one continuous conversation and asks across
@@ -282,7 +335,7 @@ export function ChatPanel() {
         <Sparkles size={15} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="chat-title">
-            {root ? (root.name || root.path) : 'Diskwise AI'}
+            {root ? (root.name || root.path) : 'Pinkbin AI'}
           </div>
           <div className="chat-sub">
             {root
@@ -299,7 +352,7 @@ export function ChatPanel() {
         {empty && !root && (
           <div className="chat-hero">
             <MessageSquare size={32} />
-            <h3>Diskwise AI</h3>
+            <h3>Pinkbin AI</h3>
             <p>选一个磁盘 → 点扫描 → AI 自动给整体解析。<br />扫完之后，可以把左边的任意文件 / 文件夹拖进来问。</p>
             {!isTauri && <p className="muted">浏览器预览模式：扫描数据是模拟的，但 AI 会走真实接口。</p>}
           </div>
@@ -342,24 +395,63 @@ export function ChatPanel() {
             ))}
           </div>
         )}
+        {pendingImages.length > 0 && (
+          <div className="chat-image-pills">
+            {pendingImages.map((img) => (
+              <span key={img.id} className="chat-image-pill" title={img.name}>
+                <img src={img.dataUrl} alt={img.name} />
+                <button
+                  type="button"
+                  onClick={() => setPendingImages((prev) => prev.filter((p) => p.id !== img.id))}
+                ><X size={11} /></button>
+              </span>
+            ))}
+          </div>
+        )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          style={{ display: 'none' }}
+          onChange={async (e) => {
+            const files = Array.from(e.target.files ?? []);
+            for (const f of files) await addImageFile(f);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+          }}
+        />
         <div className="chat-input">
+          <button
+            type="button"
+            className="ghost icon chat-attach"
+            onClick={() => fileInputRef.current?.click()}
+            title="加图片（也可以粘贴/拖进来）"
+            disabled={chat.busy}
+          >
+            <ImagePlus size={15} />
+          </button>
           <textarea
             rows={2}
-            placeholder={root ? '问 AI：这是什么？能删吗？把文件拖进来对比…' : '先选一个磁盘开始扫描'}
+            placeholder={root ? '问 AI：这是什么？能删吗？把文件 / 图片拖进来…（图片粘贴也行）' : '先选一个磁盘开始扫描，或贴张图片直接问'}
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onPaste={onPaste}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 askFollowUp();
               }
             }}
-            disabled={!root}
+            disabled={!root && pendingImages.length === 0}
           />
           <button
             className="primary"
             onClick={askFollowUp}
-            disabled={(!input.trim() && pendingDrops.length === 0) || chat.busy || !root}
+            disabled={
+              (!input.trim() && pendingDrops.length === 0 && pendingImages.length === 0) ||
+              chat.busy ||
+              (!root && pendingImages.length === 0)
+            }
           >
             <Send size={14} /> 发送
           </button>

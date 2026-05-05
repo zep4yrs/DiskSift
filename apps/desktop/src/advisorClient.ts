@@ -1,7 +1,7 @@
 // Browser-side AI advisor client — talks to OpenAI / Anthropic / Ollama directly
 // from the browser, so the preview mode can give real answers.
 //
-// Settings persist to localStorage under "diskwise.advisor".
+// Settings persist to localStorage under "pinkbin.advisor".
 
 import type { AdvisorRequest, AdvisorResponse } from './types';
 
@@ -14,7 +14,7 @@ export interface AdvisorSettings {
   baseUrl: string;
 }
 
-const STORAGE_KEY = 'diskwise.advisor';
+const STORAGE_KEY = 'pinkbin.advisor';
 
 export function loadSettings(): AdvisorSettings | null {
   try {
@@ -36,7 +36,7 @@ export function clearSettings() {
   localStorage.removeItem(STORAGE_KEY);
 }
 
-const SYSTEM_PROMPT = `You are Diskwise's local file advisor. Given a folder's metadata, decide what it is and whether it can be cleaned. Reply in strict JSON ONLY, matching this schema exactly:
+const SYSTEM_PROMPT = `You are Pinkbin's local file advisor. Given a folder's metadata, decide what it is and whether it can be cleaned. Reply in strict JSON ONLY, matching this schema exactly:
 
 {
   "what": "string",
@@ -157,9 +157,9 @@ export function isConfigured(s: AdvisorSettings | null): s is AdvisorSettings {
   return Boolean(s.apiKey && s.model);
 }
 
-const CHAT_SYSTEM = `You are Diskwise's AI advisor — a friendly assistant that helps users figure out what their disk folders are and whether to delete them. Use the metadata you are given (the user's question references a folder by its path, size, samples). Be concise (2-4 sentences), in the user's language. If you suggest deleting, say what to delete (the whole folder vs a sub-scope) and via what mechanism (回收站 / 手动整理 / 卸载应用). Never recommend rm -rf on system paths.`;
+const CHAT_SYSTEM = `You are Pinkbin's AI advisor — a friendly assistant that helps users figure out what their disk folders are and whether to delete them. Use the metadata you are given (the user's question references a folder by its path, size, samples). Be concise (2-4 sentences), in the user's language. If you suggest deleting, say what to delete (the whole folder vs a sub-scope) and via what mechanism (回收站 / 手动整理 / 卸载应用). Never recommend rm -rf on system paths.`;
 
-const OVERVIEW_SYSTEM = `You are Diskwise's AI advisor. The user just finished scanning their disk. You receive a JSON summary of the largest folders. Write a friendly Chinese overview (~180-220 字) covering, in order, with empty lines between sections:
+const OVERVIEW_SYSTEM = `You are Pinkbin's AI advisor. The user just finished scanning their disk. You receive a JSON summary of the largest folders. Write a friendly Chinese overview (~180-220 字) covering, in order, with empty lines between sections:
 
 【整体】 一句话概括磁盘的整体结构（操作系统 / 用户数据 / 应用 各占多少）。
 
@@ -171,23 +171,48 @@ const OVERVIEW_SYSTEM = `You are Diskwise's AI advisor. The user just finished s
 
 口语化中文，不要 markdown bullet（用纯文本换行就行），不要客套话。`;
 
+export interface ChatImage {
+  /** Full data URL (e.g. `data:image/png;base64,...`). */
+  dataUrl: string;
+  /** Mime type — `image/png`, `image/jpeg`, etc. Used by Anthropic / Gemini
+   *  which need it as a separate field. */
+  mimeType: string;
+}
+
+function dataUrlBase64(dataUrl: string): string {
+  const i = dataUrl.indexOf(',');
+  return i >= 0 ? dataUrl.slice(i + 1) : dataUrl;
+}
+
 export async function overviewChat(summary: object): Promise<string> {
   return runChatRaw(OVERVIEW_SYSTEM, JSON.stringify(summary, null, 2));
 }
 
-export async function freeChat(context: string, userMessage: string): Promise<string> {
-  return runChatRaw(CHAT_SYSTEM, `${context}\n\n用户的问题：${userMessage}`);
+export async function freeChat(
+  context: string,
+  userMessage: string,
+  images?: ChatImage[],
+): Promise<string> {
+  const userText = context ? `${context}\n\n用户的问题：${userMessage}` : userMessage;
+  return runChatRaw(CHAT_SYSTEM, userText, images);
 }
 
-async function runChatRaw(system: string, user: string): Promise<string> {
+async function runChatRaw(system: string, user: string, images?: ChatImage[]): Promise<string> {
   const settings = loadSettings();
   if (!isConfigured(settings)) {
     throw new Error('AI 未配置 — 在右上角的设置里填一个 API key');
   }
   const fullUser = user;
+  const imgs = images ?? [];
 
   if (settings.provider === 'openai') {
     const url = (settings.baseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
+    const userContent: unknown = imgs.length === 0
+      ? fullUser
+      : [
+          { type: 'text', text: fullUser },
+          ...imgs.map((img) => ({ type: 'image_url', image_url: { url: img.dataUrl } })),
+        ];
     const r = await fetch(`${url}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${settings.apiKey}` },
@@ -195,7 +220,7 @@ async function runChatRaw(system: string, user: string): Promise<string> {
         model: settings.model,
         messages: [
           { role: 'system', content: system },
-          { role: 'user', content: fullUser },
+          { role: 'user', content: userContent },
         ],
       }),
     });
@@ -205,6 +230,15 @@ async function runChatRaw(system: string, user: string): Promise<string> {
   }
   if (settings.provider === 'anthropic') {
     const url = (settings.baseUrl || 'https://api.anthropic.com').replace(/\/$/, '');
+    const userContent: unknown = imgs.length === 0
+      ? fullUser
+      : [
+          ...imgs.map((img) => ({
+            type: 'image',
+            source: { type: 'base64', media_type: img.mimeType, data: dataUrlBase64(img.dataUrl) },
+          })),
+          { type: 'text', text: fullUser },
+        ];
     const r = await fetch(`${url}/v1/messages`, {
       method: 'POST',
       headers: {
@@ -217,7 +251,7 @@ async function runChatRaw(system: string, user: string): Promise<string> {
         model: settings.model,
         max_tokens: 600,
         system,
-        messages: [{ role: 'user', content: fullUser }],
+        messages: [{ role: 'user', content: userContent }],
       }),
     });
     if (!r.ok) throw new Error(`Anthropic ${r.status}: ${await r.text()}`);
@@ -226,6 +260,10 @@ async function runChatRaw(system: string, user: string): Promise<string> {
   }
   if (settings.provider === 'gemini') {
     const url = (settings.baseUrl || 'https://generativelanguage.googleapis.com').replace(/\/$/, '');
+    const parts: unknown[] = [{ text: fullUser }];
+    for (const img of imgs) {
+      parts.push({ inline_data: { mime_type: img.mimeType, data: dataUrlBase64(img.dataUrl) } });
+    }
     const r = await fetch(
       `${url}/v1beta/models/${encodeURIComponent(settings.model)}:generateContent?key=${encodeURIComponent(settings.apiKey)}`,
       {
@@ -233,7 +271,7 @@ async function runChatRaw(system: string, user: string): Promise<string> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: system }] },
-          contents: [{ role: 'user', parts: [{ text: fullUser }] }],
+          contents: [{ role: 'user', parts }],
           generationConfig: { temperature: 0.4 },
         }),
       },
@@ -242,8 +280,10 @@ async function runChatRaw(system: string, user: string): Promise<string> {
     const data = await r.json();
     return data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? '';
   }
-  // ollama
+  // ollama — uses `images` field (array of base64) on the message.
   const url = (settings.baseUrl || 'http://localhost:11434').replace(/\/$/, '');
+  const userMsg: Record<string, unknown> = { role: 'user', content: fullUser };
+  if (imgs.length > 0) userMsg.images = imgs.map((i) => dataUrlBase64(i.dataUrl));
   const r = await fetch(`${url}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -251,8 +291,8 @@ async function runChatRaw(system: string, user: string): Promise<string> {
       model: settings.model,
       stream: false,
       messages: [
-        { role: 'system', content: CHAT_SYSTEM },
-        { role: 'user', content: fullUser },
+        { role: 'system', content: system },
+        userMsg,
       ],
     }),
   });

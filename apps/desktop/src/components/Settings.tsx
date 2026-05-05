@@ -131,7 +131,7 @@ export function Settings({ onClose }: Props) {
         </div>
 
         <p className="muted small" style={{ marginTop: 4 }}>
-          Diskwise 只把目录元数据发给 AI（路径、大小、文件数、扩展名分布、抽样路径），<strong>不会</strong>读取或上传文件内容。
+          Pinkbin 只把目录元数据发给 AI（路径、大小、文件数、扩展名分布、抽样路径），<strong>不会</strong>读取或上传文件内容。
         </p>
       </div>
     </div>

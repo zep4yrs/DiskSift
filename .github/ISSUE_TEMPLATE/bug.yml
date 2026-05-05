@@ -4,7 +4,7 @@ labels: [bug]
 body:
   - type: input
     id: version
-    attributes: { label: Diskwise version, placeholder: "v0.1.0" }
+    attributes: { label: Pinkbin version, placeholder: "v0.1.1" }
     validations: { required: true }
   - type: dropdown
     id: os
@@ -22,4 +22,4 @@ body:
     validations: { required: true }
   - type: textarea
     id: logs
-    attributes: { label: Logs (~/.diskwise/diskwise.log), render: shell }
+    attributes: { label: Logs (~/.pinkbin/pinkbin.log), render: shell }

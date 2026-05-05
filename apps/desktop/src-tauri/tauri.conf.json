@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Diskwise",
-  "version": "0.1.0",
-  "identifier": "dev.diskwise.app",
+  "productName": "Pinkbin",
+  "version": "0.1.1",
+  "identifier": "dev.pinkbin.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Diskwise",
+        "title": "Pinkbin",
         "label": "main",
         "width": 1280,
         "height": 800,
@@ -29,7 +29,7 @@
     "targets": "all",
     "category": "Utility",
     "shortDescription": "Disk analyzer with AI advisor and per-app cleanup scaffolds",
-    "longDescription": "Diskwise scans your disk, walks you through every large folder, and lets you safely clean caches with per-app scaffolds and an AI advisor.",
+    "longDescription": "Pinkbin scans your disk, walks you through every large folder, and lets you safely clean caches with per-app scaffolds and an AI advisor.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

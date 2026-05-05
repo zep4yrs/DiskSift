@@ -19,9 +19,9 @@
 - [ ] **Phase 1-2**: `docs/scaffold-requirements/<category>.md` 含本 app 的范围 / L1-L2-L3 分级 / 红线
 - [ ] **Phase 5-7**: 文档里有 "实测路径映射" 节（与 TOML glob 一致）
 - [ ] **Phase 8**: `id` kebab-case 唯一；`risk` 诚实；`disclaimer` 显式列红线
-- [ ] **Phase 9**: `cargo run -p diskwise-scaffold-lint -- scaffolds/<id>.toml` 通过
-- [ ] **Phase 10**: `crates/scaffold/tests/<id>_safety.rs` 存在；`cargo test -p diskwise-scaffold` 通过；含**红线断言**
-- [ ] **Phase 11**: 若改了 `Scaffold`/`Scope` 等结构，`cargo check -p diskwise-desktop` + `pnpm -C apps/desktop exec tsc --noEmit` 都干净
+- [ ] **Phase 9**: `cargo run -p pinkbin-scaffold-lint -- scaffolds/<id>.toml` 通过
+- [ ] **Phase 10**: `crates/scaffold/tests/<id>_safety.rs` 存在；`cargo test -p pinkbin-scaffold` 通过；含**红线断言**
+- [ ] **Phase 11**: 若改了 `Scaffold`/`Scope` 等结构，`cargo check -p pinkbin-desktop` + `pnpm -C apps/desktop exec tsc --noEmit` 都干净
 - [ ] **Phase 12-13**: 若改 UI，套了 `<ErrorBoundary>`、用两步确认（不用 `window.confirm`）；`pnpm tauri dev` 实机跑过
 - [ ] **Phase 14**: `docs/scaffold-requirements/STATUS.md` 已更新
 

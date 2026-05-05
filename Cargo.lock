@@ -692,93 +692,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "diskwise-advisor"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "diskwise-desktop"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "diskwise-advisor",
- "diskwise-executor",
- "diskwise-scaffold",
- "diskwise-scanner",
- "globset",
- "jwalk",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-shell",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "diskwise-executor"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tracing",
- "trash",
-]
-
-[[package]]
-name = "diskwise-scaffold"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "globset",
- "serde",
- "shellexpand",
- "thiserror 2.0.18",
- "toml 1.1.2+spec-1.1.0",
- "tracing",
-]
-
-[[package]]
-name = "diskwise-scaffold-lint"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "diskwise-scaffold",
- "toml 1.1.2+spec-1.1.0",
-]
-
-[[package]]
-name = "diskwise-scanner"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "jwalk",
- "ntfs",
- "rayon",
- "serde",
- "thiserror 2.0.18",
- "tracing",
- "walkdir",
- "windows-sys 0.59.0",
-]
-
-[[package]]
 name = "dispatch2"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2794,6 +2707,93 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+
+[[package]]
+name = "pinkbin-advisor"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "pinkbin-desktop"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "globset",
+ "jwalk",
+ "pinkbin-advisor",
+ "pinkbin-executor",
+ "pinkbin-scaffold",
+ "pinkbin-scanner",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-shell",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "pinkbin-executor"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+ "trash",
+]
+
+[[package]]
+name = "pinkbin-scaffold"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "globset",
+ "serde",
+ "shellexpand",
+ "thiserror 2.0.18",
+ "toml 1.1.2+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
+name = "pinkbin-scaffold-lint"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "pinkbin-scaffold",
+ "toml 1.1.2+spec-1.1.0",
+]
+
+[[package]]
+name = "pinkbin-scanner"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "jwalk",
+ "ntfs",
+ "rayon",
+ "serde",
+ "thiserror 2.0.18",
+ "tracing",
+ "walkdir",
+ "windows-sys 0.59.0",
+]
 
 [[package]]
 name = "pkg-config"

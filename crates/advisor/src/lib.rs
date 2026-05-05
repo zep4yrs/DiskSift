@@ -58,7 +58,7 @@ pub enum Provider {
     },
 }
 
-const SYSTEM: &str = r#"You are Diskwise's local file advisor. Given a folder's metadata, decide what it is and whether it can be cleaned. Reply in strict JSON ONLY, matching this schema exactly:
+const SYSTEM: &str = r#"You are Pinkbin's local file advisor. Given a folder's metadata, decide what it is and whether it can be cleaned. Reply in strict JSON ONLY, matching this schema exactly:
 
 {
   "what": "string",

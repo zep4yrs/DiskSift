@@ -133,8 +133,8 @@ function Row({
         onContextMenu={(e) => onCtx(e, node)}
         draggable
         onDragStart={(e) => {
-          e.dataTransfer.setData('application/x-diskwise-path', node.path);
-          e.dataTransfer.setData('application/x-diskwise-name', node.name);
+          e.dataTransfer.setData('application/x-pinkbin-path', node.path);
+          e.dataTransfer.setData('application/x-pinkbin-name', node.name);
           e.dataTransfer.effectAllowed = 'copy';
         }}
         title={node.path + '  ·  右键查看选项'}

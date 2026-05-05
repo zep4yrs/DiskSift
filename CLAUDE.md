@@ -48,15 +48,15 @@ Rust 的 `Scaffold` 结构体用 `serde` 做了 TOML ↔ JSON 双向序列化：
 
 **任何对 `Scaffold` / `Scope` / `Mode` / `Prompt` 的字段调整**：
 - 同步更新 `apps/desktop/src/types.ts` 的镜像类型
-- 验证：`cargo check -p diskwise-desktop` + `pnpm -C apps/desktop exec tsc --noEmit` 都干净
+- 验证：`cargo check -p pinkbin-desktop` + `pnpm -C apps/desktop exec tsc --noEmit` 都干净
 
 ## 命令速查
 
 ```bash
 # Scaffold lint（必须 0 error）
-cargo run -p diskwise-scaffold-lint -- scaffolds/<id>.toml
+cargo run -p pinkbin-scaffold-lint -- scaffolds/<id>.toml
 # 全部 safety test
-cargo test -p diskwise-scaffold
+cargo test -p pinkbin-scaffold
 # 桌面端 dev
 pnpm tauri dev
 # 类型检查

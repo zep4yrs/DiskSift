@@ -1,16 +1,16 @@
 [package]
-name        = "diskwise-desktop"
+name        = "pinkbin-desktop"
 version.workspace     = true
 edition.workspace     = true
 license.workspace     = true
 repository.workspace  = true
 
 [lib]
-name       = "diskwise_desktop_lib"
+name       = "pinkbin_desktop_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [[bin]]
-name = "diskwise"
+name = "pinkbin"
 path = "src/main.rs"
 
 [build-dependencies]
@@ -32,7 +32,7 @@ tracing-subscriber.workspace = true
 jwalk.workspace              = true
 globset.workspace            = true
 
-diskwise-scanner  = { path = "../../../crates/scanner" }
-diskwise-scaffold = { path = "../../../crates/scaffold" }
-diskwise-executor = { path = "../../../crates/executor" }
-diskwise-advisor  = { path = "../../../crates/advisor" }
+pinkbin-scanner  = { path = "../../../crates/scanner" }
+pinkbin-scaffold = { path = "../../../crates/scaffold" }
+pinkbin-executor = { path = "../../../crates/executor" }
+pinkbin-advisor  = { path = "../../../crates/advisor" }

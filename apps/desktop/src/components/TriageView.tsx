@@ -126,7 +126,7 @@ function BucketSection({
           )}
           {bucket === 'system' && (
             <div className="bucket-actions" style={{ color: 'var(--ink-2)' }}>
-              <Lock size={14} /> <span>这些目录 Diskwise 不会让你删 — 用 Windows 控制面板/卸载程序处理</span>
+              <Lock size={14} /> <span>这些目录 Pinkbin 不会让你删 — 用 Windows 控制面板/卸载程序处理</span>
             </div>
           )}
           {err && <div className="error">{err}</div>}

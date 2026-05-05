@@ -47,7 +47,7 @@ export function ScaffoldPanel({ node, scaffold, onComplete, onSkip }: Props) {
         const plan: Plan = {
           action: sc.mode,
           paths: [node.path],
-          reason: `Diskwise scaffold ${scaffold.id}/${sc.id}: ${JSON.stringify(scopePrompts[sc.id] ?? null)}`,
+          reason: `Pinkbin scaffold ${scaffold.id}/${sc.id}: ${JSON.stringify(scopePrompts[sc.id] ?? null)}`,
         };
         await api.execute(plan, false);
         reasons.push(sc.id);

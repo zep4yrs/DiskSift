@@ -1,7 +1,7 @@
 # 复制本文件到 scaffolds/<id>.toml 后，按 14-phase 工作流（.claude/commands/add-scaffold.md）填充。
 # 完成后跑：
-#   cargo run -p diskwise-scaffold-lint -- scaffolds/<id>.toml
-#   cargo test -p diskwise-scaffold --test <id>_safety
+#   cargo run -p pinkbin-scaffold-lint -- scaffolds/<id>.toml
+#   cargo test -p pinkbin-scaffold --test <id>_safety
 #
 # 注：本目录（scaffolds/_templates/）不会被 scaffold::load_dir 加载——它只读
 # scaffolds/ 顶层的 .toml。模板放子目录是为了避免被当成真 scaffold。

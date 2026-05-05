@@ -47,7 +47,7 @@
 
 #### 脚手架搭建期：Claude Code 是开发者，不是 actuator
 
-Pinkbin 的所有清理决策都由 `scaffolds/<id>.toml` 决定——哪些 glob 可清、哪些是红线。TOML 是 Claude Code 按 `.claude/commands/add-scaffold.md` 的 14-phase 工作流写的。但它和人类开发者写的代码走**同一条通道**：必须过 `<id>_safety.rs` 红线断言（CI block）、必须过 `cargo run -p diskwise-scaffold-lint`、必须有人在 PR review 里看过红线节和实测勘测节，没过 review 不能 merge。
+Pinkbin 的所有清理决策都由 `scaffolds/<id>.toml` 决定——哪些 glob 可清、哪些是红线。TOML 是 Claude Code 按 `.claude/commands/add-scaffold.md` 的 14-phase 工作流写的。但它和人类开发者写的代码走**同一条通道**：必须过 `<id>_safety.rs` 红线断言（CI block）、必须过 `cargo run -p pinkbin-scaffold-lint`、必须有人在 PR review 里看过红线节和实测勘测节，没过 review 不能 merge。
 
 AI 写的代码不因为"是 AI 写的"而有特殊豁免，也不被特别怀疑——它和人类 PR 走同一条信任通道。**人工是 merge 前的最终审核者**，这是开发期的信任模型。
 

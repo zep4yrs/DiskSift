@@ -1,4 +1,4 @@
-# Diskwise pixel-art logo generator. Outputs 32/128/256 PNGs and a multi-size ICO.
+# Pinkbin pixel-art logo generator. Outputs 32/128/256 PNGs and a multi-size ICO.
 # Cute pink trash can. 24x24 source pixel grid, nearest-neighbour upscale.
 #
 # Run from repo root:  pwsh scripts/make-icon.ps1

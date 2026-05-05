@@ -34,7 +34,7 @@ export function AdvisorCard({ node, advice, onComplete, onSkip, onInspect }: Pro
       const plan: Plan = {
         action,
         paths: [node.path],
-        reason: advice?.reasoning ?? `Diskwise auto-walk: ${node.path}`,
+        reason: advice?.reasoning ?? `Pinkbin auto-walk: ${node.path}`,
       };
       await api.execute(plan, false);
       onComplete(node.size);

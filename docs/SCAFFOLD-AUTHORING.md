@@ -1,6 +1,6 @@
 # Authoring a scaffold
 
-A scaffold is a TOML manifest that tells Diskwise:
+A scaffold is a TOML manifest that tells Pinkbin:
 
 1. How to **detect** a known app on disk.
 2. Which **scopes** (subsets of files) are safe to clean.
@@ -90,6 +90,6 @@ A PR that violates these rules will be rejected.
 ## Submitting
 
 1. Drop your file in `scaffolds/<id>.toml`.
-2. Run `cargo run -p diskwise-scaffold-lint -- scaffolds/<id>.toml`.
+2. Run `cargo run -p pinkbin-scaffold-lint -- scaffolds/<id>.toml`.
 3. Add a screenshot of the card matching on your machine to the PR description.
 4. Tick the risk acknowledgement in the PR template.

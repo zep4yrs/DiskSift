@@ -1,5 +1,5 @@
 [package]
-name        = "diskwise-scanner"
+name        = "pinkbin-scanner"
 version.workspace     = true
 edition.workspace     = true
 license.workspace     = true

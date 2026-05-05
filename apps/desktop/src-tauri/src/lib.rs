@@ -3,13 +3,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
-use diskwise_advisor::{advise as advise_provider, AdvisorRequest, AdvisorResponse, Provider};
-use diskwise_executor::{execute, Plan, UndoEntry};
-use diskwise_scaffold::{
+use pinkbin_advisor::{advise as advise_provider, AdvisorRequest, AdvisorResponse, Provider};
+use pinkbin_executor::{execute, Plan, UndoEntry};
+use pinkbin_scaffold::{
     compile_all, detect_compiled, detect_for, expand_env, load_dir, CompiledScaffold,
     RecycleGranularity, Scaffold,
 };
-use diskwise_scanner::{sample_paths, scan_with_stats, Node, ScanOptions, ScanStats};
+use pinkbin_scanner::{sample_paths, scan_with_stats, Node, ScanOptions, ScanStats};
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -269,8 +269,17 @@ fn detect_scaffold(state: State<'_, AppState>, path: String) -> Option<String> {
 #[derive(serde::Serialize, Clone)]
 struct ScopeSize {
     scope_id: String,
+    /// Bytes that would be cleaned at the current `scope_days` setting (i.e.
+    /// files matching the glob AND older than retention). This is what the
+    /// "X 待清理" pill in the modal renders.
     bytes: u64,
     file_count: u64,
+    /// Bytes inside the scope **regardless of retention** — useful so the UI
+    /// can show "你共有 12 GB 视频，0 GB 超过 90 天可清". Without this the
+    /// modal can't distinguish "scope is empty" from "everything is within
+    /// retention" (which used to render as a misleading "空").
+    total_bytes: u64,
+    total_files: u64,
 }
 
 /// Walk `root_path` and tally how many bytes / files each `[[scope]]` glob
@@ -463,7 +472,12 @@ async fn scope_sizes(
             .collect();
 
         // ── File scopes: single walk, tally per-file across all file scopes.
-        let mut file_tally: Vec<(u64, u64)> = vec![(0, 0); builds.len()];
+        // Track BOTH "eligible at the requested retention" (`tally`) and
+        // "total in scope ignoring retention" (`total`) — UI uses the gap to
+        // explain "X GB total · 0 GB older than 90d will be cleaned" instead
+        // of the previous misleading "空".
+        let mut tally: Vec<(u64, u64)> = vec![(0, 0); builds.len()];
+        let mut total: Vec<(u64, u64)> = vec![(0, 0); builds.len()];
         if !file_indices.is_empty() {
             for entry in jwalk::WalkDir::new(&root)
                 .skip_hidden(false)
@@ -491,14 +505,16 @@ async fn scope_sizes(
                     if !b.set.is_match(&path_str) {
                         continue;
                     }
+                    total[i].0 = total[i].0.saturating_add(size);
+                    total[i].1 = total[i].1.saturating_add(1);
                     let days = scope_days_owned
                         .as_ref()
                         .and_then(|m| m.get(&b.id).copied());
                     if !mtime_older_than(&metadata, days) {
                         continue;
                     }
-                    file_tally[i].0 = file_tally[i].0.saturating_add(size);
-                    file_tally[i].1 = file_tally[i].1.saturating_add(1);
+                    tally[i].0 = tally[i].0.saturating_add(size);
+                    tally[i].1 = tally[i].1.saturating_add(1);
                 }
             }
         }
@@ -506,6 +522,20 @@ async fn scope_sizes(
         // ── Directory scopes: each gets its own dir walk + size sum.
         for &i in &dir_indices {
             let b = &builds[i];
+            // Total: dirs matching the glob ignoring retention.
+            let total_dirs = find_matching_dirs(
+                &root,
+                &b.set,
+                wxid_filter_owned.as_deref(),
+                env_filter_owned.as_deref(),
+                None,
+            );
+            let mut t_bytes: u64 = 0;
+            for d in &total_dirs {
+                t_bytes = t_bytes.saturating_add(dir_size_excluding(d, &[]));
+            }
+            total[i] = (t_bytes, total_dirs.len() as u64);
+            // Eligible: same but with retention applied.
             let days = scope_days_owned
                 .as_ref()
                 .and_then(|m| m.get(&b.id).copied());
@@ -520,20 +550,19 @@ async fn scope_sizes(
             let mut count: u64 = 0;
             for d in &dirs {
                 bytes = bytes.saturating_add(dir_size_excluding(d, &[]));
-                // file_count = number of dirs (each dir = one Recycle Bin entry).
-                // Showing "matched files inside" would require another walk;
-                // dir count is the more useful number for directory-granularity.
                 count = count.saturating_add(1);
             }
-            file_tally[i] = (bytes, count);
+            tally[i] = (bytes, count);
         }
 
         // Build output preserving builds order.
         for (i, b) in builds.into_iter().enumerate() {
             results.push(ScopeSize {
                 scope_id: b.id,
-                bytes: file_tally[i].0,
-                file_count: file_tally[i].1,
+                bytes: tally[i].0,
+                file_count: tally[i].1,
+                total_bytes: total[i].0,
+                total_files: total[i].1,
             });
         }
         results
@@ -643,21 +672,21 @@ async fn execute_scope(
     // recoverability via Recycle Bin is non-negotiable. File granularity
     // honors the scope's declared mode (recycle/quarantine/delete) as before.
     let action = match (granularity, scope.mode) {
-        (RecycleGranularity::Directory, _) => diskwise_executor::Action::Recycle,
-        (RecycleGranularity::File, diskwise_scaffold::Mode::Recycle) => {
-            diskwise_executor::Action::Recycle
+        (RecycleGranularity::Directory, _) => pinkbin_executor::Action::Recycle,
+        (RecycleGranularity::File, pinkbin_scaffold::Mode::Recycle) => {
+            pinkbin_executor::Action::Recycle
         }
-        (RecycleGranularity::File, diskwise_scaffold::Mode::Quarantine) => {
-            diskwise_executor::Action::Quarantine
+        (RecycleGranularity::File, pinkbin_scaffold::Mode::Quarantine) => {
+            pinkbin_executor::Action::Quarantine
         }
-        (RecycleGranularity::File, diskwise_scaffold::Mode::Delete) => {
-            diskwise_executor::Action::Delete
+        (RecycleGranularity::File, pinkbin_scaffold::Mode::Delete) => {
+            pinkbin_executor::Action::Delete
         }
     };
     let plan = Plan {
         action,
         paths: matched,
-        reason: format!("Diskwise scaffold {}/{} (Studio)", scaffold.id, scope.id),
+        reason: format!("Pinkbin scaffold {}/{} (Studio)", scaffold.id, scope.id),
     };
     execute(&plan, dry_run, &state.undo_log, &state.quarantine_root).map_err(|e| e.to_string())
 }
@@ -920,7 +949,7 @@ pub fn run() {
             let data_dir = app
                 .path()
                 .app_data_dir()
-                .unwrap_or_else(|_| PathBuf::from(".diskwise"));
+                .unwrap_or_else(|_| PathBuf::from(".pinkbin"));
             std::fs::create_dir_all(&data_dir).ok();
             let undo_log = data_dir.join("undo.jsonl");
             let quarantine_root = data_dir.join("quarantine");

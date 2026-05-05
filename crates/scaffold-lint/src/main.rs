@@ -1,9 +1,9 @@
-use diskwise_scaffold::Scaffold;
+use pinkbin_scaffold::Scaffold;
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
-        eprintln!("usage: diskwise-scaffold-lint <file.toml> [...]");
+        eprintln!("usage: pinkbin-scaffold-lint <file.toml> [...]");
         std::process::exit(2);
     }
 

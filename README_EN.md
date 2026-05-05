@@ -28,9 +28,9 @@ Open-source disk cleaner. Scan a whole drive in seconds to see where the bytes w
 
 | Platform | File | Notes |
 |---|---|---|
-| **Windows 10 / 11 (x64)** | [`Diskwise_x.x.x_x64-setup.exe`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) (NSIS)<br>[`Diskwise_x.x.x_x64_en-US.msi`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) (MSI) | First launch: SmartScreen will block — click "More info" → "Run anyway". NTFS MFT direct read needs admin; the installer ships a manifest that auto-elevates via UAC. |
+| **Windows 10 / 11 (x64)** | [`Pinkbin_x.x.x_x64-setup.exe`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) (NSIS)<br>[`Pinkbin_x.x.x_x64_en-US.msi`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) (MSI) | First launch: SmartScreen will block — click "More info" → "Run anyway". NTFS MFT direct read needs admin; the installer ships a manifest that auto-elevates via UAC. |
 
-> No prebuilt macOS / Linux binaries yet (no signing cert for macOS, and we haven't validated the Linux build on real hardware). You can build them yourself with `pnpm tauri build` — the CI pipeline (`.github/workflows/release.yml`) already has the three-platform matrix wired up; PRs to get them shipping are welcome.
+> No prebuilt macOS / Linux binaries yet (no signing cert for macOS, and we haven't validated the Linux build on real hardware). You can build them yourself with `pnpm tauri build`. The release matrix will be expanded once we have signing + real-hardware validation — PRs welcome.
 
 ---
 
@@ -73,13 +73,13 @@ Some apps are mainstream, eat real disk, and have a clear cleanup boundary — f
 
 **What's coming**: Steam shadercache · Chrome cache · Docker buildx · HuggingFace models · npm/pnpm/pip cache · OBS recordings · IDE indices — mainstream apps with significant disk usage and clear cleanup boundaries, added one by one through the 14-phase workflow with red-line integration tests guarding every glob. **Why we cut the previous 36 legacy scaffolds**: nobody had verified their glob boundaries, creating a real risk of deleting user data (e.g. the old `node-modules` scaffold matched Cursor / VSCode / game-bundled `node_modules` directories).
 
-All deletes go to the **system Recycle Bin** by default — recoverable. Every action writes `~/.diskwise/undo.jsonl`; optional 7-day quarantine.
+All deletes go to the **system Recycle Bin** by default — recoverable. Every action writes `~/.pinkbin/undo.jsonl`; optional 7-day quarantine.
 
 ---
 
 ## Usage
 
-1. **Download the installer** [(above)](#download), install, the Diskwise icon shows up on your desktop
+1. **Download the installer** [(above)](#download), install, the Pinkbin icon shows up on your desktop
 2. **Open → top-right ⚙ to configure AI** — paste your API key
 3. **Top "Pick a disk or folder" → click Scan** — 2–5 seconds later you see the treemap + tree view
 4. **Hit an unfamiliar large folder?** Drag it into the chat panel and ask the AI; or look at the right-side Studio for any already-detected scaffolds (WeChat, conda)
@@ -112,7 +112,7 @@ All deletes go to the **system Recycle Bin** by default — recoverable. Every a
 | Backend | Rust workspace (4 crates) + Tauri IPC |
 | Scanner | Windows: NTFS MFT direct read (`ntfs` crate) / Cross-platform: `jwalk` |
 | AI | BYOK · Anthropic · OpenAI · Gemini · Ollama (4 protocols) |
-| Data | Local `~/.diskwise/` (undo.jsonl + quarantine/) · never uploaded |
+| Data | Local `~/.pinkbin/` (undo.jsonl + quarantine/) · never uploaded |
 
 ---
 

@@ -43,9 +43,10 @@ apps/desktop/vite.config.js
 apps/desktop/vite.config.d.ts
 **/tsconfig.tsbuildinfo
 
-# Diskwise local data
+# Pinkbin local data
+.pinkbin/
 .diskwise/
-diskwise.local.json
+pinkbin.local.json
 
 # Generated icon source (produced by scripts/generate-icon.ps1)
 apps/desktop/src-tauri/icon-source.png

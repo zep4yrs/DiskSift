@@ -6,11 +6,29 @@ import type { Node, Scaffold, Scope, CondaEnv } from '../types';
 
 interface ScopeSize {
   scope_id: string;
+  /** Bytes that match scope glob AND are older than the requested retention. */
   bytes: number;
   file_count: number;
+  /** Bytes inside the scope regardless of retention — UI uses this so users
+   *  can see "12 GB total · 0 GB older than 90d will be cleaned" instead of
+   *  the misleading "空" that used to render when retention spared everything. */
+  total_bytes: number;
+  total_files: number;
 }
 
-const SCOPE_DAYS_STORAGE_KEY = 'diskwise.scopeDays';
+interface DryRunPreview {
+  scopeIds: string[];
+  totalBytes: number;
+  totalFiles: number;
+  /** First N paths that would be deleted. Capped to keep the dialog usable. */
+  samplePaths: string[];
+  /** True when more paths exist than samplePaths shows. */
+  truncated: boolean;
+}
+
+const DRY_RUN_SAMPLE_CAP = 80;
+
+const SCOPE_DAYS_STORAGE_KEY = 'pinkbin.scopeDays';
 
 function readScopeDaysAll(): Record<string, Record<string, number>> {
   try {
@@ -75,8 +93,16 @@ function aggregateScopeSizes(rowsList: ScopeSize[][]): ScopeSize[] {
       if (prev) {
         prev.bytes += r.bytes;
         prev.file_count += r.file_count;
+        prev.total_bytes += r.total_bytes;
+        prev.total_files += r.total_files;
       } else {
-        merged.set(r.scope_id, { scope_id: r.scope_id, bytes: r.bytes, file_count: r.file_count });
+        merged.set(r.scope_id, {
+          scope_id: r.scope_id,
+          bytes: r.bytes,
+          file_count: r.file_count,
+          total_bytes: r.total_bytes,
+          total_files: r.total_files,
+        });
       }
     }
   }
@@ -150,6 +176,8 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
 
   // ── Execute state ──
   const [running, setRunning] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [preview, setPreview] = useState<DryRunPreview | null>(null);
   const [armed, setArmed] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -197,9 +225,14 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [isConda, matchKey, sc.id, (sc.scopes ?? []).length, daysKey, wxidKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Bytes for a scope from current sizes.
+  // Bytes / files for a scope from current sizes. `bytes` and `filesForScope`
+  // honor the days filter (i.e. they describe what would actually be cleaned).
+  // `totalBytes` / `totalFiles` ignore the days filter — used to show users
+  // "you have 12 GB of videos · 0 GB exceed retention" instead of just "空".
   const bytesForScope = (id: string) => scopeSizes?.find((r) => r.scope_id === id)?.bytes ?? 0;
   const filesForScope = (id: string) => scopeSizes?.find((r) => r.scope_id === id)?.file_count ?? 0;
+  const totalBytesForScope = (id: string) => scopeSizes?.find((r) => r.scope_id === id)?.total_bytes ?? 0;
+  const totalFilesForScope = (id: string) => scopeSizes?.find((r) => r.scope_id === id)?.total_files ?? 0;
 
   const sortedMediaScopes = useMemo(() => {
     const list = visibleScopes.filter((s) => s.category === 'media');
@@ -260,55 +293,127 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
       return;
     }
     setArmed(false);
-    setRunning(true);
+    if (preview === null) {
+      // Two-step: first click after arming runs dry-run + opens preview
+      // dialog. The user must explicitly confirm IN the dialog to actually
+      // delete. Without this users were silent-deleting based on a misleading
+      // size pill ("空" used to mean "everything was wiped" — actually meant
+      // "nothing exceeds retention").
+      await runDryRun();
+      return;
+    }
+    await runRealDelete();
+  };
+
+  const runDryRun = async () => {
+    setPreviewing(true);
     setMsg(null);
     setErr(null);
     try {
+      const samplePaths: string[] = [];
       let totalBytes = 0;
-      let totalEntries = 0;
+      let totalFiles = 0;
+      let scopeIds: string[] = [];
 
       if (isConda) {
         if (selectedEnvs.size === 0 || matches.length === 0) {
           setErr('没有勾选任何 environment');
-          setRunning(false);
           return;
         }
+        scopeIds = ['envs-stale'];
+        const entries = await api.executeScope(
+          sc.id, 'envs-stale', matches[0].path, true,
+          undefined, undefined, [...selectedEnvs],
+        );
+        for (const e of entries) {
+          totalFiles += 1;
+          if (samplePaths.length < DRY_RUN_SAMPLE_CAP) samplePaths.push(e.source);
+        }
+        totalBytes = totalSelected.bytes;
+      } else {
+        scopeIds = [...selectedScopes].filter((id) => bytesForScope(id) > 0);
+        if (scopeIds.length === 0) {
+          setErr('没有勾选任何要清理的 scope');
+          return;
+        }
+        totalBytes = scopeIds.reduce((s, id) => s + bytesForScope(id), 0);
+        const tasks: Promise<{ source: string }[]>[] = [];
+        for (const scopeId of scopeIds) {
+          const days = daysByScope[scopeId];
+          for (const m of matches) {
+            tasks.push(
+              api.executeScope(sc.id, scopeId, m.path, true, days, wxidFilterArg).catch((e) => {
+                console.warn(`[pinkbin] dry-run ${sc.id}/${scopeId} on ${m.path} failed:`, e);
+                return [] as { source: string }[];
+              }),
+            );
+          }
+        }
+        const lists = await Promise.all(tasks);
+        for (const list of lists) {
+          for (const e of list) {
+            totalFiles += 1;
+            if (samplePaths.length < DRY_RUN_SAMPLE_CAP) samplePaths.push(e.source);
+          }
+        }
+      }
+
+      if (totalFiles === 0) {
+        setErr('预览结果为空 · 没有可清理的文件（可能都在保留期内）');
+        return;
+      }
+
+      setPreview({
+        scopeIds,
+        totalBytes,
+        totalFiles,
+        samplePaths,
+        truncated: totalFiles > samplePaths.length,
+      });
+    } catch (e) {
+      setErr(`预览失败：${String(e)}`);
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const cancelPreview = () => {
+    setPreview(null);
+    setArmed(false);
+  };
+
+  const runRealDelete = async () => {
+    if (preview === null) return;
+    setRunning(true);
+    setMsg(null);
+    setErr(null);
+    try {
+      let totalEntries = 0;
+
+      if (isConda) {
         const envFilterArg = [...selectedEnvs];
-        const beforeBytes = totalSelected.bytes;
         const entries = await api.executeScope(
           sc.id, 'envs-stale', matches[0].path, false,
           undefined, undefined, envFilterArg,
         );
-        totalBytes = beforeBytes;
         totalEntries = entries.length;
-        // Refresh env list.
         const refreshed = await api.listCondaEnvs(matches[0].path).catch(() => [] as CondaEnv[]);
         setCondaEnvs(refreshed);
         setSelectedEnvs(new Set(refreshed.filter((e) => e.default_checked).map((e) => e.name)));
       } else {
-        // Parallel-execute every selected scope across every matched root.
-        const scopeIdsToRun = [...selectedScopes].filter((id) => bytesForScope(id) > 0);
-        if (scopeIdsToRun.length === 0) {
-          setErr('没有勾选任何要清理的 scope');
-          setRunning(false);
-          return;
-        }
-        const beforeBytes = scopeIdsToRun.reduce((s, id) => s + bytesForScope(id), 0);
         const tasks: Promise<unknown>[] = [];
-        for (const scopeId of scopeIdsToRun) {
+        for (const scopeId of preview.scopeIds) {
           const days = daysByScope[scopeId];
           for (const m of matches) {
             tasks.push(
               api.executeScope(sc.id, scopeId, m.path, false, days, wxidFilterArg).then(
                 (entries) => { totalEntries += entries.length; },
-                (e) => { console.warn(`[diskwise] executeScope ${sc.id}/${scopeId} on ${m.path} failed:`, e); },
+                (e) => { console.warn(`[pinkbin] executeScope ${sc.id}/${scopeId} on ${m.path} failed:`, e); },
               ),
             );
           }
         }
         await Promise.all(tasks);
-        totalBytes = beforeBytes;
-        // Refresh sizes.
         const rowsList = await Promise.all(
           matches.map((m) =>
             api.scopeSizes(sc.id, m.path, daysByScope, wxidFilterArg).catch(() => [] as ScopeSize[]),
@@ -318,8 +423,9 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
         setSelectedScopes(new Set());
       }
 
-      onCleaned(totalBytes);
-      setMsg(`已清理 ${totalEntries} 个文件 · 约 ${formatBytes(totalBytes)} · 进了系统回收站`);
+      onCleaned(preview.totalBytes);
+      setMsg(`已清理 ${totalEntries} 个文件 · 约 ${formatBytes(preview.totalBytes)} · 进了系统回收站`);
+      setPreview(null);
     } catch (e) {
       setErr(`清理失败：${String(e)}`);
     } finally {
@@ -330,27 +436,47 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
   const renderScopeRow = (scope: Scope) => {
     const bytes = bytesForScope(scope.id);
     const fileCount = filesForScope(scope.id);
-    const empty = scopeSizes !== null && bytes === 0;
-    const checked = selectedScopes.has(scope.id) && !empty;
+    const totalBytes = totalBytesForScope(scope.id);
+    const totalFiles = totalFilesForScope(scope.id);
+    const eligibleEmpty = scopeSizes !== null && bytes === 0;
+    const trulyEmpty = scopeSizes !== null && totalBytes === 0;
+    const allWithinRetention = eligibleEmpty && !trulyEmpty;
+    const checked = selectedScopes.has(scope.id) && !eligibleEmpty;
     const days = daysByScope[scope.id] ?? (scope.prompt?.kind === 'days' ? scope.prompt.default : undefined);
+    const meta = (() => {
+      if (scopeSizes === null) return '扫描中…';
+      if (trulyEmpty) return '空';
+      if (allWithinRetention) {
+        return `共 ${formatBytes(totalBytes)} · ${totalFiles.toLocaleString()} 文件 · 全部在保留期内（不会清）`;
+      }
+      // Mixed: some files would be cleaned, some kept.
+      const kept = totalBytes - bytes;
+      return (
+        `共 ${formatBytes(totalBytes)}${totalFiles ? ` · ${totalFiles.toLocaleString()} 文件` : ''}` +
+        ` · 待清 ${formatBytes(bytes)}${fileCount ? ` (${fileCount.toLocaleString()} 文件)` : ''}` +
+        (kept > 0 ? ` · 保留 ${formatBytes(kept)}` : '')
+      );
+    })();
     return (
-      <li key={scope.id} className={'cleanup-row' + (empty ? ' empty' : '') + (checked ? ' checked' : '')}>
+      <li
+        key={scope.id}
+        className={
+          'cleanup-row' +
+          (eligibleEmpty ? ' empty' : '') +
+          (allWithinRetention ? ' within-retention' : '') +
+          (checked ? ' checked' : '')
+        }
+      >
         <label className="cleanup-row-main">
           <input
             type="checkbox"
             checked={checked}
-            disabled={empty || running}
+            disabled={eligibleEmpty || running}
             onChange={() => toggleScope(scope.id)}
           />
           <div className="cleanup-row-text">
             <span className="cleanup-row-label">{scope.label}</span>
-            <span className="cleanup-row-meta">
-              {scopeSizes === null
-                ? '扫描中…'
-                : empty
-                  ? '空'
-                  : `${formatBytes(bytes)}${fileCount ? ` · ${fileCount.toLocaleString()} 文件` : ''}`}
-            </span>
+            <span className="cleanup-row-meta">{meta}</span>
           </div>
         </label>
         {scope.prompt?.kind === 'days' && (
@@ -400,7 +526,20 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
   const userEnvs = (condaEnvs ?? []).filter((e) => !e.is_base);
   const baseEnv = (condaEnvs ?? []).find((e) => e.is_base);
 
-  const canExecute = !running && totalSelected.count > 0;
+  const canExecute = !running && !previewing && !preview && totalSelected.count > 0;
+
+  // ── Coverage breakdown: helps users understand "13 GB total but only 4 GB
+  // in scopes" — the rest is red-line content (chat DBs, favorites, account
+  // state) that scaffolds INTENTIONALLY don't touch. Only meaningful for
+  // non-conda scaffolds where matches[] is the actual disk root.
+  const coverageBreakdown = useMemo(() => {
+    if (isConda) return null;
+    const folderTotal = matches.reduce((s, m) => s + m.size, 0);
+    const inScope = (scopeSizes ?? []).reduce((s, r) => s + r.total_bytes, 0);
+    if (folderTotal === 0) return null;
+    const outsideScope = Math.max(0, folderTotal - inScope);
+    return { folderTotal, inScope, outsideScope };
+  }, [isConda, matches, scopeSizes]);
 
   return (
     <div className="modal-bg" onClick={onClose}>
@@ -421,6 +560,23 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
             </div>
           ))}
         </div>
+
+        {coverageBreakdown && coverageBreakdown.outsideScope > 0 && (
+          <div className="cleanup-coverage" title="清理脚本只覆盖缓存 / 接收的媒体 / 临时数据。聊天记录、收藏、账号、加密物料属于红线区域，永远不会被任何 scope 命中——这就是 13 GB 总量和 scope 加起来对不上的原因。">
+            <div className="cleanup-coverage-row">
+              <span>📦 文件夹总计</span>
+              <strong>{formatBytes(coverageBreakdown.folderTotal)}</strong>
+            </div>
+            <div className="cleanup-coverage-row">
+              <span>🧹 清理脚本覆盖</span>
+              <strong>{formatBytes(coverageBreakdown.inScope)}</strong>
+            </div>
+            <div className="cleanup-coverage-row protected">
+              <span>🔒 红线保护（聊天记录·收藏·账号·加密物料 — 永远不动）</span>
+              <strong>{formatBytes(coverageBreakdown.outsideScope)}</strong>
+            </div>
+          </div>
+        )}
 
         {/* WeChat: account (wxid) filter */}
         {wxids.length > 0 && (
@@ -540,13 +696,97 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
               className={'primary cleanup-execute' + (armed ? ' armed' : '')}
               onClick={execute}
               disabled={!canExecute}
-              title={armed ? '5 秒内再点一次确认' : '点一次进入确认状态，再点一次执行'}
+              title={armed ? '5 秒内再点一次预览' : '点一次确认，再点一次预览实际会删的文件'}
+            >
+              {previewing
+                ? <><Loader2 size={13} className="spin" /> 预览中…</>
+                : running
+                  ? <><Loader2 size={13} className="spin" /> 清理中…</>
+                  : armed
+                    ? <><Trash2 size={13} /> 再点预览</>
+                    : <><Trash2 size={13} /> 预览将清理的文件</>}
+            </button>
+          </div>
+        </div>
+
+        {preview && (
+          <DryRunPreviewDialog
+            preview={preview}
+            running={running}
+            onConfirm={runRealDelete}
+            onCancel={cancelPreview}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface PreviewDialogProps {
+  preview: DryRunPreview;
+  running: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+function DryRunPreviewDialog({ preview, running, onConfirm, onCancel }: PreviewDialogProps) {
+  const [armed, setArmed] = useState(false);
+  const click = () => {
+    if (running) return;
+    if (!armed) {
+      setArmed(true);
+      window.setTimeout(() => setArmed(false), 5000);
+      return;
+    }
+    setArmed(false);
+    onConfirm();
+  };
+  return (
+    <div className="modal-bg" onClick={onCancel} style={{ zIndex: 60 }}>
+      <div className="modal cleanup-preview-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <div>预览：将删除以下文件</div>
+          <button className="ghost icon" onClick={onCancel} disabled={running}><X size={16} /></button>
+        </div>
+
+        <div className="cleanup-preview-summary">
+          <strong>{preview.totalFiles.toLocaleString()}</strong> 个文件 · 共 <strong>{formatBytes(preview.totalBytes)}</strong>
+          <span className="muted small" style={{ marginLeft: 10 }}>
+            进系统回收站，可右键还原
+          </span>
+        </div>
+
+        <div className="cleanup-preview-list">
+          {preview.samplePaths.map((p) => (
+            <div key={p} className="cleanup-preview-path" title={p}>{p}</div>
+          ))}
+          {preview.truncated && (
+            <div className="cleanup-preview-more muted small">
+              … 还有 {(preview.totalFiles - preview.samplePaths.length).toLocaleString()} 个未列出
+            </div>
+          )}
+        </div>
+
+        <p className="cleanup-disclaimer">
+          <AlertTriangle size={12} /> 仔细看一眼上面的路径，确认没有你想留的东西。回收站默认 30 天后自动清空。
+        </p>
+
+        <div className="cleanup-footer">
+          <div className="cleanup-summary muted small">
+            {armed ? '5 秒内再点一次真删' : '点确认进入预备状态，再点一次才真删'}
+          </div>
+          <div className="cleanup-actions">
+            <button className="ghost" onClick={onCancel} disabled={running}>返回</button>
+            <button
+              className={'primary cleanup-execute' + (armed ? ' armed' : '')}
+              onClick={click}
+              disabled={running}
             >
               {running
                 ? <><Loader2 size={13} className="spin" /> 清理中…</>
                 : armed
-                  ? <><Trash2 size={13} /> 再点确认</>
-                  : <><Trash2 size={13} /> 执行清理</>}
+                  ? <><Trash2 size={13} /> 再点真删</>
+                  : <><Trash2 size={13} /> 确认删除</>}
             </button>
           </div>
         </div>

@@ -126,13 +126,21 @@ where
             let progress = &on_progress;
             stats.mft_attempted = true;
             let mft_t0 = Instant::now();
-            match mft::scan_volume(letter, subroot, |records, bytes| {
-                progress(&ScanProgress {
-                    files_seen: records,
-                    bytes_seen: bytes,
-                    current_path: format!("MFT record {}", records),
-                });
-            }) {
+            // The `ntfs` crate can panic on non-NTFS volumes (e.g. CI runners,
+            // ReFS, removable media) instead of returning an Err. Catch it so
+            // we always fall back to walkdir cleanly. AssertUnwindSafe is OK
+            // because we don't observe partial state on panic.
+            let mft_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                mft::scan_volume(letter, subroot, |records, bytes| {
+                    progress(&ScanProgress {
+                        files_seen: records,
+                        bytes_seen: bytes,
+                        current_path: format!("MFT record {}", records),
+                    });
+                })
+            }))
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("MFT scan panicked (likely non-NTFS volume)")));
+            match mft_result {
                 Ok(n) => {
                     stats.mft_ms = mft_t0.elapsed().as_millis() as u64;
                     stats.mft_succeeded = true;
@@ -394,7 +402,7 @@ mod tests {
 
     fn tempdir_path() -> PathBuf {
         let p = std::env::temp_dir().join(format!(
-            "diskwise-test-{}",
+            "pinkbin-test-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

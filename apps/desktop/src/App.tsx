@@ -75,16 +75,16 @@ export default function App() {
   };
   useEffect(() => { refreshAdvisorTag(); }, []);
   const [leftWidth, setLeftWidth] = useState<number>(() => {
-    const v = Number(localStorage.getItem('diskwise.leftWidth'));
+    const v = Number(localStorage.getItem('pinkbin.leftWidth'));
     return Number.isFinite(v) && v > MIN_LEFT ? v : DEFAULT_LEFT;
   });
   const [rightWidth, setRightWidth] = useState<number>(() => {
-    const v = Number(localStorage.getItem('diskwise.rightWidth'));
+    const v = Number(localStorage.getItem('pinkbin.rightWidth'));
     return Number.isFinite(v) && v > MIN_RIGHT ? v : DEFAULT_RIGHT;
   });
 
-  useEffect(() => { localStorage.setItem('diskwise.leftWidth', String(leftWidth)); }, [leftWidth]);
-  useEffect(() => { localStorage.setItem('diskwise.rightWidth', String(rightWidth)); }, [rightWidth]);
+  useEffect(() => { localStorage.setItem('pinkbin.leftWidth', String(leftWidth)); }, [leftWidth]);
+  useEffect(() => { localStorage.setItem('pinkbin.rightWidth', String(rightWidth)); }, [rightWidth]);
 
   const dragLeft = (dx: number) => {
     setLeftWidth((w) => {
@@ -176,7 +176,7 @@ export default function App() {
       };
       setDiag(next);
       // eslint-disable-next-line no-console
-      console.log('[diskwise.diag]', {
+      console.log('[pinkbin.diag]', {
         backend,
         scanCallMs: next.scanCallMs.toFixed(1),
         ipcMs: ipcMs?.toFixed(1) ?? null,
@@ -193,7 +193,7 @@ export default function App() {
   return (
     <div className="app">
       <header>
-        <span className="brand"><Logo size={22} /> Diskwise</span>
+        <span className="brand"><Logo size={22} /> Pinkbin</span>
         <button className="ghost" onClick={pickDirectory}>
           <Folder size={14} /> {pickedPath || '选择磁盘或文件夹'}
         </button>
@@ -260,7 +260,7 @@ export default function App() {
       </main>
 
       <footer>
-        <span>Diskwise v0.1 · {scaffolds.length} 个脚本</span>
+        <span>Pinkbin v0.1.1 · {scaffolds.length} 个脚本</span>
         <span>{root?.path ?? '还没扫描'}</span>
       </footer>
 
@@ -302,7 +302,7 @@ function DiagnosticsBar({ diag }: { diag: ScanDiag }) {
   parts.push(`setRoot=${fmtMs(diag.setRootMs)}`);
   parts.push(`total=${fmtMs(diag.totalMs)}`);
   return (
-    <div className="diag-bar" title="扫描各阶段耗时 — localStorage 开关：diskwise.hideStudio">
+    <div className="diag-bar" title="扫描各阶段耗时 — localStorage 开关：pinkbin.hideStudio">
       <span className="diag-label">诊断</span>
       <span className="diag-stats">{parts.join(' · ')}</span>
     </div>

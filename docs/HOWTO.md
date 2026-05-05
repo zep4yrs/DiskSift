@@ -50,9 +50,9 @@ Vite HMR 只管前端。**`crates/` 或 `src-tauri/` 改了 → Ctrl+C 再 `pnpm
 ## 6. 命令速查
 
 ```bash
-cargo run -p diskwise-scaffold-lint -- scaffolds/<id>.toml   # lint 单个
-cargo test -p diskwise-scaffold                               # 跑全部 safety test
-cargo test -p diskwise-scaffold --test <id>_safety            # 单个 safety test
+cargo run -p pinkbin-scaffold-lint -- scaffolds/<id>.toml   # lint 单个
+cargo test -p pinkbin-scaffold                               # 跑全部 safety test
+cargo test -p pinkbin-scaffold --test <id>_safety            # 单个 safety test
 pnpm -C apps/desktop exec tsc --noEmit                        # TS 类型检查
 pnpm tauri dev                                                # 跑桌面 app
 ```
@@ -71,7 +71,7 @@ pnpm tauri dev                                                # 跑桌面 app
 
 - 每完成一个 phase 就 commit，msg 习惯 `[phase-N] xxx`
 - `docs/scaffold-requirements/STATUS.md` 把 `⏳`/`❌` 改成 `✅`
-- 推之前跑一遍 `cargo test -p diskwise-scaffold` 兜底
+- 推之前跑一遍 `cargo test -p pinkbin-scaffold` 兜底
 
 ## 9. 给合作者上手的话术
 
