@@ -61,13 +61,16 @@ fn expand(s: &str) -> String {
     out
 }
 
-fn matching_scopes<'a>(
-    scopes: &'a [(String, globset::GlobSet)],
-    path: &str,
-) -> Vec<&'a str> {
+fn matching_scopes<'a>(scopes: &'a [(String, globset::GlobSet)], path: &str) -> Vec<&'a str> {
     scopes
         .iter()
-        .filter_map(|(id, gs)| if gs.is_match(path) { Some(id.as_str()) } else { None })
+        .filter_map(|(id, gs)| {
+            if gs.is_match(path) {
+                Some(id.as_str())
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
@@ -93,8 +96,14 @@ fn conda_globs_are_safe() {
         ("tarballs", "/home/test/miniforge3/pkgs/cache"),
         ("tarballs", "C:/Users/test/.conda/pkgs/cache"),
         // unused-packages — pkgs 二级子目录（每个包 + cache 也算重叠 OK）
-        ("unused-packages", "C:/Users/test/miniconda3/pkgs/numpy-1.24.0-py310"),
-        ("unused-packages", "C:/Users/test/anaconda3/pkgs/scipy-1.11.0"),
+        (
+            "unused-packages",
+            "C:/Users/test/miniconda3/pkgs/numpy-1.24.0-py310",
+        ),
+        (
+            "unused-packages",
+            "C:/Users/test/anaconda3/pkgs/scipy-1.11.0",
+        ),
         ("unused-packages", "/home/test/anaconda3/pkgs/torch-2.0"),
         ("unused-packages", "C:/Users/test/miniconda3/pkgs/cache"), // 重叠 tarballs，OK
         // envs-stale — envs 二级子目录

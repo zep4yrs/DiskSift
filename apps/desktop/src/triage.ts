@@ -80,8 +80,6 @@ const HIGH_RISK_SCAFFOLDS = new Set([
   'windows-old', 'node-modules', 'recycle-bin',
 ]);
 
-const ONE_YEAR_MS = 365 * 24 * 3600 * 1000;
-
 function isNeverTouch(path: string): boolean {
   const norm = path.replace(/\\/g, '/');
   // anything directly under user "personal content" dirs is system-protected

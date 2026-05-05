@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Send, Trash2, ShieldCheck, ShieldAlert, ShieldX, X, MessageSquare, Sparkles, Folder, File } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -7,7 +7,7 @@ import { isTauri } from '../env';
 import { useStore } from '../store';
 import { formatBytes } from '../format';
 import { freeChat, overviewChat } from '../advisorClient';
-import type { Node, AdvisorRequest, AdvisorResponse, Scaffold } from '../types';
+import type { Node, AdvisorResponse, Scaffold } from '../types';
 
 function uid() {
   return Math.random().toString(36).slice(2);
@@ -70,10 +70,6 @@ export function ChatPanel() {
   const overviewFiredFor = useRef<string | null>(null);
 
   const node = chat.node;
-  const scaffold: Scaffold | null = useMemo(
-    () => (chat.scaffoldId ? scaffolds.find((s) => s.id === chat.scaffoldId) ?? null : null),
-    [chat.scaffoldId, scaffolds],
-  );
 
   // Auto-fire overview the moment scan finishes, once per scan.
   useEffect(() => {
@@ -205,52 +201,6 @@ export function ChatPanel() {
         text: `（AI 总览失败：${String(e)}）\n你可以从左边把任意文件夹/文件拖进来问。`,
         pending: false,
       });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const runInitialAdvice = async (n: Node) => {
-    setBusy(true);
-    if (chat.scaffoldId) {
-      const known = scaffolds.find((s) => s.id === chat.scaffoldId);
-      if (known) {
-        pushTurn({
-          id: uid(),
-          role: 'assistant',
-          text: `已识别为 ${known.name}。${known.disclaimer}`,
-          scaffoldId: known.id,
-        });
-      }
-    }
-    const turnId = uid();
-    pushTurn({ id: turnId, role: 'assistant', text: `分析 ${n.name || n.path} 中…`, pending: true });
-    try {
-      const totalBytes = n.size || 1;
-      const top = (n.top_extensions ?? [])
-        .slice(0, 6)
-        .map((e) => ({ ext: e.ext, share: e.bytes / totalBytes }));
-      const samples = n.is_dir
-        ? await api.inspect(n.path, 20).catch(() => [] as string[])
-        : [];
-      const req: AdvisorRequest = {
-        path: n.path,
-        size_bytes: n.size,
-        file_count: n.file_count,
-        top_extensions: top,
-        sample_paths: samples,
-        neighbors: (n.children ?? []).slice(0, 12).map((c) => c.name),
-        scaffold_hint: chat.scaffoldId ?? null,
-      };
-      const advice = await api.advise(req);
-      patchTurn(turnId, {
-        text: `${advice.what}\n\n${advice.reasoning}`,
-        advice,
-        scaffoldId: advice.suggested_scaffold ?? chat.scaffoldId,
-        pending: false,
-      });
-    } catch (e) {
-      patchTurn(turnId, { text: `AI 调用失败：${String(e)}`, pending: false });
     } finally {
       setBusy(false);
     }

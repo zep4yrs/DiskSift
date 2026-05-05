@@ -2,7 +2,6 @@ import type { Node, Scaffold, AdvisorRequest, AdvisorResponse, UndoEntry, Plan }
 import { callAdvisor, isConfigured, loadSettings } from './advisorClient';
 
 const GB = 1024 ** 3;
-const MB = 1024 ** 2;
 
 function leaf(name: string, path: string, size: number, files: number, scaffold_id: string | null = null): Node {
   return {

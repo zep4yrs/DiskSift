@@ -16,7 +16,11 @@ pub struct Scaffold {
     pub matcher: Match,
     // TOML uses `[[scope]]` blocks (singular) — keep that for authoring ergonomics.
     // JSON to the frontend uses `scopes` (plural) so it matches the TS Scaffold type.
-    #[serde(rename(deserialize = "scope", serialize = "scopes"), alias = "scopes", default)]
+    #[serde(
+        rename(deserialize = "scope", serialize = "scopes"),
+        alias = "scopes",
+        default
+    )]
     pub scopes: Vec<Scope>,
 }
 
@@ -117,7 +121,12 @@ pub fn load_dir(dir: &Path) -> anyhow::Result<Vec<Scaffold>> {
     }
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
-        if entry.path().extension().map(|e| e == "toml").unwrap_or(false) {
+        if entry
+            .path()
+            .extension()
+            .map(|e| e == "toml")
+            .unwrap_or(false)
+        {
             let text = std::fs::read_to_string(entry.path())?;
             match toml::from_str::<Scaffold>(&text) {
                 Ok(s) => out.push(s),
@@ -265,14 +274,20 @@ pub fn compile_all(scaffolds: &[Scaffold]) -> Vec<CompiledScaffold> {
                     }
                 }
             }
-            let detect_globs = builder
-                .build()
-                .unwrap_or_else(|_| globset::GlobSetBuilder::new().build().expect("empty globset"));
+            let detect_globs = builder.build().unwrap_or_else(|_| {
+                globset::GlobSetBuilder::new()
+                    .build()
+                    .expect("empty globset")
+            });
             tracing::debug!(
                 "scaffold {}: compiled detect={:?} name_contains_lc={:?} must_have_child={:?}",
                 s.id,
                 accepted,
-                s.matcher.name_contains.iter().map(|n| n.to_lowercase()).collect::<Vec<_>>(),
+                s.matcher
+                    .name_contains
+                    .iter()
+                    .map(|n| n.to_lowercase())
+                    .collect::<Vec<_>>(),
                 s.matcher.must_have_child,
             );
             CompiledScaffold {
@@ -305,7 +320,9 @@ pub fn detect_compiled(compiled: &[CompiledScaffold], path: &Path) -> Option<Str
         }
         if !c.name_fragments_lc.is_empty()
             && c.name_fragments_lc.iter().any(|n| basename_lc.contains(n))
-            && c.must_have_child.iter().all(|child| path.join(child).exists())
+            && c.must_have_child
+                .iter()
+                .all(|child| path.join(child).exists())
         {
             return Some(c.id.clone());
         }
@@ -401,8 +418,8 @@ name_contains = []
     fn detect_compiled_matches_actual_wechat_toml() {
         // Load the real scaffolds/wechat-pc.toml (same path as production
         // load_dir) and confirm detect_compiled tags a typical 4.x data dir.
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../scaffolds/wechat-pc.toml");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scaffolds/wechat-pc.toml");
         let text = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("read {:?} failed: {}", path, e));
         let s: Scaffold = toml::from_str(&text).expect("wechat-pc.toml parse");
@@ -410,7 +427,7 @@ name_contains = []
             "wechat-pc loaded: detect={:?}, name_contains={:?}, must_have_child={:?}",
             s.detect, s.matcher.name_contains, s.matcher.must_have_child,
         );
-        let compiled = compile_all(&[s.clone()]);
+        let compiled = compile_all(std::slice::from_ref(&s));
 
         for p in [
             "C:/Users/lvjin/Documents/xwechat_files",
@@ -419,7 +436,7 @@ name_contains = []
         ] {
             let path = Path::new(p);
             let got = detect_compiled(&compiled, path);
-            let oracle = detect_for(&[s.clone()], path);
+            let oracle = detect_for(std::slice::from_ref(&s), path);
             eprintln!("path={:?} compiled={:?} oracle={:?}", p, got, oracle);
             assert_eq!(got, oracle, "divergence at {:?}", p);
             assert_eq!(got.as_deref(), Some("wechat-pc"), "missed at {:?}", p);

@@ -59,11 +59,10 @@ async fn scan_path(
         // used to apply. Doing both here in one pass with pre-compiled
         // GlobSets replaces the previous per-directory IPC storm.
         let tag_t0 = std::time::Instant::now();
-        let scan_result = scan_result.map(|(mut node, stats)| {
+        scan_result.map(|(mut node, stats)| {
             tag_and_truncate(&mut node, &compiled, 0);
             (node, stats, tag_t0.elapsed().as_millis() as u64)
-        });
-        scan_result
+        })
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -78,7 +77,10 @@ async fn scan_path(
                 tag_ms,
                 cmd_ms.saturating_sub(stats.total_ms).saturating_sub(tag_ms),
             );
-            let _ = app_for_stats.emit("scan-stats", &ScanStatsEvent::from((cmd_ms, tag_ms, &stats)));
+            let _ = app_for_stats.emit(
+                "scan-stats",
+                &ScanStatsEvent::from((cmd_ms, tag_ms, &stats)),
+            );
             Ok(node)
         }
         Err(e) => Err(e.to_string()),
@@ -102,21 +104,25 @@ fn tag_and_truncate(node: &mut Node, compiled: &[CompiledScaffold], depth: usize
     for c in &mut node.children {
         tag_and_truncate(c, compiled, depth + 1);
     }
-    let cap = if depth < 2 { 100 } else if depth < 4 { 50 } else { 20 };
+    let cap = if depth < 2 {
+        100
+    } else if depth < 4 {
+        50
+    } else {
+        20
+    };
     if node.children.len() > cap {
         // Partition tagged subtrees first (preserving their original size-desc
         // order), then fill remaining slots from the rest. Cap the tagged group
         // at `cap` too, so a freak case with > cap matches at one level still
         // produces a bounded tree.
-        let (tagged, rest): (Vec<Node>, Vec<Node>) = node
-            .children
-            .drain(..)
-            .partition(has_scaffold_tag);
+        let (tagged, rest): (Vec<Node>, Vec<Node>) =
+            node.children.drain(..).partition(has_scaffold_tag);
         let mut survivors: Vec<Node> = tagged.into_iter().take(cap).collect();
         let need = cap.saturating_sub(survivors.len());
         survivors.extend(rest.into_iter().take(need));
         // Restore size-desc order for display (partition mixed tagged in front).
-        survivors.sort_by(|a, b| b.size.cmp(&a.size));
+        survivors.sort_by_key(|c| std::cmp::Reverse(c.size));
         node.children = survivors;
     }
 }
@@ -229,16 +235,21 @@ fn volume_info(path: String) -> Result<VolumeInfo, String> {
                     lpTotalNumberOfFreeBytes: *mut u64,
                 ) -> i32;
             }
-            GetDiskFreeSpaceExW(root.as_ptr(), &mut free_to_caller, &mut total, &mut total_free)
+            GetDiskFreeSpaceExW(
+                root.as_ptr(),
+                &mut free_to_caller,
+                &mut total,
+                &mut total_free,
+            )
         };
         if ok == 0 {
             return Err("GetDiskFreeSpaceExW failed".into());
         }
-        return Ok(VolumeInfo {
+        Ok(VolumeInfo {
             total_bytes: total,
             used_bytes: total.saturating_sub(total_free),
             free_bytes: total_free,
-        });
+        })
     }
     #[cfg(not(windows))]
     {
@@ -249,7 +260,10 @@ fn volume_info(path: String) -> Result<VolumeInfo, String> {
 
 #[tauri::command]
 fn detect_scaffold(state: State<'_, AppState>, path: String) -> Option<String> {
-    detect_for(&state.scaffolds.lock().unwrap(), std::path::Path::new(&path))
+    detect_for(
+        &state.scaffolds.lock().unwrap(),
+        std::path::Path::new(&path),
+    )
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -265,7 +279,9 @@ struct ScopeSize {
 /// always pass — those are cross-account or roaming-only data that aren't
 /// wxid-scoped. `None` or an empty allow-list disables the filter entirely.
 fn path_passes_wxid(path: &Path, wxid_filter: Option<&[String]>) -> bool {
-    let Some(allowed) = wxid_filter else { return true };
+    let Some(allowed) = wxid_filter else {
+        return true;
+    };
     if allowed.is_empty() {
         return true;
     }
@@ -286,7 +302,9 @@ fn path_passes_wxid(path: &Path, wxid_filter: Option<&[String]>) -> bool {
 /// `execute_scope` call can carry both filters across mixed scopes.
 /// `None` or empty allow-list disables the filter entirely.
 fn path_passes_env(path: &Path, env_filter: Option<&[String]>) -> bool {
-    let Some(allowed) = env_filter else { return true };
+    let Some(allowed) = env_filter else {
+        return true;
+    };
     if allowed.is_empty() {
         return true;
     }
@@ -353,7 +371,7 @@ fn find_matching_dirs(
             candidates.push(path);
         }
     }
-    candidates.sort_by(|a, b| a.as_os_str().len().cmp(&b.as_os_str().len()));
+    candidates.sort_by_key(|p| p.as_os_str().len());
     let mut keep: Vec<PathBuf> = Vec::with_capacity(candidates.len());
     for c in candidates {
         if !keep.iter().any(|k| c.starts_with(k)) {
@@ -369,7 +387,9 @@ fn find_matching_dirs(
 /// OS error.
 fn mtime_older_than(metadata: &std::fs::Metadata, days: Option<u32>) -> bool {
     let Some(d) = days else { return true };
-    let Ok(modified) = metadata.modified() else { return true };
+    let Ok(modified) = metadata.modified() else {
+        return true;
+    };
     let threshold = SystemTime::now()
         .checked_sub(Duration::from_secs(d as u64 * 86_400))
         .unwrap_or(SystemTime::UNIX_EPOCH);
@@ -528,6 +548,7 @@ async fn scope_sizes(
 /// whole folder, ignoring the scope's glob. `dry_run = true` returns what
 /// would be touched without performing the action.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // every arg is a distinct user-facing knob; bundling into a struct is just shuffling
 async fn execute_scope(
     state: State<'_, AppState>,
     scaffold_id: String,
@@ -728,7 +749,10 @@ async fn list_conda_envs(conda_root: String) -> Result<Vec<CondaEnv>, String> {
 fn read_mtime_secs(p: &Path) -> Option<u64> {
     let md = std::fs::metadata(p).ok()?;
     let modified = md.modified().ok()?;
-    modified.duration_since(SystemTime::UNIX_EPOCH).ok().map(|d| d.as_secs())
+    modified
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs())
 }
 
 /// Recursive byte sum under `dir`, skipping any file whose path starts with
@@ -749,7 +773,11 @@ fn dir_size_excluding(dir: &Path, excludes: &[PathBuf]) -> u64 {
         if !entry.file_type().is_file() {
             continue;
         }
-        let p = entry.path().to_string_lossy().replace('\\', "/").to_lowercase();
+        let p = entry
+            .path()
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_lowercase();
         if exclude_prefixes.iter().any(|e| p.starts_with(e)) {
             continue;
         }
@@ -761,14 +789,19 @@ fn dir_size_excluding(dir: &Path, excludes: &[PathBuf]) -> u64 {
 }
 
 #[tauri::command]
-async fn advise(state: State<'_, AppState>, req: AdvisorRequest) -> Result<AdvisorResponse, String> {
+async fn advise(
+    state: State<'_, AppState>,
+    req: AdvisorRequest,
+) -> Result<AdvisorResponse, String> {
     let provider = state
         .advisor
         .lock()
         .unwrap()
         .clone()
         .ok_or_else(|| "advisor not configured — open Settings".to_string())?;
-    advise_provider(&provider, &req).await.map_err(|e| e.to_string())
+    advise_provider(&provider, &req)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -860,7 +893,8 @@ fn set_advisor(
         "gemini" => Provider::Gemini {
             api_key: api_key.ok_or_else(|| "api_key required".to_string())?,
             model,
-            base_url: base_url.unwrap_or_else(|| "https://generativelanguage.googleapis.com".to_string()),
+            base_url: base_url
+                .unwrap_or_else(|| "https://generativelanguage.googleapis.com".to_string()),
         },
         other => return Err(format!("unknown provider: {other}")),
     };
@@ -883,7 +917,10 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            let data_dir = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from(".diskwise"));
+            let data_dir = app
+                .path()
+                .app_data_dir()
+                .unwrap_or_else(|_| PathBuf::from(".diskwise"));
             std::fs::create_dir_all(&data_dir).ok();
             let undo_log = data_dir.join("undo.jsonl");
             let quarantine_root = data_dir.join("quarantine");

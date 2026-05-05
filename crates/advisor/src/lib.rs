@@ -84,7 +84,11 @@ pub async fn advise(provider: &Provider, req: &AdvisorRequest) -> anyhow::Result
     let user_prompt = serde_json::to_string_pretty(req)?;
 
     let raw = match provider {
-        Provider::OpenAI { api_key, model, base_url } => {
+        Provider::OpenAI {
+            api_key,
+            model,
+            base_url,
+        } => {
             let body = serde_json::json!({
                 "model": model,
                 "response_format": { "type": "json_object" },
@@ -94,7 +98,10 @@ pub async fn advise(provider: &Provider, req: &AdvisorRequest) -> anyhow::Result
                 ]
             });
             let r = client
-                .post(format!("{}/chat/completions", base_url.trim_end_matches('/')))
+                .post(format!(
+                    "{}/chat/completions",
+                    base_url.trim_end_matches('/')
+                ))
                 .bearer_auth(api_key)
                 .json(&body)
                 .send()
@@ -106,7 +113,11 @@ pub async fn advise(provider: &Provider, req: &AdvisorRequest) -> anyhow::Result
                 .ok_or_else(|| anyhow::anyhow!("openai: missing message.content"))?
                 .to_string()
         }
-        Provider::Anthropic { api_key, model, base_url } => {
+        Provider::Anthropic {
+            api_key,
+            model,
+            base_url,
+        } => {
             let body = serde_json::json!({
                 "model": model,
                 "max_tokens": 1024,
@@ -127,7 +138,11 @@ pub async fn advise(provider: &Provider, req: &AdvisorRequest) -> anyhow::Result
                 .ok_or_else(|| anyhow::anyhow!("anthropic: missing content[0].text"))?
                 .to_string()
         }
-        Provider::Gemini { api_key, model, base_url } => {
+        Provider::Gemini {
+            api_key,
+            model,
+            base_url,
+        } => {
             let body = serde_json::json!({
                 "systemInstruction": { "parts": [{ "text": SYSTEM }] },
                 "contents": [{ "role": "user", "parts": [{ "text": user_prompt }] }],
@@ -142,11 +157,18 @@ pub async fn advise(provider: &Provider, req: &AdvisorRequest) -> anyhow::Result
                 model,
                 api_key
             );
-            let r = client.post(url).json(&body).send().await?.error_for_status()?;
+            let r = client
+                .post(url)
+                .json(&body)
+                .send()
+                .await?
+                .error_for_status()?;
             let v: serde_json::Value = r.json().await?;
             v["candidates"][0]["content"]["parts"][0]["text"]
                 .as_str()
-                .ok_or_else(|| anyhow::anyhow!("gemini: missing candidates[0].content.parts[0].text"))?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("gemini: missing candidates[0].content.parts[0].text")
+                })?
                 .to_string()
         }
         Provider::Ollama { base_url, model } => {
@@ -173,8 +195,8 @@ pub async fn advise(provider: &Provider, req: &AdvisorRequest) -> anyhow::Result
         }
     };
 
-    let parsed: AdvisorResponse = serde_json::from_str(&raw)
-        .or_else(|_| serde_json::from_str(strip_codefence(&raw)))?;
+    let parsed: AdvisorResponse =
+        serde_json::from_str(&raw).or_else(|_| serde_json::from_str(strip_codefence(&raw)))?;
     Ok(parsed)
 }
 

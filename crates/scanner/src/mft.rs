@@ -28,7 +28,7 @@ const GENERIC_READ: u32 = 0x8000_0000;
 struct Entry {
     name: String,
     parent_frn: u64,
-    own_size: u64,   // file size from $DATA, or 0 for dirs
+    own_size: u64, // file size from $DATA, or 0 for dirs
     is_dir: bool,
     children: Vec<u64>, // FRNs of direct children (filled in second pass)
 }
@@ -73,9 +73,14 @@ where
     let record_size = ntfs.file_record_size() as u64;
     let total_size = mft_data_value.len();
     let total_records = (total_size / record_size) as u64;
-    drop(mft_data_value);
-    drop(mft_data_attribute);
-    drop(mft_file);
+    // Release the borrow chain on `reader` (mft_data_value → mft_data_attribute →
+    // mft_file) before we re-borrow `reader` below for the per-record walk.
+    // Plain `drop(x)` is what we want, but clippy's `drop_non_drop` whines about
+    // it because none of these implement `Drop`. `let _ = x;` ends the binding
+    // exactly the same way without the lint hit.
+    let _ = mft_data_value;
+    let _ = mft_data_attribute;
+    let _ = mft_file;
     tracing::info!(
         "MFT scan: volume={} record_size={} total_records={}",
         volume_letter,
@@ -146,7 +151,13 @@ where
             bytes_total = bytes_total.saturating_add(own_size);
             entries.insert(
                 record_num,
-                Entry { name, parent_frn, own_size, is_dir, children: Vec::new() },
+                Entry {
+                    name,
+                    parent_frn,
+                    own_size,
+                    is_dir,
+                    children: Vec::new(),
+                },
             );
         }
 
@@ -172,7 +183,11 @@ where
     let volume_root = format!("{}:\\", volume_letter.to_ascii_uppercase());
 
     // Compute roll-up sizes once via DFS.
-    fn rollup(frn: u64, entries: &HashMap<u64, Entry>, sizes: &mut HashMap<u64, (u64, u64)>) -> (u64, u64) {
+    fn rollup(
+        frn: u64,
+        entries: &HashMap<u64, Entry>,
+        sizes: &mut HashMap<u64, (u64, u64)>,
+    ) -> (u64, u64) {
         if let Some(c) = sizes.get(&frn) {
             return *c;
         }
@@ -186,7 +201,9 @@ where
                 total_files = 1;
             } else {
                 for &c in &e.children {
-                    if c == frn { continue; }
+                    if c == frn {
+                        continue;
+                    }
                     let (b, n) = rollup(c, entries, sizes);
                     total_bytes = total_bytes.saturating_add(b);
                     total_files = total_files.saturating_add(n);
@@ -216,11 +233,7 @@ where
     Ok(node)
 }
 
-fn find_frn_for_path(
-    target: &Path,
-    root_frn: u64,
-    entries: &HashMap<u64, Entry>,
-) -> Option<u64> {
+fn find_frn_for_path(target: &Path, root_frn: u64, entries: &HashMap<u64, Entry>) -> Option<u64> {
     // Walk component-by-component from root looking for matching child names.
     let mut current = root_frn;
     let comps: Vec<String> = target
@@ -233,7 +246,10 @@ fn find_frn_for_path(
     for c in comps {
         let e = entries.get(&current)?;
         let next = e.children.iter().copied().find(|frn| {
-            entries.get(frn).map(|x| x.name.eq_ignore_ascii_case(&c)).unwrap_or(false)
+            entries
+                .get(frn)
+                .map(|x| x.name.eq_ignore_ascii_case(&c))
+                .unwrap_or(false)
         })?;
         current = next;
     }
@@ -270,10 +286,16 @@ fn build_node(
             .filter(|&&c| c != frn)
             .map(|&c| (c, sizes.get(&c).map(|(b, _)| *b).unwrap_or(0)))
             .collect();
-        kids.sort_by(|a, b| b.1.cmp(&a.1));
+        kids.sort_by_key(|k| std::cmp::Reverse(k.1));
 
         // Cap depth/breadth so the JSON sent to the frontend stays sane.
-        let breadth_cap = if depth < 2 { 200 } else if depth < 4 { 80 } else { 25 };
+        let breadth_cap = if depth < 2 {
+            200
+        } else if depth < 4 {
+            80
+        } else {
+            25
+        };
         for (cfrn, _) in kids.iter().take(breadth_cap) {
             let centry = match entries.get(cfrn) {
                 Some(c) => c,
@@ -304,7 +326,7 @@ fn build_node(
             count: ext_count.get(&ext).copied().unwrap_or(0),
         })
         .collect();
-    top_extensions.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+    top_extensions.sort_by_key(|e| std::cmp::Reverse(e.bytes));
     top_extensions.truncate(8);
 
     Node {

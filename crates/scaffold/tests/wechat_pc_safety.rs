@@ -56,13 +56,16 @@ fn expand(s: &str) -> String {
     out
 }
 
-fn matching_scopes<'a>(
-    scopes: &'a [(String, globset::GlobSet)],
-    path: &str,
-) -> Vec<&'a str> {
+fn matching_scopes<'a>(scopes: &'a [(String, globset::GlobSet)], path: &str) -> Vec<&'a str> {
     scopes
         .iter()
-        .filter_map(|(id, gs)| if gs.is_match(path) { Some(id.as_str()) } else { None })
+        .filter_map(|(id, gs)| {
+            if gs.is_match(path) {
+                Some(id.as_str())
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
@@ -245,9 +248,17 @@ fn wechat_pc_matcher_distinguishes_data_from_installs() {
 
     assert_match(&pos_4x, Some("wechat-pc"), "real 4.x data root");
     #[cfg(windows)]
-    assert_match(&pos_3x, Some("wechat-pc"), "real 3.x data root (case-insensitive must_have_child)");
+    assert_match(
+        &pos_3x,
+        Some("wechat-pc"),
+        "real 3.x data root (case-insensitive must_have_child)",
+    );
     assert_match(&neg_wps, None, "WPS uploadwechatfile must not match");
-    assert_match(&neg_install, None, "WeChatPlayer.bin install dir must not match");
+    assert_match(
+        &neg_install,
+        None,
+        "WeChatPlayer.bin install dir must not match",
+    );
     assert_match(&neg_random, None, "MyWeChatBackup must not match");
 
     // Also confirm compile_all + detect_compiled agree (the production hot path).
@@ -262,7 +273,11 @@ fn wechat_pc_matcher_distinguishes_data_from_installs() {
     };
     assert_compiled(&pos_4x, Some("wechat-pc"), "real 4.x data root");
     assert_compiled(&neg_wps, None, "WPS uploadwechatfile must not match");
-    assert_compiled(&neg_install, None, "WeChatPlayer.bin install dir must not match");
+    assert_compiled(
+        &neg_install,
+        None,
+        "WeChatPlayer.bin install dir must not match",
+    );
     assert_compiled(&neg_random, None, "MyWeChatBackup must not match");
 
     // Cleanup — best-effort, ignore errors.

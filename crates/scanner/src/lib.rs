@@ -74,16 +74,16 @@ pub struct ScanProgress {
 /// without needing RUST_LOG=info.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ScanStats {
-    pub mode: String,           // "mft" | "walkdir"
+    pub mode: String, // "mft" | "walkdir"
     pub mft_attempted: bool,
     pub mft_succeeded: bool,
-    pub mft_ms: u64,            // total time spent in the MFT branch (success or fallback)
-    pub walk_ms: u64,           // jwalk consume loop (only set in walkdir mode)
-    pub build_tree_ms: u64,     // build_tree recursion + 2nd read_dir pass
+    pub mft_ms: u64,  // total time spent in the MFT branch (success or fallback)
+    pub walk_ms: u64, // jwalk consume loop (only set in walkdir mode)
+    pub build_tree_ms: u64, // build_tree recursion + 2nd read_dir pass
     pub total_ms: u64,
     pub files_seen: u64,
     pub bytes_seen: u64,
-    pub dirs_in_acc: u64,       // accs.len() — proxy for memory pressure (walkdir mode only)
+    pub dirs_in_acc: u64, // accs.len() — proxy for memory pressure (walkdir mode only)
 }
 
 pub fn scan<P: AsRef<Path>>(root: P) -> anyhow::Result<Node> {
@@ -118,7 +118,11 @@ where
     #[cfg(windows)]
     {
         if let Some(letter) = drive_letter_of(&root) {
-            let subroot = if is_drive_root(&root) { None } else { Some(root.as_path()) };
+            let subroot = if is_drive_root(&root) {
+                None
+            } else {
+                Some(root.as_path())
+            };
             let progress = &on_progress;
             stats.mft_attempted = true;
             let mft_t0 = Instant::now();
@@ -273,7 +277,7 @@ fn build_tree(dir: &Path, accs: &HashMap<PathBuf, DirAcc>, keep_files: Option<us
                     count: a.ext_count.get(k).copied().unwrap_or(0),
                 })
                 .collect();
-            v.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+            v.sort_by_key(|e| std::cmp::Reverse(e.bytes));
             v.truncate(8);
             v
         })
@@ -298,7 +302,7 @@ fn build_tree(dir: &Path, accs: &HashMap<PathBuf, DirAcc>, keep_files: Option<us
     // Files — pull the largest from this dir's acc and emit as leaf nodes.
     if let Some(a) = acc {
         let mut files = a.files.clone();
-        files.sort_by(|x, y| y.1.cmp(&x.1));
+        files.sort_by_key(|f| std::cmp::Reverse(f.1));
         let limit = keep_files.unwrap_or(usize::MAX);
         for (fname, fsize) in files.into_iter().take(limit) {
             let fpath = dir.join(&fname);
@@ -315,7 +319,7 @@ fn build_tree(dir: &Path, accs: &HashMap<PathBuf, DirAcc>, keep_files: Option<us
         }
     }
 
-    children.sort_by(|a, b| b.size.cmp(&a.size));
+    children.sort_by_key(|c| std::cmp::Reverse(c.size));
 
     Node {
         name,
@@ -346,7 +350,9 @@ fn drive_letter_of(p: &Path) -> Option<char> {
 fn is_drive_root(p: &Path) -> bool {
     let s = p.to_string_lossy();
     matches!(s.as_ref(), "C:" | "D:" | "E:" | "F:" | "G:" | "H:")
-        || (s.len() == 3 && s.as_bytes()[1] == b':' && (s.as_bytes()[2] == b'\\' || s.as_bytes()[2] == b'/'))
+        || (s.len() == 3
+            && s.as_bytes()[1] == b':'
+            && (s.as_bytes()[2] == b'\\' || s.as_bytes()[2] == b'/'))
 }
 
 /// Pull up to `n` sample paths from a directory, ordered shallowest-first.
@@ -379,7 +385,10 @@ mod tests {
         assert_eq!(node.file_count, 2);
         // file leaves should appear as children of their directory
         let a = node.children.iter().find(|c| c.name == "a").unwrap();
-        assert!(a.children.iter().any(|c| !c.is_dir && c.name == "file1.txt"));
+        assert!(a
+            .children
+            .iter()
+            .any(|c| !c.is_dir && c.name == "file1.txt"));
         let _ = fs::remove_dir_all(&dir);
     }
 
