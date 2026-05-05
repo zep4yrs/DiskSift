@@ -14,7 +14,10 @@ function detectProvider(baseUrl: string): Provider {
   const u = baseUrl.toLowerCase();
   if (!u) return 'openai';
   if (u.includes('11434') || u.includes('localhost') || u.includes('127.0.0.1') || u.includes('/api/chat')) return 'ollama';
-  if (u.includes('anthropic.com') || u.includes('/v1/messages')) return 'anthropic';
+  // 识别带 anthropic 字样的代理子域名（如 anthropic.novadiffusion.com），
+  // 不仅是官方 anthropic.com。误识别风险极小——OpenAI 协议代理几乎不会
+  // 把 anthropic 写进域名里。
+  if (u.includes('anthropic') || u.includes('/v1/messages')) return 'anthropic';
   if (u.includes('googleapis.com') || u.includes('generativelanguage')) return 'gemini';
   return 'openai';
 }
