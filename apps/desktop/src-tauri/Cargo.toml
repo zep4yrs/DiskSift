@@ -32,6 +32,7 @@ tracing-subscriber.workspace = true
 jwalk.workspace              = true
 globset.workspace            = true
 reqwest.workspace            = true
+include_dir.workspace        = true
 
 pinkbin-scanner          = { path = "../../../crates/scanner" }
 pinkbin-scaffold         = { path = "../../../crates/scaffold" }

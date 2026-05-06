@@ -114,6 +114,10 @@ pub enum Prompt {
     },
 }
 
+pub fn parse_toml(s: &str) -> anyhow::Result<Scaffold> {
+    Ok(toml::from_str::<Scaffold>(s)?)
+}
+
 pub fn load_dir(dir: &Path) -> anyhow::Result<Vec<Scaffold>> {
     let mut out = Vec::new();
     if !dir.exists() {

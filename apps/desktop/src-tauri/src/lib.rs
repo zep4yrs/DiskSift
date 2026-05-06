@@ -3,15 +3,21 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
+use include_dir::{include_dir, Dir};
 use pinkbin_advisor::{advise as advise_provider, AdvisorRequest, AdvisorResponse, Provider};
 use pinkbin_executor::{execute, Plan, UndoEntry};
 use pinkbin_scaffold::{
-    compile_all, detect_compiled, detect_for, expand_env, load_dir, CompiledScaffold,
+    compile_all, detect_compiled, detect_for, expand_env, load_dir, parse_toml, CompiledScaffold,
     RecycleGranularity, Scaffold,
 };
 use pinkbin_scanner::{sample_paths, scan_with_stats, Node, ScanOptions, ScanStats};
 
 use tauri::{AppHandle, Emitter, Manager, State};
+
+// Compile-time embed of repo-root scaffolds/. Used as the lowest-priority
+// fallback in load_all_scaffolds so a portable raw exe (no resource_dir,
+// arbitrary cwd) still ships with all packaged scaffolds.
+static EMBEDDED_SCAFFOLDS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../../scaffolds");
 
 #[derive(serde::Serialize, Clone)]
 struct ScanProgressEvent {
@@ -1363,6 +1369,23 @@ fn load_all_scaffolds(handle: &AppHandle) -> Vec<Scaffold> {
                 }
             }
             Err(e) => tracing::warn!("could not load scaffolds from {:?}: {}", p, e),
+        }
+    }
+    // Lowest-priority fallback: if no external source provided a given id,
+    // fill it from the compile-time embed. This is what makes the portable
+    // raw exe (cwd=Downloads, no resource_dir/scaffolds) usable.
+    for f in EMBEDDED_SCAFFOLDS.files() {
+        if f.path().extension().and_then(|e| e.to_str()) != Some("toml") {
+            continue;
+        }
+        let Some(text) = f.contents_utf8() else { continue };
+        match parse_toml(text) {
+            Ok(s) => {
+                by_id.entry(s.id.clone()).or_insert(s);
+            }
+            Err(e) => {
+                tracing::warn!("embedded scaffold parse error in {:?}: {}", f.path(), e)
+            }
         }
     }
     let mut out: Vec<Scaffold> = by_id.into_values().collect();
