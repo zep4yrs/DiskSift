@@ -3,6 +3,7 @@ import { ShieldCheck, ShieldAlert, ShieldX, Trash2, FolderInput, X } from 'lucid
 import type { Node, Scaffold, Plan } from '../types';
 import { formatBytes } from '../format';
 import { api } from '../api';
+import { ProgressButton } from './ProgressButton';
 
 type Props = {
   node: Node;
@@ -56,10 +57,44 @@ export function ScaffoldPanel({ node, scaffold, onComplete, onSkip }: Props) {
       onComplete(reclaimed > 0 ? Math.min(reclaimed, total) : total);
     } catch (e: unknown) {
       setErr(String(e));
+      throw e;
     } finally {
       setBusy(false);
     }
   };
+
+  const quarantineFolder = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.execute(
+        { action: 'quarantine', paths: [node.path], reason: 'manual quarantine' },
+        false,
+      );
+      onComplete(total);
+    } catch (e: unknown) {
+      setErr(String(e));
+      throw e;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // sweep does one path-level shell op per enabled scope (api.execute with
+  // paths: [node.path]) — that's directory granularity, count = enabled
+  // scope count. Pick the dominant mode from enabled scopes; mixed sets
+  // fall back to the most-conservative (recycle).
+  const enabledScopeCount = scaffold.scopes.filter((s) => enabled[s.id]).length;
+  const sweepMode: 'recycle' | 'quarantine' | 'delete' = (() => {
+    const modes = new Set(
+      scaffold.scopes.filter((s) => enabled[s.id]).map((s) => s.mode),
+    );
+    if (modes.size === 1) {
+      const m = [...modes][0];
+      if (m === 'delete' || m === 'quarantine' || m === 'recycle') return m;
+    }
+    return 'recycle';
+  })();
 
   return (
     <div className="card" style={{ borderColor: accent }}>
@@ -121,12 +156,25 @@ export function ScaffoldPanel({ node, scaffold, onComplete, onSkip }: Props) {
       {err && <div className="error">{err}</div>}
 
       <div className="card-actions">
-        <button className="primary" disabled={busy} onClick={sweep}>
-          <Trash2 size={14} /> 清理选中范围
-        </button>
-        <button className="secondary" disabled={busy} onClick={() => api.execute({ action: 'quarantine', paths: [node.path], reason: 'manual quarantine' }, false).then(() => onComplete(total)).catch((e) => setErr(String(e)))}>
-          <FolderInput size={14} /> 隔离整个文件夹
-        </button>
+        <ProgressButton
+          className="primary"
+          disabled={busy}
+          estimatedCount={Math.max(1, enabledScopeCount)}
+          granularity="directory"
+          mode={sweepMode}
+          onAction={sweep}
+          idleContent={<><Trash2 size={14} /> 清理选中范围</>}
+        />
+        <ProgressButton
+          className="secondary"
+          disabled={busy}
+          estimatedCount={1}
+          granularity="directory"
+          mode="quarantine"
+          onAction={quarantineFolder}
+          idleContent={<><FolderInput size={14} /> 隔离整个文件夹</>}
+          runningLabel="隔离中"
+        />
         <button className="ghost" disabled={busy} onClick={onSkip}>保留</button>
       </div>
     </div>

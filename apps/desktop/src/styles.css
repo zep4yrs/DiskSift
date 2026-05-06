@@ -2546,3 +2546,69 @@ footer {
   to   { transform: translate(-50%, 0);   opacity: 1; }
 }
 
+/* ── ProgressButton ───────────────────────────────────────────────────
+   Composable progress-fill button: while the wrapped async action runs,
+   the button fills left→right with a percentage label instead of going
+   to a generic spinner. Estimation is asymptotic and capped at 92%; the
+   real promise jumps the bar to 100% on resolve.
+*/
+.progress-button {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.progress-button .progress-button-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  background: linear-gradient(
+    90deg,
+    var(--pink-deep) 0%,
+    var(--pink) 50%,
+    var(--pink-deep) 100%
+  );
+  background-size: 200% 100%;
+  transition: width 0.18s ease-out, background-color 0.2s ease;
+  z-index: 0;
+  pointer-events: none;
+}
+.progress-button .progress-button-content {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.progress-button.is-progressing {
+  opacity: 1;
+  cursor: progress;
+  background: var(--pink-bg);
+  color: var(--ink);
+}
+.progress-button.is-progressing:disabled {
+  opacity: 1;
+}
+.progress-button.is-progressing .progress-button-fill {
+  animation: progress-button-shimmer 1.6s linear infinite;
+}
+.progress-button.is-success .progress-button-fill {
+  animation: none;
+  background: var(--pink-deep);
+}
+.progress-button.is-error .progress-button-fill {
+  animation: none;
+  background: #d94d6a;
+}
+.progress-button.is-error {
+  color: #fff;
+}
+.progress-button .progress-button-pct {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+@keyframes progress-button-shimmer {
+  from { background-position: 0% 0%; }
+  to   { background-position: -200% 0%; }
+}
+

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Trash2, Loader2, AlertTriangle } from 'lucide-react';
 import { api } from '../api';
 import { formatBytes } from '../format';
 import type { Node, Scaffold, Scope, CondaEnv } from '../types';
+import { ProgressButton } from './ProgressButton';
 
 interface ScopeSize {
   scope_id: string;
@@ -428,6 +429,7 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
       setPreview(null);
     } catch (e) {
       setErr(`清理失败：${String(e)}`);
+      throw e;
     } finally {
       setRunning(false);
     }
@@ -715,6 +717,8 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
             running={running}
             onConfirm={runRealDelete}
             onCancel={cancelPreview}
+            estimatedCount={isConda ? selectedEnvs.size : preview.totalFiles}
+            granularity={isConda ? 'directory' : 'file'}
           />
         )}
       </div>
@@ -725,21 +729,44 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
 interface PreviewDialogProps {
   preview: DryRunPreview;
   running: boolean;
-  onConfirm: () => void;
+  onConfirm: () => Promise<void>;
   onCancel: () => void;
+  estimatedCount: number;
+  granularity: 'file' | 'directory';
 }
 
-function DryRunPreviewDialog({ preview, running, onConfirm, onCancel }: PreviewDialogProps) {
+function DryRunPreviewDialog({
+  preview,
+  running,
+  onConfirm,
+  onCancel,
+  estimatedCount,
+  granularity,
+}: PreviewDialogProps) {
   const [armed, setArmed] = useState(false);
-  const click = () => {
-    if (running) return;
-    if (!armed) {
-      setArmed(true);
-      window.setTimeout(() => setArmed(false), 5000);
-      return;
+  const armTimeoutRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (armTimeoutRef.current !== null) window.clearTimeout(armTimeoutRef.current);
+  }, []);
+  const armClick = () => {
+    if (running || armed) return;
+    setArmed(true);
+    if (armTimeoutRef.current !== null) window.clearTimeout(armTimeoutRef.current);
+    armTimeoutRef.current = window.setTimeout(() => {
+      armTimeoutRef.current = null;
+      setArmed(false);
+    }, 5000);
+  };
+  // Hand onConfirm directly to ProgressButton. Do NOT setArmed(false) here:
+  // armed → false would re-render this dialog into the unarmed branch,
+  // unmounting ProgressButton mid-flight and losing its progress state.
+  // Cancel the auto-disarm timer though, so a slow clean (>5s) can't trip it.
+  const runDelete = async () => {
+    if (armTimeoutRef.current !== null) {
+      window.clearTimeout(armTimeoutRef.current);
+      armTimeoutRef.current = null;
     }
-    setArmed(false);
-    onConfirm();
+    await onConfirm();
   };
   return (
     <div className="modal-bg" onClick={onCancel} style={{ zIndex: 60 }}>
@@ -777,17 +804,27 @@ function DryRunPreviewDialog({ preview, running, onConfirm, onCancel }: PreviewD
           </div>
           <div className="cleanup-actions">
             <button className="ghost" onClick={onCancel} disabled={running}>返回</button>
-            <button
-              className={'primary cleanup-execute' + (armed ? ' armed' : '')}
-              onClick={click}
-              disabled={running}
-            >
-              {running
-                ? <><Loader2 size={13} className="spin" /> 清理中…</>
-                : armed
-                  ? <><Trash2 size={13} /> 再点真删</>
+            {armed ? (
+              <ProgressButton
+                className="primary cleanup-execute armed"
+                estimatedCount={estimatedCount}
+                granularity={granularity}
+                mode="recycle"
+                onAction={runDelete}
+                idleContent={<><Trash2 size={13} /> 再点真删</>}
+              />
+            ) : (
+              <button
+                type="button"
+                className="primary cleanup-execute"
+                onClick={armClick}
+                disabled={running}
+              >
+                {running
+                  ? <><Loader2 size={13} className="spin" /> 清理中…</>
                   : <><Trash2 size={13} /> 确认删除</>}
-            </button>
+              </button>
+            )}
           </div>
         </div>
       </div>
