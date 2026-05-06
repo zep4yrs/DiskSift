@@ -623,10 +623,7 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
             {condaEnvs === null && !condaEnvsLoading && (
               <div className="muted small">读取失败</div>
             )}
-            {condaEnvs && userEnvs.length === 0 && (
-              <div className="muted small">没有用户 environment（envs/ 为空）</div>
-            )}
-            {condaEnvs && userEnvs.length > 0 && (
+            {condaEnvs && (baseEnv || userEnvs.length > 0) && (
               <ul className="cleanup-rows">
                 {baseEnv && (
                   <li className="cleanup-row empty" title="base 是 conda 安装本身，永不可清。">
@@ -666,6 +663,9 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
                   );
                 })}
               </ul>
+            )}
+            {condaEnvs && userEnvs.length === 0 && (
+              <div className="muted small">没有用户 environment（envs/ 为空）</div>
             )}
           </section>
         )}
