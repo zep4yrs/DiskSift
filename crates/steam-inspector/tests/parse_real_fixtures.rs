@@ -27,7 +27,10 @@ fn cs2_appmanifest_round_trip() {
 fn libraryfolders_two_roots() {
     let roots = parse_libraryfolders(LIBRARYFOLDERS).expect("libraryfolders fixture parses");
     assert_eq!(roots.len(), 2, "expected exactly two library roots");
-    let strs: Vec<String> = roots.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    let strs: Vec<String> = roots
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
     assert!(strs[0].contains("Program Files"), "got: {:?}", strs);
     assert!(strs[1].contains("SteamLibrary"), "got: {:?}", strs);
 }

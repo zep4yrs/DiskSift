@@ -308,9 +308,7 @@ fn build_node(
                 Some(c) => c,
                 None => continue,
             };
-            if centry.is_dir
-                && super::is_pruned_system_dir(std::ffi::OsStr::new(&centry.name))
-            {
+            if centry.is_dir && super::is_pruned_system_dir(std::ffi::OsStr::new(&centry.name)) {
                 continue;
             }
             let cpath = path.join(&centry.name);

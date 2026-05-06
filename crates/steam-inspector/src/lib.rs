@@ -519,8 +519,8 @@ pub fn inspect_at_with_clock(steam_root: &Path, now_secs: u64) -> Result<SteamIn
 fn read_library_roots(steam_root: &Path) -> Result<Vec<PathBuf>> {
     let lf = steam_root.join("config").join("libraryfolders.vdf");
     if lf.is_file() {
-        let text = std::fs::read_to_string(&lf)
-            .with_context(|| format!("read {}", lf.display()))?;
+        let text =
+            std::fs::read_to_string(&lf).with_context(|| format!("read {}", lf.display()))?;
         let parsed = parse_libraryfolders(&text)?;
         if !parsed.is_empty() {
             return Ok(parsed);
@@ -645,9 +645,7 @@ pub fn list_workshop_items(library_root: &Path, appid: u32) -> Result<Vec<Worksh
         return Ok(Vec::new());
     }
     let mut out = Vec::new();
-    for entry in std::fs::read_dir(&dir)
-        .with_context(|| format!("read_dir {}", dir.display()))?
-    {
+    for entry in std::fs::read_dir(&dir).with_context(|| format!("read_dir {}", dir.display()))? {
         let entry = match entry {
             Ok(e) => e,
             Err(_) => continue,
@@ -763,10 +761,7 @@ mod tests {
 
     #[test]
     fn handles_line_comments() {
-        let kv = parse(
-            "// header comment\n\"k\" \"v\"\n// trailing comment\n",
-        )
-        .unwrap();
+        let kv = parse("// header comment\n\"k\" \"v\"\n// trailing comment\n").unwrap();
         assert_eq!(kv.len(), 1);
         assert_eq!(kv[0].1.as_str(), Some("v"));
     }

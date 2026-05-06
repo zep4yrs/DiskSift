@@ -998,7 +998,11 @@ async fn fetch_workshop_titles(ids: Vec<u64>) -> Result<HashMap<u64, String>, St
                 builder = builder.proxy(p);
             }
             Err(e) => {
-                tracing::warn!("workshop title fetch: ignoring malformed system proxy {:?}: {}", proxy_str, e);
+                tracing::warn!(
+                    "workshop title fetch: ignoring malformed system proxy {:?}: {}",
+                    proxy_str,
+                    e
+                );
             }
         }
     }
@@ -1075,14 +1079,13 @@ fn read_windows_proxy_server() -> Option<String> {
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::Foundation::ERROR_SUCCESS;
     use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ,
-        REG_DWORD, REG_SZ,
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, REG_DWORD,
+        REG_SZ,
     };
 
-    let subkey: Vec<u16> =
-        "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\0"
-            .encode_utf16()
-            .collect();
+    let subkey: Vec<u16> = "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\0"
+        .encode_utf16()
+        .collect();
 
     unsafe {
         let mut hkey: HKEY = std::ptr::null_mut();
@@ -1378,7 +1381,9 @@ fn load_all_scaffolds(handle: &AppHandle) -> Vec<Scaffold> {
         if f.path().extension().and_then(|e| e.to_str()) != Some("toml") {
             continue;
         }
-        let Some(text) = f.contents_utf8() else { continue };
+        let Some(text) = f.contents_utf8() else {
+            continue;
+        };
         match parse_toml(text) {
             Ok(s) => {
                 by_id.entry(s.id.clone()).or_insert(s);
@@ -1413,7 +1418,12 @@ mod tests {
         fs::create_dir_all(&normal).unwrap();
         fs::write(normal.join("keep.txt"), b"x").unwrap();
 
-        for trashy in &["$RECYCLE.BIN", "System Volume Information", ".Trash", ".Trashes"] {
+        for trashy in &[
+            "$RECYCLE.BIN",
+            "System Volume Information",
+            ".Trash",
+            ".Trashes",
+        ] {
             let d = root.join(trashy);
             fs::create_dir_all(&d).unwrap();
             fs::write(d.join("inside.txt"), b"x").unwrap();
@@ -1431,7 +1441,12 @@ mod tests {
             files.iter().any(|p| p.ends_with("/normal_dir/keep.txt")),
             "walker must still visit non-system dirs, got: {files:?}"
         );
-        for trashy in &["$RECYCLE.BIN", "System Volume Information", ".Trash", ".Trashes"] {
+        for trashy in &[
+            "$RECYCLE.BIN",
+            "System Volume Information",
+            ".Trash",
+            ".Trashes",
+        ] {
             assert!(
                 !files.iter().any(|p| p.contains(trashy)),
                 "walker leaked into pruned dir `{trashy}`: {files:?}"
@@ -1451,6 +1466,9 @@ mod tests {
             .into_iter()
             .flatten()
             .any(|e| e.file_type().is_file());
-        assert!(!leaked, "lowercase $recycle.bin variant must also be pruned");
+        assert!(
+            !leaked,
+            "lowercase $recycle.bin variant must also be pruned"
+        );
     }
 }

@@ -443,7 +443,12 @@ mod tests {
         let dir = tempdir_path();
         fs::create_dir_all(dir.join("normal")).unwrap();
         fs::write(dir.join("normal/keep.txt"), b"x").unwrap();
-        for trashy in &["$RECYCLE.BIN", "System Volume Information", ".Trash", ".Trashes"] {
+        for trashy in &[
+            "$RECYCLE.BIN",
+            "System Volume Information",
+            ".Trash",
+            ".Trashes",
+        ] {
             let d = dir.join(trashy);
             fs::create_dir_all(&d).unwrap();
             fs::write(d.join("inside.txt"), b"x").unwrap();
@@ -453,7 +458,12 @@ mod tests {
 
         let names: Vec<String> = node.children.iter().map(|c| c.name.clone()).collect();
         assert!(names.contains(&"normal".to_string()), "got: {names:?}");
-        for trashy in &["$RECYCLE.BIN", "System Volume Information", ".Trash", ".Trashes"] {
+        for trashy in &[
+            "$RECYCLE.BIN",
+            "System Volume Information",
+            ".Trash",
+            ".Trashes",
+        ] {
             assert!(
                 !names.iter().any(|n| n.eq_ignore_ascii_case(trashy)),
                 "scanner leaked `{trashy}` into Node tree, names: {names:?}"

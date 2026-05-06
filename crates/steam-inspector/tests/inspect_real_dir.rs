@@ -87,8 +87,7 @@ fn build_fake_steam(root: &Path) {
     );
 
     // Library 1: Cyberpunk 2077 — 70GB, never played. Install dir exists.
-    fs::create_dir_all(lib2.join("steamapps").join("common").join("Cyberpunk 2077"))
-        .unwrap();
+    fs::create_dir_all(lib2.join("steamapps").join("common").join("Cyberpunk 2077")).unwrap();
     write(
         &lib2.join("steamapps").join("appmanifest_1091500.acf"),
         r#"
