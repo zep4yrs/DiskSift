@@ -1140,6 +1140,7 @@ fn read_windows_proxy_server() -> Option<String> {
 /// Accepts the two formats Windows writes:
 ///   "127.0.0.1:7890"                                 → http://127.0.0.1:7890
 ///   "http=127.0.0.1:7890;https=127.0.0.1:7890;..."   → pick the https= entry
+#[cfg(windows)]
 fn parse_proxy_server(raw: &str) -> Option<String> {
     let raw = raw.trim();
     if raw.is_empty() {
@@ -1166,7 +1167,7 @@ fn parse_proxy_server(raw: &str) -> Option<String> {
     Some(with_scheme(raw))
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod proxy_parse_tests {
     use super::parse_proxy_server;
 
