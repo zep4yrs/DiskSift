@@ -2737,7 +2737,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pinkbin-advisor"
-version = "0.1.2"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "reqwest 0.12.28",
@@ -2750,7 +2750,7 @@ dependencies = [
 
 [[package]]
 name = "pinkbin-desktop"
-version = "0.1.2"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2778,7 +2778,7 @@ dependencies = [
 
 [[package]]
 name = "pinkbin-executor"
-version = "0.1.2"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2791,7 +2791,7 @@ dependencies = [
 
 [[package]]
 name = "pinkbin-scaffold"
-version = "0.1.2"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "globset",
@@ -2804,7 +2804,7 @@ dependencies = [
 
 [[package]]
 name = "pinkbin-scaffold-lint"
-version = "0.1.2"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pinkbin-scaffold",
@@ -2813,7 +2813,7 @@ dependencies = [
 
 [[package]]
 name = "pinkbin-scanner"
-version = "0.1.2"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "jwalk",
@@ -2828,7 +2828,7 @@ dependencies = [
 
 [[package]]
 name = "pinkbin-steam-inspector"
-version = "0.1.2"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",

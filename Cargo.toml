@@ -14,7 +14,7 @@ members = [
 edition    = "2021"
 license    = "MIT"
 repository = "https://github.com/cccyd2003-qwq/pinkbin"
-version    = "0.1.2"
+version    = "0.1.1"
 
 [workspace.dependencies]
 serde              = { version = "1", features = ["derive"] }
