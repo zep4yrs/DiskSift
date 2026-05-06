@@ -353,11 +353,6 @@ fn read_steam_path_from_registry() -> Option<PathBuf> {
     }
 }
 
-#[cfg(not(windows))]
-fn read_steam_path_from_registry() -> Option<PathBuf> {
-    None
-}
-
 // ---------------------------------------------------------------------------
 // Inventory types — frontend-facing schema (mirrored in apps/desktop/src/types.ts).
 // ---------------------------------------------------------------------------
