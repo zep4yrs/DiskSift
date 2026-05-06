@@ -183,12 +183,7 @@ async fn estimate_size(path: String) -> Result<u64, String> {
     let p = PathBuf::from(&path);
     tokio::task::spawn_blocking(move || -> u64 {
         let mut total: u64 = 0;
-        for entry in jwalk::WalkDir::new(&p)
-            .skip_hidden(false)
-            .follow_links(false)
-            .into_iter()
-            .flatten()
-        {
+        for entry in pinkbin_walker(&p).into_iter().flatten() {
             if entry.file_type().is_file() {
                 if let Ok(md) = entry.metadata() {
                     total = total.saturating_add(md.len());
@@ -333,6 +328,43 @@ fn path_passes_env(path: &Path, env_filter: Option<&[String]>) -> bool {
     true
 }
 
+/// 系统级"垃圾/卷元数据"目录名（lowercase，比较时不区分大小写）。任何 scaffold
+/// 路径扫描遇到这些目录直接整树跳过——回收站里的东西是用户已经决定先放着的，
+/// 把它们当成可清理 cache 是事故；System Volume Information 是 VSS / 索引快照，
+/// 既不可清理也容易触发权限拒绝拖慢扫描。
+const PRUNED_SYSTEM_DIRS: &[&str] = &[
+    "$recycle.bin",
+    "system volume information",
+    ".trash",
+    ".trashes",
+];
+
+fn is_pruned_system_dir(name: &std::ffi::OsStr) -> bool {
+    let Some(s) = name.to_str() else { return false };
+    let lower = s.to_ascii_lowercase();
+    PRUNED_SYSTEM_DIRS.iter().any(|p| *p == lower)
+}
+
+/// 本文件里所有 scaffold 侧路径扫描共用的 walker 构造器。两条策略集中在这里：
+/// (a) `skip_hidden(false)`——很多 app cache 落在 dotted 目录里，必须能进；
+/// (b) `process_read_dir` 在读目录时直接 prune 系统垃圾箱/卷元数据子树，
+///     比"扫完再过滤路径"省一个数量级 IO，并彻底排除"glob 撞回收站"事故面。
+/// scanner crate 的"主页大盘占用扫描"故意不走这里——那边用户期望看到回收站占用。
+fn pinkbin_walker(root: &Path) -> jwalk::WalkDir {
+    jwalk::WalkDir::new(root)
+        .skip_hidden(false)
+        .follow_links(false)
+        .process_read_dir(|_, _, _, children| {
+            children.retain(|res| {
+                let Ok(entry) = res else { return true };
+                if !entry.file_type.is_dir() {
+                    return true;
+                }
+                !is_pruned_system_dir(&entry.file_name)
+            });
+        })
+}
+
 /// Walk `root` and return directories whose path matches `glob_set`, after
 /// pruning any candidate whose ancestor is also matched. Used by directory-
 /// granularity scopes (recycle the directory as one unit, not file-by-file).
@@ -352,12 +384,7 @@ fn find_matching_dirs(
     older_than_days: Option<u32>,
 ) -> Vec<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
-    for entry in jwalk::WalkDir::new(root)
-        .skip_hidden(false)
-        .follow_links(false)
-        .into_iter()
-        .flatten()
-    {
+    for entry in pinkbin_walker(root).into_iter().flatten() {
         if !entry.file_type().is_dir() {
             continue;
         }
@@ -479,12 +506,7 @@ async fn scope_sizes(
         let mut tally: Vec<(u64, u64)> = vec![(0, 0); builds.len()];
         let mut total: Vec<(u64, u64)> = vec![(0, 0); builds.len()];
         if !file_indices.is_empty() {
-            for entry in jwalk::WalkDir::new(&root)
-                .skip_hidden(false)
-                .follow_links(false)
-                .into_iter()
-                .flatten()
-            {
+            for entry in pinkbin_walker(&root).into_iter().flatten() {
                 if !entry.file_type().is_file() {
                     continue;
                 }
@@ -630,12 +652,7 @@ async fn execute_scope(
             ),
             RecycleGranularity::File => {
                 let mut out = Vec::new();
-                for entry in jwalk::WalkDir::new(&root)
-                    .skip_hidden(false)
-                    .follow_links(false)
-                    .into_iter()
-                    .flatten()
-                {
+                for entry in pinkbin_walker(&root).into_iter().flatten() {
                     if !entry.file_type().is_file() {
                         continue;
                     }
@@ -793,12 +810,7 @@ fn dir_size_excluding(dir: &Path, excludes: &[PathBuf]) -> u64 {
         .map(|p| p.to_string_lossy().replace('\\', "/").to_lowercase())
         .collect();
     let mut total: u64 = 0;
-    for entry in jwalk::WalkDir::new(dir)
-        .skip_hidden(false)
-        .follow_links(false)
-        .into_iter()
-        .flatten()
-    {
+    for entry in pinkbin_walker(dir).into_iter().flatten() {
         if !entry.file_type().is_file() {
             continue;
         }
@@ -1356,4 +1368,66 @@ fn load_all_scaffolds(handle: &AppHandle) -> Vec<Scaffold> {
     let mut out: Vec<Scaffold> = by_id.into_values().collect();
     out.sort_by(|a, b| a.id.cmp(&b.id));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// Verifies `pinkbin_walker` skips system trash / volume metadata directories
+    /// at directory-read time. Without this prune a scope glob with a leading
+    /// `**` (literal_separator=false makes `**` cross `/`) can match files
+    /// inside `$Recycle.Bin/<SID>/$R*/...` because Windows preserves the
+    /// original directory tree there — meaning a "clean WeChat cache" preview
+    /// would list files the user already chose to put in the trash.
+    #[test]
+    fn pinkbin_walker_skips_system_trash_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        let normal = root.join("normal_dir");
+        fs::create_dir_all(&normal).unwrap();
+        fs::write(normal.join("keep.txt"), b"x").unwrap();
+
+        for trashy in &["$RECYCLE.BIN", "System Volume Information", ".Trash", ".Trashes"] {
+            let d = root.join(trashy);
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join("inside.txt"), b"x").unwrap();
+        }
+
+        let mut files: Vec<String> = pinkbin_walker(root)
+            .into_iter()
+            .flatten()
+            .filter(|e| e.file_type().is_file())
+            .map(|e| e.path().to_string_lossy().replace('\\', "/"))
+            .collect();
+        files.sort();
+
+        assert!(
+            files.iter().any(|p| p.ends_with("/normal_dir/keep.txt")),
+            "walker must still visit non-system dirs, got: {files:?}"
+        );
+        for trashy in &["$RECYCLE.BIN", "System Volume Information", ".Trash", ".Trashes"] {
+            assert!(
+                !files.iter().any(|p| p.contains(trashy)),
+                "walker leaked into pruned dir `{trashy}`: {files:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pinkbin_walker_prune_is_case_insensitive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let lower = root.join("$recycle.bin");
+        fs::create_dir_all(&lower).unwrap();
+        fs::write(lower.join("inside.txt"), b"x").unwrap();
+
+        let leaked = pinkbin_walker(root)
+            .into_iter()
+            .flatten()
+            .any(|e| e.file_type().is_file());
+        assert!(!leaked, "lowercase $recycle.bin variant must also be pruned");
+    }
 }

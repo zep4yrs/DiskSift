@@ -12,6 +12,24 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+/// 系统级"垃圾/卷元数据"目录名（lowercase）。scanner 扫盘时整树跳过。
+/// 不只是性能：让回收站进 Node tree 会被前端 fallback 的 name_contains
+/// 当成"伪 app 数据 root"——用户曾把 xwechat_files 删进回收站后，
+/// `C:\$Recycle.Bin\<SID>\$R*\xwechat_files` 会被识别为活的 WeChat 数据
+/// 触发误删。System Volume Information 同时还能避开 VSS 权限拒绝噪音。
+const PRUNED_SYSTEM_DIRS: &[&str] = &[
+    "$recycle.bin",
+    "system volume information",
+    ".trash",
+    ".trashes",
+];
+
+fn is_pruned_system_dir(name: &std::ffi::OsStr) -> bool {
+    let Some(s) = name.to_str() else { return false };
+    let lower = s.to_ascii_lowercase();
+    PRUNED_SYSTEM_DIRS.iter().any(|p| *p == lower)
+}
+
 #[cfg(windows)]
 mod mft;
 
@@ -188,6 +206,15 @@ where
         .follow_links(opts.follow_symlinks)
         .parallelism(jwalk::Parallelism::RayonDefaultPool {
             busy_timeout: std::time::Duration::from_secs(5),
+        })
+        .process_read_dir(|_, _, _, children| {
+            children.retain(|res| {
+                let Ok(entry) = res else { return true };
+                if !entry.file_type.is_dir() {
+                    return true;
+                }
+                !is_pruned_system_dir(&entry.file_name)
+            });
         });
     if let Some(d) = opts.max_depth {
         walker = walker.max_depth(d);
@@ -302,10 +329,16 @@ fn build_tree(dir: &Path, accs: &HashMap<PathBuf, DirAcc>, keep_files: Option<us
 
     let mut children: Vec<Node> = Vec::new();
 
-    // Subdirectories — recurse.
+    // Subdirectories — recurse. build_tree 用 std::fs::read_dir 重新枚举子目录
+    // （不复用 jwalk 的输出），所以 prune 必须在这里再做一次——否则即便 jwalk
+    // 跳过了 $Recycle.Bin，build_tree 仍会把它列为 dir 节点放进 Node tree，
+    // 前端 fallbackByNameContains 仍会把回收站里的伪 root 当成 app 数据。
     if let Ok(rd) = std::fs::read_dir(dir) {
         for entry in rd.flatten() {
             if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                if is_pruned_system_dir(&entry.file_name()) {
+                    continue;
+                }
                 children.push(build_tree(&entry.path(), accs, keep_files));
             }
         }
@@ -373,6 +406,7 @@ pub fn sample_paths<P: AsRef<Path>>(root: P, n: usize) -> Vec<String> {
     walkdir::WalkDir::new(root)
         .max_depth(3)
         .into_iter()
+        .filter_entry(|e| !e.file_type().is_dir() || !is_pruned_system_dir(e.file_name()))
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .take(n)
@@ -401,6 +435,31 @@ mod tests {
             .children
             .iter()
             .any(|c| !c.is_dir && c.name == "file1.txt"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_prunes_system_trash_dirs() {
+        let dir = tempdir_path();
+        fs::create_dir_all(dir.join("normal")).unwrap();
+        fs::write(dir.join("normal/keep.txt"), b"x").unwrap();
+        for trashy in &["$RECYCLE.BIN", "System Volume Information", ".Trash", ".Trashes"] {
+            let d = dir.join(trashy);
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join("inside.txt"), b"x").unwrap();
+        }
+
+        let node = scan(&dir).unwrap();
+
+        let names: Vec<String> = node.children.iter().map(|c| c.name.clone()).collect();
+        assert!(names.contains(&"normal".to_string()), "got: {names:?}");
+        for trashy in &["$RECYCLE.BIN", "System Volume Information", ".Trash", ".Trashes"] {
+            assert!(
+                !names.iter().any(|n| n.eq_ignore_ascii_case(trashy)),
+                "scanner leaked `{trashy}` into Node tree, names: {names:?}"
+            );
+        }
+        assert_eq!(node.file_count, 1, "only `normal/keep.txt` should count");
         let _ = fs::remove_dir_all(&dir);
     }
 

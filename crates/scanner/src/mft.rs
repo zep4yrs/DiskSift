@@ -204,6 +204,13 @@ where
                     if c == frn {
                         continue;
                     }
+                    if let Some(centry) = entries.get(&c) {
+                        if centry.is_dir
+                            && super::is_pruned_system_dir(std::ffi::OsStr::new(&centry.name))
+                        {
+                            continue;
+                        }
+                    }
                     let (b, n) = rollup(c, entries, sizes);
                     total_bytes = total_bytes.saturating_add(b);
                     total_files = total_files.saturating_add(n);
@@ -301,6 +308,11 @@ fn build_node(
                 Some(c) => c,
                 None => continue,
             };
+            if centry.is_dir
+                && super::is_pruned_system_dir(std::ffi::OsStr::new(&centry.name))
+            {
+                continue;
+            }
             let cpath = path.join(&centry.name);
 
             // Tally extension bytes for this directory.
