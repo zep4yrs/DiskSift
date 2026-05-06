@@ -1,0 +1,300 @@
+{
+  "project": "Diskwise",
+  "exported_at": "2026-04-30",
+  "exported_by": "Claude Opus 4.7 (1M context)",
+  "purpose": "Hand-off bundle so another contributor can pick up the project with full context. Faithful reconstruction of the design conversation; raw transcript is not available so wording is paraphrased but content is complete.",
+  "repo": {
+    "path": "D:\\Desktop\\Cashdiffusion\\Bin\\diskwise",
+    "git_branch": "main",
+    "git_commits": [
+      { "hash": "1fe3be3", "subject": "chore: initial commit — Diskwise v0.1 scaffolding" },
+      { "hash": "f5c449c", "subject": "fix: typecheck pass, npm/cargo China mirrors, generated icons" },
+      { "hash": "ba6e6af", "subject": "feat: browser preview mode with mock backend" }
+    ],
+    "remote": null,
+    "license": "MIT"
+  },
+
+  "product_one_liner": "WizTree's scan speed + an AI advisor that explains every large folder + per-app cleanup scaffolds (TOML manifests). Open source, local-first, cross-platform desktop app.",
+
+  "origin_story": "User's afternoon workflow was: open WizTree, screenshot every large folder, ask Claude one by one 'what is this, can I delete it'. They want that workflow turned into a real product so they don't need to do it manually anymore.",
+
+  "key_design_decisions": [
+    {
+      "decision": "Tauri 2 (Rust backend + React/TS frontend)",
+      "why": "Native NTFS access, small binary, cross-platform. Same stack as SquirrelDisk."
+    },
+    {
+      "decision": "Scanner: walkdir for v0.1, MFT direct read for v0.2",
+      "why": "walkdir is enough for an MVP; MFT is the WizTree-speed optimisation, planned but not done."
+    },
+    {
+      "decision": "Scaffolds as TOML files in /scaffolds, not code",
+      "why": "Community can contribute new app cleaners as a single file PR. Schema documented in docs/SCAFFOLD-AUTHORING.md."
+    },
+    {
+      "decision": "AI advisor sends only path metadata (size, file_count, top extensions, sample paths). Never file contents.",
+      "why": "Privacy. Default suggested provider is Ollama (local, no network)."
+    },
+    {
+      "decision": "All deletes go to OS recycle bin by default; quarantine + undo log are always on.",
+      "why": "Safety. Can never silently lose user data."
+    },
+    {
+      "decision": "MIT license",
+      "why": "Maximises adoption. GPL-3 would scare scaffold contributors."
+    },
+    {
+      "decision": "WeChat scaffold scoped strictly to FileStorage/Image|Video|File|Cache — never touches message DB.",
+      "why": "Tencent has DMCA-ed similar projects. CleanMyWechat (which inspired this) survives because it stays inside this boundary."
+    }
+  ],
+
+  "repo_layout": {
+    "Cargo.toml": "Rust workspace root",
+    "package.json + pnpm-workspace.yaml": "pnpm monorepo root",
+    ".cargo/config.toml": "rsproxy.cn mirror for crates.io (China network)",
+    ".npmrc": "registry.npmmirror.com (npm registry blocked from CN)",
+    "rust-toolchain.toml": "stable + rustfmt + clippy",
+    "rustfmt.toml, .editorconfig": "formatting",
+    "crates/scanner": "walkdir-based disk scanner. Returns Node tree with size, file_count, top_extensions per dir.",
+    "crates/scaffold": "TOML loader + glob matcher with %VAR% / $VAR / ${VAR} expansion.",
+    "crates/executor": "Recycle / Quarantine / Delete with JSONL undo log.",
+    "crates/advisor": "AI advisor HTTP client with strict JSON output. Providers: OpenAI, Anthropic, Ollama.",
+    "crates/scaffold-lint": "CLI to validate scaffold manifests.",
+    "apps/desktop/src-tauri": "Tauri 2 backend with 7 commands.",
+    "apps/desktop/src": "React + TS frontend (TreeView, Treemap via d3-hierarchy, AutoWalk loop, AdvisorCard, ScaffoldPanel, Settings).",
+    "apps/desktop/src/env.ts + mocks.ts": "Browser-preview mode: routes all api calls to in-memory mocks when not running inside Tauri.",
+    "scaffolds/": "13 TOML manifests (wechat-pc, chrome, edge, firefox, npm, pnpm, yarn, pip, cargo, steam, docker, jetbrains, huggingface).",
+    "docs/SCAFFOLD-AUTHORING.md": "Schema + how to contribute a scaffold.",
+    ".github/workflows/": "ci.yml (3-OS matrix), release.yml (tauri-action 4 targets), codeql.yml (weekly).",
+    ".github/ISSUE_TEMPLATE/, PULL_REQUEST_TEMPLATE.md, dependabot.yml": "GitHub plumbing."
+  },
+
+  "tauri_commands": [
+    "scan_path(path) -> Node",
+    "list_scaffolds() -> Scaffold[]",
+    "detect_scaffold(path) -> string | null",
+    "advise(req: AdvisorRequest) -> AdvisorResponse",
+    "inspect_path(path, sample_count) -> string[]",
+    "execute_plan(plan: Plan, dry_run: bool) -> UndoEntry[]",
+    "set_advisor(provider, api_key, model, base_url) -> ()"
+  ],
+
+  "scaffolds_first_batch": [
+    { "id": "wechat-pc", "risk": "low", "scopes": 4 },
+    { "id": "chrome", "risk": "low", "scopes": 4 },
+    { "id": "edge", "risk": "low", "scopes": 4 },
+    { "id": "firefox", "risk": "low", "scopes": 2 },
+    { "id": "npm", "risk": "low", "scopes": 1 },
+    { "id": "pnpm", "risk": "low", "scopes": 1 },
+    { "id": "yarn", "risk": "low", "scopes": 1 },
+    { "id": "pip", "risk": "low", "scopes": 2 },
+    { "id": "cargo", "risk": "medium", "scopes": 4 },
+    { "id": "steam", "risk": "medium", "scopes": 3 },
+    { "id": "docker", "risk": "high", "scopes": 3 },
+    { "id": "jetbrains", "risk": "low", "scopes": 3 },
+    { "id": "huggingface", "risk": "medium", "scopes": 2 }
+  ],
+
+  "verified_locally_on_user_machine": {
+    "machine": "Windows 11, China network, user demo-user",
+    "ok": [
+      "pnpm install (184 packages, ~3m45s, via npmmirror)",
+      "pnpm exec tsc --noEmit (0 errors after Treemap.tsx HierarchyRectangularNode fix)",
+      "pnpm exec vite build (174 KB JS, 5 KB CSS, 7.5s)",
+      "Python tomllib lint of all 13 scaffolds (13/13 pass)",
+      "rustup + cargo 1.95.0 installed (winget Rustlang.Rustup)",
+      "Vite dev server runs at http://127.0.0.1:1420 with mock data"
+    ],
+    "blocked": [
+      "cargo check / pnpm tauri dev — needs MSVC linker. Install: winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override \"--passive --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended\""
+    ],
+    "machine_quirks": [
+      "Do not run cargo from Git Bash — coreutils' /usr/bin/link shadows MS link.exe. Use PowerShell.",
+      "China network requires npm + crates.io mirrors (already configured in repo)."
+    ]
+  },
+
+  "next_steps_priority_order": [
+    {
+      "step": 1,
+      "title": "Install VS Build Tools 2022 with VCTools workload",
+      "blocker_for": "pnpm tauri dev, pnpm tauri build",
+      "command": "winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override \"--passive --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended\"",
+      "estimated_minutes": "30-60 (3-6 GB download)"
+    },
+    {
+      "step": 2,
+      "title": "Run pnpm tauri dev from PowerShell",
+      "from_dir": "D:\\Desktop\\Cashdiffusion\\Bin\\diskwise",
+      "command": "pnpm tauri dev",
+      "expected": "First run compiles ~300 crates (5-15 min), then opens Diskwise window."
+    },
+    {
+      "step": 3,
+      "title": "Push to GitHub",
+      "command_user_must_run": "gh auth login",
+      "then": "gh repo create diskwise --public --source=. --push --description \"Disk analyzer with AI advisor and per-app cleanup scaffolds\"",
+      "post_create": "gh repo edit --add-topic disk-cleaner,treemap,tauri,llm,ntfs,wiztree-alternative"
+    },
+    {
+      "step": 4,
+      "title": "Replace OWNER/diskwise placeholders in README badges",
+      "files": ["README.md"]
+    },
+    {
+      "step": 5,
+      "title": "Tag v0.1.0 to trigger release.yml",
+      "command": "git tag v0.1.0 && git push origin v0.1.0",
+      "expected": "GitHub Actions builds .msi/.dmg/.AppImage for 4 targets in ~20 min."
+    }
+  ],
+
+  "v0_2_backlog": [
+    "Windows NTFS MFT direct-read scanner (the WizTree-speed optimisation)",
+    "Undo / restore UI (jsonl log already exists)",
+    "Zoomable drilldown treemap (currently single-level)",
+    "Auto-detect local Ollama on first launch (zero-config advisor)",
+    "More scaffolds: QQ, DingTalk, Slack, Discord, Telegram, Spotify, OBS, Adobe, Unity/Unreal, Android SDK, Xcode DerivedData, VS Code CachedData, Maven, Gradle, Go modules"
+  ],
+
+  "promotion_plan": [
+    "Show HN (Tue/Wed 9am PT)",
+    "r/Windows10, r/opensource, r/selfhosted",
+    "Product Hunt (next morning after HN)",
+    "V2EX 创意/分享, 少数派 Matrix, 即刻",
+    "PRs to awesome-windows / awesome-rust / awesome-tauri"
+  ],
+
+  "legal_notes": [
+    "WeChat scaffold ONLY targets FileStorage media caches. Never reads, writes, or decrypts message DBs.",
+    "All disclaimers in README, SECURITY.md, and per-scaffold disclaimer fields.",
+    "If Tencent files DMCA, mirror to GitLab + Codeberg; the boundary chosen here is what CleanMyWechat (blackboxo) has used safely."
+  ],
+
+  "conversation": [
+    {
+      "role": "user",
+      "summary": "Showed a WizTree screenshot of C: drive (187 GB, 805K files; Users 90 GB, Windows 36 GB, WeChat Files 11.4 GB visible). Said: 'My afternoon workflow is to look at every WizTree folder, screenshot it, ask Claude what it is and whether I can delete. Even just from folder names Claude usually gets it right. Build me an open-source product with WizTree's features PLUS the AI explanation and PLUS per-app scaffolds (like clean-my-wechat). Research GitHub. Give me a clear flow to ship it open source.'"
+    },
+    {
+      "role": "assistant",
+      "summary": "Did parallel WebSearch (WizTree alternatives, CleanMyWechat, app cache paths, AI file organisers). Returned a full design doc covering: name (Diskwise), Tauri 2 + Rust + React stack, scaffold system with example TOML, AI advisor JSON contract, 4-milestone roadmap, GitHub publishing checklist, legal note on Tencent DMCA risk. Listed reference projects (SquirrelDisk, WinDirStat, MacDirStat, CleanMyWechat, AI File Sorter, AI Disk Cleanup). Asked which path to start: A) project skeleton, B) scaffolds first, C) docs+CI."
+    },
+    {
+      "role": "user",
+      "summary": "'Today we finish all of it. Up to you how.'"
+    },
+    {
+      "role": "assistant",
+      "summary": "Created TaskList of 6 items. Built repo from scratch in D:\\Desktop\\Cashdiffusion\\Bin\\diskwise: LICENSE (MIT), .gitignore, README.md, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, docs/SCAFFOLD-AUTHORING, .github issue/PR templates, dependabot.yml. Wrote Cargo workspace + 5 crates (scanner, scaffold, executor, advisor, scaffold-lint) with real implementations (~600 LoC Rust). Wrote 13 scaffold TOMLs. Wrote Tauri 2 app (Cargo.toml, build.rs, tauri.conf.json, capabilities/default.json, lib.rs with 7 commands). Wrote React+TS frontend (App.tsx, TreeView, Treemap with d3-hierarchy, AutoWalk loop, AdvisorCard, ScaffoldPanel, Settings, store via zustand, types, api wrapper, format util, dark theme CSS). Wrote 3 GitHub Actions workflows (ci, release, codeql). git init, initial commit (1fe3be3, 69 files, 3289 LoC). Reported done with structured shipping checklist."
+    },
+    {
+      "role": "user",
+      "summary": "'Explain in Chinese in detail what this is. I don't get it.'"
+    },
+    {
+      "role": "assistant",
+      "summary": "Written a long Chinese walkthrough: what the product is, full directory tree, what each crate does, the 7 Tauri commands, the React component layout with ASCII diagram of the UI, how Auto-Walk works, what a scaffold TOML looks like with wechat-pc.toml as example, what each GitHub Actions workflow does, current git state, three concrete next steps (run locally, generate icons, push to GitHub, cut release). Listed 5 known v0.1 limitations to file as issues."
+    },
+    {
+      "role": "user",
+      "summary": "'What does git init and first commit mean?'"
+    },
+    {
+      "role": "assistant",
+      "summary": "Explained: Git is a local versioning tool, GitHub is a website. git init turned the diskwise folder into a Git repo with a hidden .git folder; git add + git commit recorded a 'photo' of all 69 files as commit 1fe3be3. Everything is local; nothing is on the internet yet. Showed verification commands (git log, git status). Explained two paths to push (gh CLI or manual remote add)."
+    },
+    {
+      "role": "user",
+      "summary": "'How do I actually use it now? Your explanation isn't structured. You said you noticed problems — why didn't you fix them yourself? Run it locally yourself, don't delete my files but you can read them, to verify the flow works.'"
+    },
+    {
+      "role": "assistant",
+      "summary": "Detected toolchain: cargo missing, Node 24 + pnpm 9 + git present. Wrote .npmrc with registry.npmmirror.com (npmjs.org timeouts). Generated 1024x1024 source PNG via PowerShell System.Drawing (concentric white rings on blue gradient). Ran pnpm install (184 packages, 3m45s after switching to npmmirror). Ran pnpm tauri icon to generate 30 platform icons. Ran tsc --noEmit, found and fixed Treemap.tsx type error (capture HierarchyRectangularNode return). Ran vite build (174 KB JS). Validated 13 scaffolds via Python tomllib (all pass). Installed Rust via winget (rustup 1.29 + cargo 1.95). Wrote .cargo/config.toml with rsproxy.cn mirror. cargo check failed: Git Bash's /usr/bin/link shadows MS link.exe. Switched to PowerShell. cargo check failed again: MSVC linker truly not installed. Reported honestly that VS Build Tools (3-6 GB) is required. Committed all fixes (commit f5c449c). Gave structured next-step report."
+    },
+    {
+      "role": "user",
+      "summary": "'I want to see the frontend first. Is it an .exe app?'"
+    },
+    {
+      "role": "assistant",
+      "summary": "Answered: final form is .exe (Tauri build); right now no .exe because no MSVC. Created src/env.ts (isTauri = window.__TAURI_INTERNALS__ check). Started writing src/mocks.ts. User interrupted to ask for a primary-school-level overview."
+    },
+    {
+      "role": "user",
+      "summary": "'Now overall summarise what this is and what I can do. Explain to me like a small student.'"
+    },
+    {
+      "role": "assistant",
+      "summary": "Wrote primary-school-level Chinese explanation: what the goal is, lego-and-instructions metaphor for source-vs-exe, what the 3 things they have are (source code, half-baked browser UI, GitHub publishing materials), 3 next-step options ranked by difficulty (browser preview / push to GitHub / install Rust). Asked for a number 1/2/3."
+    },
+    {
+      "role": "user",
+      "summary": "'Sure, let me just see the frontend.'"
+    },
+    {
+      "role": "assistant",
+      "summary": "Wrote src/mocks.ts with a fake C: drive tree mirroring the user's WizTree screenshot (187 GB total, 90 GB Users, WeChat Files 11.4 GB matching wechat-pc, Edge 12.8 GB matching edge scaffold, JetBrains/npm/pnpm/pip/cargo/HuggingFace/Steam/Docker all present so AutoWalk has variety). 11 mock scaffolds. Mock advise() returns context-aware canned responses (Windows/Program Files = keep, Eastmoney = recycle with caveat, etc.). Patched api.ts to route through mocks when !isTauri. Patched App.tsx to use window.prompt() for folder picker in browser and show a 'preview mode' banner. Started vite dev server in background. Server ready at http://127.0.0.1:1420. Gave the user a click-by-click tour of what to try."
+    },
+    {
+      "role": "user",
+      "summary": "'Close it. Tomorrow we continue.'"
+    },
+    {
+      "role": "assistant",
+      "summary": "Stopped vite background task. Committed mock-backend changes (commit ba6e6af, 4 files, 339 lines). Saved a project memory at C:\\Users\\demo-user\\.claude\\projects\\D--Desktop-Cashdiffusion-Bin\\memory\\project_diskwise.md with full state + tomorrow's plan + machine quirks. Said good night."
+    },
+    {
+      "role": "user",
+      "summary": "'Now export all of this conversation as JSON for me. I want to send it to someone else so they can keep coding with the same context.'"
+    },
+    {
+      "role": "assistant",
+      "summary": "Wrote this HANDOFF.json — the file you are reading now. It contains the full design, repo state, verified-vs-blocked status, next-step priority list, and a faithful conversation reconstruction (paraphrased — raw transcript was not available from a tool API)."
+    }
+  ],
+
+  "bring_up_for_a_new_contributor": {
+    "step_1_clone_or_use_local_copy": [
+      "If the recipient has the folder already (sent via zip): skip to step 2.",
+      "If pushed to GitHub: git clone https://github.com/<owner>/diskwise && cd diskwise"
+    ],
+    "step_2_install_toolchains": [
+      "Node 20+ and pnpm 9+",
+      "Rust stable (rustup default stable)",
+      "On Windows: VS Build Tools 2022 with VCTools workload (see next_steps_priority_order step 1)",
+      "On Linux: sudo apt-get install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsoup-3.0-dev",
+      "On macOS: Xcode command line tools (xcode-select --install)"
+    ],
+    "step_3_run": [
+      "pnpm install",
+      "pnpm tauri dev   # opens the desktop app, first run takes 5-15 min to compile Rust deps"
+    ],
+    "step_4_browser_only_preview_no_rust_needed": [
+      "pnpm install",
+      "pnpm -C apps/desktop dev",
+      "open http://127.0.0.1:1420 — uses mock data, all buttons respond but nothing real happens"
+    ],
+    "step_5_to_change_anything": [
+      "Frontend lives in apps/desktop/src",
+      "Rust backend in crates/* and apps/desktop/src-tauri/src/lib.rs",
+      "New cleanup scaffold = drop a .toml in scaffolds/ matching the schema in docs/SCAFFOLD-AUTHORING.md, then cargo run -p diskwise-scaffold-lint -- scaffolds/<id>.toml"
+    ]
+  },
+
+  "files_of_special_note": {
+    "apps/desktop/src/App.tsx": "Top-level layout, scan trigger, walk queue construction, browser/desktop fork.",
+    "apps/desktop/src/components/AutoWalk.tsx": "The core auto-walk loop. Effect calls api.advise() when no scaffold matches.",
+    "apps/desktop/src/components/ScaffoldPanel.tsx": "Per-app cleanup card with scope checkboxes and prompts.",
+    "apps/desktop/src/components/AdvisorCard.tsx": "AI-judged card for unknown folders.",
+    "apps/desktop/src/mocks.ts": "Single source of truth for browser-preview behaviour.",
+    "apps/desktop/src-tauri/src/lib.rs": "All 7 Tauri commands; loads scaffolds from resource_dir / app_data_dir / cwd fallbacks.",
+    "crates/scanner/src/lib.rs": "walkdir-based scan; v0.2 task is to add a Windows MFT path here.",
+    "crates/scaffold/src/lib.rs": "TOML schema + glob matcher with %WIN%/$NIX env expansion.",
+    "crates/advisor/src/lib.rs": "OpenAI / Anthropic / Ollama clients with strict-JSON system prompt.",
+    "scaffolds/wechat-pc.toml": "The legally-careful template — never touches message DB.",
+    ".github/workflows/release.yml": "Tag-triggered tauri-action that produces 4 platform artifacts."
+  }
+}
