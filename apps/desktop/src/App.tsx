@@ -231,7 +231,7 @@ export default function App() {
           />
           <div className="scan-bar-label">
             {scanProgress
-              ? `${scanProgress.files.toLocaleString()} 个文件 · ${formatBytes(scanProgress.bytes)}${scanTotalBytes ? ` / ${formatBytes(scanTotalBytes)}` : ''}`
+              ? `${scanProgress.files.toLocaleString()} 个文件 · ${formatBytes(scanTotalBytes ? Math.min(scanProgress.bytes, scanTotalBytes) : scanProgress.bytes)}${scanTotalBytes ? ` / ${formatBytes(scanTotalBytes)}` : ''}`
               : '准备扫描…'}
           </div>
         </div>
