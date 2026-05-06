@@ -1,7 +1,7 @@
 {
   "name": "pinkbin",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "scripts": {
     "dev": "pnpm -C apps/desktop dev",
     "build": "pnpm -C apps/desktop build",
