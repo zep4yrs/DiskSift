@@ -1,0 +1,72 @@
+# Python 构建临时残留 scaffold —— 承接 pip.toml 原 build-temp scope（能力搬家）。
+# 依据 docs/research/python-dev-cleanup-landscape.md §1.4.2（pip 不自清构建临时
+# 目录：pypa/pip#420 / #939 / #2892 / #12868）+ §1.5（独立成 python-tmp，P0）。
+#
+# 为什么独立成卡：scope 匹配总是以 detect 命中的目录为扫描根（CleanupModal.tsx
+# 把每个 m.path 传给 scopeSizes / executeScope，find_matching_dirs 以它为根走树）。
+# pip.toml 的 detect 根是 pip cache 目录，%TEMP% 不在任何 pip detect 根的子树内，
+# 根锚定的 {%TEMP%/pip-*,...} 运行时永远零命中。这里反过来：detect 直接覆盖临时
+# 目录本身，scope glob 只锚 pip- 前缀（**/pip-*）——正向路径是 detect 根的严格
+# 后代，运行时可达（不变量见 tests/python_tmp_safety.rs 文件头）。
+#
+# 2026-09-27 本机实测（Windows 11，只列目录名，未读文件内容）：%TEMP% 一级无
+# pip-* 残留——残留是间歇性泄漏（路径过长 / 半安装失败，pypa/pip#420 等），非常
+# 态存在，卡片零命中属于正常。
+#
+# ${TMPDIR} 只进 detect 不进 scope：TMPDIR 未设置时 expand_env 整体回退为字面量
+# 死分支（shellexpand 语义，pip.toml 注释同款教训）——死 detect 分支只是少标一张
+# 卡；死 scope 分支则是永远零命中的假 scope，本轮修的正是后者。macOS 的 TMPDIR
+# 恒被设置（per-user /var/folders/.../T），分支在该平台是活的。scope 用 **/pip-*
+# 正是为了不依赖任何可能缺失的 env：只要 detect 标到了临时目录，glob 在根内成立。
+#
+# lint:  cargo run -p pinkbin-scaffold-lint -- scaffolds/python-tmp.toml
+# test:  cargo test -p pinkbin-scaffold --test python_tmp_safety
+
+id          = "python-tmp"
+name        = "Python 构建临时残留"
+homepage    = "https://pip.pypa.io/"
+# low：目标只有 pip 自己的 pip-<verb>-<random> 工作目录，pip 用完即清、凡残留皆
+# 可清（research §1.4.2 定级 L1）。正在跑的 pip install 占用文件时删除失败无害
+# （mode=recycle，重跑即可）。
+risk        = "low"
+disclaimer  = """\
+清理 %TEMP%（/tmp、/var/tmp，自定义 $TMPDIR 时跟随该变量）里 pip 没来得及自清的 \
+pip-* 构建临时目录。正常情况下 pip install 结束时会自清这些目录，残留就是泄漏 \
+（Windows 路径过长导致半安装失败时还会留下大目录）。\
+正在运行的 pip install 可能占用其中文件导致删除失败，无害，重跑即可。\
+绝不删：%TEMP% 里任何不含 pip- 前缀的内容（其它工具与手动放置的文件一概不碰，\
+包括 pytest / npm / 系统组件的临时目录与 *.db）、临时目录本身（扫描根）、pip 缓存 \
+与已安装的包本体（归 pip 卡片管）、任何项目源码与 .git。\
+名字里出现 pip- 的目录按 pip 的命名约定处理；若其它工具也用 pip- 前缀落临时目录，\
+会被一并清掉——发现这类工具请反馈。\
+TMPDIR 未设置的 Linux/macOS 只覆盖 /tmp 与 /var/tmp 字面量，其它非常规临时位置 \
+检测不到。所有删除走系统回收站，可还原。\
+"""
+
+# 临时目录本身（detect = 扫描根）。%TEMP% 与 %TMP% 在 Windows 上通常同值，双列与
+# 旧 glob 的双分支对齐；/tmp、/var/tmp 是 POSIX 字面量（Linux 默认；macOS 的 /tmp
+# 是 /private/tmp 的符号链接，实际临时目录由恒被设置的 TMPDIR 分支覆盖）。
+detect = [
+  "%TEMP%",
+  "%TMP%",
+  "/tmp",
+  "/var/tmp",
+  "${TMPDIR}",
+]
+
+# 无 [match]：temp / tmp 名字太泛，name_contains 兜底会把任意含 temp 的目录标成
+# 本卡（Studio 的 fallbackByNameContains 会拿它当扫描根），宁缺毋滥——没扫到
+# 临时目录就不出卡。
+
+# pip 用完即清、凡残留皆可清：prompt none（全量清），directory 粒度整目录
+# recycle——一个 pip-<random> 一条回收站记录（`*` 可跨段匹配到子路径，运行时
+# find_matching_dirs 的祖先剪枝保证每个临时目录只入队一次）。正在跑的 pip
+# install 占用文件时删除失败无害（mode=recycle，重跑即可）。
+[[scope]]
+id                  = "build-temp"
+label               = "pip 构建临时目录（%TEMP%/pip-*）"
+glob                = "**/pip-*"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }

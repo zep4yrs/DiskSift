@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Trash2, Sparkles, Lock, AlertCircle } from 'lucide-react';
 import type { Node } from '../types';
 import { triage, BUCKET_META, type Bucket, type Triaged } from '../triage';
+import { Icon } from './Icon';
 import { useStore } from '../store';
 import { formatBytes } from '../format';
 import { api } from '../api';
@@ -26,33 +27,36 @@ export function TriageView({ root, thresholdBytes, onJumpToWalk, onSelect }: Pro
   const order: Bucket[] = ['safe', 'heavy', 'stale', 'unknown', 'system'];
 
   return (
+    // 平铺列表（用户 2026-09-27：不要卡片）——全 editor 底、分组标题行、空桶收成一行
     <div className="triage">
       <div className="triage-header">
         <div className="triage-title">扫描诊断</div>
         <div className="triage-sub">
           总计 {formatBytes(root.size)} · {root.file_count.toLocaleString()} 个文件 ·
-          按风险与可清性分成 5 类
+          按风险与可清性分成 5 类 · 点行进入巡查处理
         </div>
       </div>
 
-      {order.map((b) => (
-        <BucketSection
-          key={b}
-          bucket={b}
-          items={result.byBucket[b]}
-          totalBytes={result.totalsByBucket[b]}
-          expanded={expanded[b]}
-          onToggle={() => toggle(b)}
-          onJumpToWalk={onJumpToWalk}
-          onSelect={onSelect}
-          addReclaimed={addReclaimed}
-        />
-      ))}
+      <div className="triage-list">
+        {order.map((b) => (
+          <BucketSection
+            key={b}
+            bucket={b}
+            items={result.byBucket[b]}
+            totalBytes={result.totalsByBucket[b]}
+            expanded={expanded[b]}
+            onToggle={() => toggle(b)}
+            onJumpToWalk={onJumpToWalk}
+            onSelect={onSelect}
+            addReclaimed={addReclaimed}
+          />
+        ))}
+      </div>
 
       {result.items.length === 0 && (
         <div className="empty">
           <div className="empty-title">没找到大于阈值的目录</div>
-          <div className="empty-sub">把顶栏阈值调小（比如 0.1 GB）再扫描。</div>
+          <div className="empty-sub">把巡查阈值调小（侧栏可改）再扫描。</div>
         </div>
       )}
     </div>
@@ -72,12 +76,41 @@ function BucketSection({
   addReclaimed: (n: number) => void;
 }) {
   const meta = BUCKET_META[bucket];
+  // 每桶专属 Lucide 图标 + 语义色（替代 emoji；色值取自 BUCKET_META.tone）
+  const BUCKET_ICONS: Record<Bucket, { name: string; color: string }> = {
+    safe: { name: 'circle-check', color: '#16a34a' },
+    heavy: { name: 'flame', color: '#d97706' },
+    stale: { name: 'clock', color: '#ca8a04' },
+    system: { name: 'shield', color: 'var(--fg-muted)' },
+    unknown: { name: 'circle-help', color: 'var(--info)' },
+  };
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // 两步确认：首点进入预备态（按钮变红），5 秒内再点才执行，超时自动复位。
+  // 不用 window.confirm —— Tauri webview 里行为不稳定（仓库 CLAUDE.md 硬规则）。
+  const [armed, setArmed] = useState(false);
+  const armTimerRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (armTimerRef.current !== null) window.clearTimeout(armTimerRef.current);
+  }, []);
 
   const oneClickClean = async () => {
     if (items.length === 0) return;
-    if (!confirm(`即将把 ${items.length} 项（共 ${formatBytes(totalBytes)}）移到回收站。确认？`)) return;
+    if (!armed) {
+      setErr(null);
+      setArmed(true);
+      if (armTimerRef.current !== null) window.clearTimeout(armTimerRef.current);
+      armTimerRef.current = window.setTimeout(() => {
+        armTimerRef.current = null;
+        setArmed(false);
+      }, 5000);
+      return;
+    }
+    if (armTimerRef.current !== null) {
+      window.clearTimeout(armTimerRef.current);
+      armTimerRef.current = null;
+    }
+    setArmed(false);
     setBusy(true);
     setErr(null);
     try {
@@ -98,41 +131,51 @@ function BucketSection({
     }
   };
 
+  // 空桶收成一行（不占整卡）；有内容的桶 = 分组标题行 + 平铺行列表
+  if (items.length === 0) {
+    return (
+      <div className="tgroup empty-group" onClick={onToggle}>
+        <span className="tgroup-icon"><Icon name={BUCKET_ICONS[bucket].name} size={15} style={{ color: BUCKET_ICONS[bucket].color }} /></span>
+        <span className="tgroup-label">{meta.label}</span>
+        <span className="tgroup-empty">0 项</span>
+      </div>
+    );
+  }
+
   return (
-    <section className="bucket" style={{ borderColor: meta.tone }}>
-      <header className="bucket-head" onClick={onToggle}>
-        <span className="bucket-emoji">{meta.emoji}</span>
-        <div className="bucket-title-wrap">
-          <div className="bucket-title">
-            {meta.label} <span className="bucket-count">· {items.length} 项</span>
-          </div>
-          <div className="bucket-sub">{meta.description}</div>
-        </div>
-        <div className="bucket-bytes">{formatBytes(totalBytes)}</div>
-        <span className="bucket-caret">{expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</span>
-      </header>
+    <div className="tgroup">
+      <div className="tgroup-head" onClick={onToggle}>
+        <span className="tgroup-icon"><Icon name={BUCKET_ICONS[bucket].name} size={15} style={{ color: BUCKET_ICONS[bucket].color }} /></span>
+        <span className="tgroup-label">{meta.label}</span>
+        <span className="tgroup-sub">{meta.description}</span>
+        <span className="tgroup-meta">{items.length} 项 · {formatBytes(totalBytes)}</span>
+        <span className="tgroup-caret">{expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</span>
+      </div>
 
       {expanded && (
-        <div className="bucket-body">
-          {bucket === 'safe' && items.length > 0 && (
-            <div className="bucket-actions">
-              <button className="primary" disabled={busy} onClick={(e) => { e.stopPropagation(); oneClickClean(); }}>
-                <Trash2 size={14} /> 一键全部回收（{formatBytes(totalBytes)}）
+        <div className="tgroup-body">
+          {bucket === 'safe' && (
+            <div className="tgroup-actions">
+              <button
+                className={'primary' + (armed ? ' armed' : '')}
+                disabled={busy}
+                title={armed ? '5 秒内再点一次执行' : '点一次进入预备状态，再点一次才执行'}
+                onClick={(e) => { e.stopPropagation(); oneClickClean(); }}
+              >
+                <Trash2 size={14} /> {armed ? '再点确认' : `一键全部回收（${formatBytes(totalBytes)}）`}
               </button>
-              <span className="muted" style={{ marginLeft: 8 }}>
-                所有项都会进系统回收站，可恢复
-              </span>
+              <span className="tgroup-note">所有项都会进系统回收站，可恢复</span>
             </div>
           )}
           {bucket === 'system' && (
-            <div className="bucket-actions" style={{ color: 'var(--ink-2)' }}>
-              <Lock size={14} /> <span>这些目录 Pinkbin 不会让你删 — 用 Windows 控制面板/卸载程序处理</span>
+            <div className="tgroup-actions">
+              <Lock size={14} /> <span>这些目录不会让你删 — 用 Windows 控制面板/卸载程序处理</span>
             </div>
           )}
           {err && <div className="error">{err}</div>}
 
           {items.map((it) => (
-            <BucketItem
+            <BucketRow
               key={it.node.path}
               item={it}
               bucket={bucket}
@@ -142,11 +185,11 @@ function BucketSection({
           ))}
         </div>
       )}
-    </section>
+    </div>
   );
 }
 
-function BucketItem({
+function BucketRow({
   item, bucket, onJumpToWalk, onSelect,
 }: {
   item: Triaged;
@@ -155,16 +198,16 @@ function BucketItem({
   onSelect: (p: string) => void;
 }) {
   return (
-    <div className="bucket-row" onClick={() => onSelect(item.node.path)}>
-      <div className="bucket-row-main">
-        <div className="bucket-row-name">{item.node.name}</div>
-        <div className="bucket-row-path">{item.node.path}</div>
-        <div className="bucket-row-reason">{item.reason}</div>
+    <div className="trow-item" onClick={() => onSelect(item.node.path)}>
+      <div className="trow-main">
+        <div className="trow-name">{item.node.name}</div>
+        <div className="trow-path">{item.node.path}</div>
+        <div className="trow-reason">{item.reason}</div>
       </div>
-      <div className="bucket-row-size">{formatBytes(item.node.size)}</div>
-      <div className="bucket-row-action">
+      <div className="trow-size">{formatBytes(item.node.size)}</div>
+      <div className="trow-action">
         {bucket === 'system' ? (
-          <Lock size={14} style={{ color: 'var(--ink-3)' }} />
+          <Lock size={14} style={{ color: 'var(--fg-muted)' }} />
         ) : (
           <button className="ghost" onClick={(e) => { e.stopPropagation(); onJumpToWalk(item); }}>
             {bucket === 'unknown' ? <><Sparkles size={12} /> 让 AI 分析</> : <><AlertCircle size={12} /> 详细处理</>}

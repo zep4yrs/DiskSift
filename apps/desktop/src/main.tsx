@@ -6,7 +6,7 @@ import './styles.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ErrorBoundary fallbackLabel="Pinkbin 渲染失败">
+    <ErrorBoundary fallbackLabel="DiskSift 渲染失败">
       <App />
     </ErrorBoundary>
   </React.StrictMode>,

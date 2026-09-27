@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>工作台预览 v4 · Trae 色板 × Lucide 真图标</title>
+<style>
+:root{
+  --chrome:#F8F8F8;--editor:#FFFFFF;--fg:#3B3B3B;--fg-muted:#616161;--fg-inactive:#868686;
+  --border:#E5E5E5;--accent:#005FB8;--accent-fg:#FFFFFF;--hover:rgba(0,0,0,.05);
+  --shadow-1:0 2px 4px rgba(0,0,0,.08);--shadow-2:0 4px 12px rgba(0,0,0,.12);
+  --font-sans:"Segoe UI",system-ui,"Microsoft YaHei",sans-serif;
+  --font-mono:Consolas,"Cascadia Mono",monospace;
+}
+.dark{
+  --chrome:#181818;--editor:#1F1F1F;--fg:#CCCCCC;--fg-muted:#9D9D9D;--fg-inactive:#868686;
+  --border:#2B2B2B;--accent:#0078D4;--accent-fg:#FFFFFF;--hover:rgba(255,255,255,.06);
+  --shadow-1:0 2px 4px rgba(0,0,0,.4);--shadow-2:0 4px 14px rgba(0,0,0,.5);
+}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{font-family:var(--font-sans);font-size:13px;color:var(--fg);background:var(--chrome);overflow:hidden;-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:rgba(128,128,128,.35);border-radius:5px}
+::-webkit-scrollbar-track{background:transparent}
+button{font-family:inherit}
+.svg{display:inline-block;vertical-align:middle;flex-shrink:0}
+
+/* ── titlebar ── */
+.titlebar{height:35px;display:flex;align-items:center;gap:14px;padding:0 14px;background:var(--chrome);border-bottom:1px solid var(--border)}
+.menus{display:flex;gap:2px}
+.menus span{padding:3px 8px;border-radius:4px;font-size:12px;cursor:default}
+.menus span:hover{background:var(--hover)}
+.brand{font-weight:600;font-size:12.5px;display:inline-flex;align-items:center;gap:7px}
+.brand .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);animation:breath 2.4s ease-in-out infinite}
+@keyframes breath{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1.1)}}
+.grow{flex:1}
+.rg{display:flex;gap:2px;padding:2px;border:1px solid var(--border);border-radius:5px;background:var(--chrome)}
+.rg button{display:inline-flex;align-items:center;gap:5px;border:none;background:none;color:var(--fg-muted);padding:3px 10px;font-size:11.5px;cursor:pointer;border-radius:4px}
+.rg button.on{color:var(--fg);background:var(--editor);box-shadow:var(--shadow-1);font-weight:600}
+.tb-icon{width:30px;height:30px;display:grid;place-items:center;border:none;background:none;color:var(--fg);cursor:pointer;border-radius:4px}
+.tb-icon:hover{background:var(--hover)}
+
+/* ── 工作台 ── */
+.workbench{display:flex;height:calc(100vh - 35px - 22px)}
+.activitybar{width:48px;background:var(--chrome);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:4px 0;flex-shrink:0}
+.act{width:48px;height:44px;display:grid;place-items:center;border:none;background:none;color:var(--fg-inactive);cursor:pointer;position:relative}
+.act:hover{color:var(--fg)}
+.act.active{color:var(--fg)}
+.act.active::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--accent)}
+.act svg{width:20px;height:20px}
+.act-bottom{margin-top:auto}
+
+.sidebar{width:240px;background:var(--chrome);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
+.side-head{padding:9px 14px 6px;font-size:11px;color:var(--fg-muted);display:flex;align-items:center;gap:7px;white-space:nowrap}
+.side-head .svg{color:var(--fg-muted)}
+.ai-head .svg{color:var(--fg-muted)}
+.side-head .svg{color:var(--fg-muted)}
+.side-body{flex:1;overflow:auto;padding:0 8px 12px;font-size:13px}
+.tree{list-style:none;margin:0;padding:0}
+.tree li{padding:4px 8px;border-radius:4px;display:flex;align-items:center;gap:6px;cursor:default;white-space:nowrap}
+.tree li:hover{background:var(--hover)}
+.tree li.sel{background:color-mix(in srgb,var(--accent) 12%,transparent);outline:1px solid color-mix(in srgb,var(--accent) 35%,transparent)}
+.tree li .svg{color:var(--fg-muted)}
+.tree li .sz{margin-left:auto;font-family:var(--font-mono);font-size:10.5px;color:var(--fg-muted)}
+.tree li.dir::before{content:'';width:0}
+.tree li.root{font-weight:600}
+.tree ul{list-style:none;margin:0;padding-left:15px}
+.side-info{padding:4px 10px;font-size:12px;color:var(--fg-muted);line-height:1.8}
+.side-info b{color:var(--fg);font-family:var(--font-mono)}
+
+.maincol{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--editor)}
+.tabbar{height:35px;display:flex;align-items:stretch;padding:0 6px;background:var(--chrome);border-bottom:1px solid var(--border);overflow-x:auto;flex-shrink:0}
+.edittab{display:inline-flex;align-items:center;gap:8px;padding:0 10px;font-size:12px;color:var(--fg-inactive);background:none;border:none;border-top:1px solid transparent;border-right:1px solid transparent;cursor:pointer;white-space:nowrap;max-width:190px;font-family:inherit;position:relative}
+.edittab:hover{color:var(--fg)}
+.edittab.active{color:var(--fg);background:var(--editor);border-color:var(--border);border-bottom-color:var(--editor);border-top-color:transparent}
+.edittab.active::before{content:'';position:absolute;top:-1px;left:-1px;right:-1px;height:2px;background:var(--accent)}
+.edittab .svg{width:13px;height:13px;color:var(--fg-muted)}
+.edittab.active .svg{color:var(--accent)}
+.edittab .x{opacity:0;width:17px;height:17px;display:grid;place-items:center;border-radius:4px}
+.edittab:hover .x{opacity:.7}
+.edittab .x:hover{background:var(--hover);opacity:1;color:var(--danger)}
+.tabbar .plus,.tabbar .home{width:30px;border:none;background:none;color:var(--fg-muted);cursor:pointer;font-size:14px;flex-shrink:0;display:grid;place-items:center}
+.tabbar .plus:hover,.tabbar .home:hover{background:var(--hover);color:var(--fg)}
+
+.editorarea{flex:1;overflow:auto;min-height:0;background:var(--editor)}
+.bottompanel{height:158px;border-top:1px solid var(--border);background:var(--chrome);display:flex;flex-direction:column;flex-shrink:0}
+.bp-head{display:flex;align-items:center;gap:2px;padding:2px 10px 4px;border-bottom:1px solid var(--border)}
+.bptab{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;font-size:11.5px;color:var(--fg-muted);background:none;border:none;border-bottom:1px solid transparent;cursor:pointer}
+.bptab:hover{color:var(--fg)}
+.bptab.on{color:var(--fg);border-bottom-color:var(--fg)}
+.bptab .svg{width:13px;height:13px}
+.bp-head .right{margin-left:auto;font-size:11px;font-family:var(--font-mono)}
+.bp-body{flex:1;overflow:auto;padding:8px 14px;font-size:12px;font-family:var(--font-mono);line-height:1.9;color:var(--fg-muted)}
+.bp-body [info]{color:var(--accent)}
+.bp-body [warn]{color:var(--warn)}
+
+.aipanel{width:300px;border-left:1px solid var(--border);background:var(--chrome);display:flex;flex-direction:column;flex-shrink:0}
+.ai-head{padding:9px 14px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)}
+.ai-head .svg{color:var(--fg-muted)}
+.ai-actions{display:flex;gap:3px;color:var(--fg-muted)}
+.ai-actions .svg{width:14px;height:14px}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:5px;overflow:hidden;margin:0 0 8px}
+.seg button{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;border:none;background:var(--editor);color:var(--fg-muted);padding:4px 8px;font-size:11px;border-right:1px solid var(--border);cursor:pointer}
+.seg button:last-child{border-right:none}
+.seg button.on{background:var(--secondary);color:var(--fg);font-weight:600}
+.seg button:hover{color:var(--fg);background:var(--accent)}
+.ai-head .svg{color:var(--accent)}
+.ai-body{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:10px;font-size:12.5px;line-height:1.75}
+.msg{max-width:94%;padding:8px 12px;border-radius:8px}
+.msg.user{align-self:flex-end;background:color-mix(in srgb,var(--accent) 12%,var(--chrome));border:1px solid color-mix(in srgb,var(--accent) 25%,transparent)}
+.msg.ai{align-self:flex-start;background:var(--editor);border:1px solid var(--border)}
+.ai-input{padding:10px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:flex-end}
+.ai-input textarea{flex:1;height:54px;resize:none;border:1px solid var(--border);border-radius:6px;background:var(--editor);color:var(--fg);font-family:inherit;font-size:12.5px;padding:9px;outline:none;transition:border .15s}
+.ai-input textarea:focus{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.send{width:36px;height:36px;display:grid;place-items:center;border:none;border-radius:6px;background:var(--accent);color:var(--accent-fg);cursor:pointer}
+.send svg{width:15px;height:15px}
+
+.statusbar{height:22px;display:flex;align-items:center;gap:16px;padding:0 10px;background:var(--chrome);border-top:1px solid var(--border);font-size:11px;color:var(--fg-muted)}
+.statusbar .chip{cursor:pointer;border:1px solid var(--border);padding:0 8px;border-radius:3px}
+.statusbar .chip:hover{color:var(--fg);background:var(--hover)}
+
+/* ── 入口页 ── */
+.entrypage{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:28px}
+.entry-hello{font-size:26px;font-weight:300;letter-spacing:.01em}
+.entry-hello b{font-weight:600}
+.entry-hint{font-size:12px;color:var(--fg-muted);margin-top:-16px}
+.entry-grid{display:grid;grid-template-columns:repeat(3,190px);gap:14px}
+.entry{border:1px solid var(--border);border-radius:6px;background:var(--chrome);cursor:pointer;padding:14px;display:flex;gap:12px;align-items:center;font-family:inherit;text-align:left;transition:border-color .12s,box-shadow .12s}
+.entry:hover{border-color:var(--accent);box-shadow:var(--shadow-1)}
+.entry .ico{width:36px;height:36px;border-radius:6px;display:grid;place-items:center;flex-shrink:0}
+.entry .ico svg{width:18px;height:18px}
+.entry .ico.c-info{background:color-mix(in srgb,var(--accent) 14%,var(--chrome))}.entry .ico.c-info svg{color:var(--accent)}
+.entry .ico.c-ok{background:color-mix(in srgb,var(--ok) 16%,var(--chrome))}.entry .ico.c-ok svg{color:var(--ok)}
+.entry .ico.c-warn{background:color-mix(in srgb,var(--warn) 16%,var(--chrome))}.entry .ico.c-warn svg{color:var(--warn)}
+.entry .ico.c-violet{background:color-mix(in srgb,#8b5cf6 14%,var(--chrome))}.entry .ico.c-violet svg{color:#8b5cf6}
+.entry .cap{display:flex;flex-direction:column;gap:1px;min-width:0}
+.entry .cap b{font-size:13px;font-weight:600}
+.entry .cap small{font-size:11px;color:var(--fg-muted)}
+
+/* ── tab 内容 ── */
+.tbody{padding:14px 18px;font-size:13px}
+.crumb{font-family:var(--font-mono);font-size:11.5px;color:var(--fg-muted);padding:6px 16px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;background:var(--chrome)}
+.crumb .sz{margin-left:auto}
+.tm{display:flex;flex-direction:column;height:calc(100% - 30px);padding:10px;gap:4px}
+.trow{display:flex;gap:4px;flex:1;min-height:0}
+.tm .blk{border-radius:4px;padding:8px 10px;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;color:#fff;cursor:default;outline:1px solid transparent;transition:outline .1s}
+.tm .blk:hover{outline:2px solid var(--accent)}
+.tm b{display:block;font-family:var(--font-mono);font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tm .blk span{font-size:9.5px;opacity:.8;font-family:var(--font-mono)}
+.bucket{display:flex;align-items:center;gap:12px;padding:9px 13px;border:1px solid var(--border);border-radius:5px;background:var(--chrome);margin-bottom:6px;cursor:pointer}
+.bucket:hover{background:var(--hover)}
+.bucket b{font-family:var(--font-mono);font-size:12.5px}
+.bucket .go{margin-left:auto;color:var(--accent);font-size:12px;cursor:pointer}
+table.list{width:100%;border-collapse:collapse;font-size:12.5px}
+table.list th{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--fg-muted);text-align:left;padding:7px 10px;border-bottom:1px solid var(--border)}
+table.list td{padding:7px 10px;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums}
+.pill{display:inline-flex;padding:1px 9px;border-radius:3px;font-family:var(--font-mono);font-size:10.5px;border:1px solid var(--border);color:var(--fg-muted)}
+</style>
+</head>
+<body>
+
+<div class="titlebar">
+  <span class="brand"><span class="dot"></span> Pinkbin</span>
+  <div class="menus"><span>文件</span><span>编辑</span><span>查看</span><span>扫描</span><span>帮助</span></div>
+  <div class="grow"></div>
+  <div class="rg" title="区域组合——对应你的五张截图">
+    <button data-rg="sidebar" class="on" title="侧栏"><span class="svg" data-icon="panel-left"></span></button>
+    <button data-rg="bottom" class="on" title="底面板"><span class="svg" data-icon="panel-bottom"></span></button>
+    <button data-rg="ai" class="on" title="AI 面板"><span class="svg" data-icon="panel-right"></span></button>
+  </div>
+  <button class="tb-icon" id="themeBtn" title="深浅切换（dark_modern 色板）">☾</button>
+</div>
+
+<div class="workbench">
+  <nav class="activitybar">
+    <button class="act active" data-side="explorer" title="资源管理器"><span class="svg" data-icon="folder-tree"></span></button>
+    <button class="act" data-side="queue" title="巡查队列"><span class="svg" data-icon="list-checks"></span></button>
+    <button class="act" data-side="scripts" title="脚本列表"><span class="svg" data-icon="package"></span></button>
+    <button class="act" data-side="records" title="记录筛选"><span class="svg" data-icon="history"></span></button>
+    <button class="act act-bottom" title="设置"><span class="svg" data-icon="settings"></span></button>
+  </nav>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="side-head" id="sideHead"></div>
+    <div class="side-body" id="sideBody"></div>
+  </aside>
+
+  <section class="maincol">
+    <div class="tabbar" id="tabbar">
+      <button class="home" title="入口页"><span class="svg" data-icon="home"></span></button>
+      <button class="plus" title="新标签页"><span class="svg" data-icon="plus"></span></button>
+      <div class="grow"></div>
+    </div>
+    <div class="editorarea" id="editorarea"></div>
+    <section class="bottompanel" id="bottompanel">
+      <div class="bp-head" id="bpHead"></div>
+      <div class="bp-body" id="bpBody"></div>
+    </section>
+  </section>
+
+  <aside class="aipanel" id="aipanel">
+    <div class="ai-head"><span class="svg" data-icon="bot"></span> AI 顾问 <span class="grow"></span><span class="ai-actions"><span class="svg" data-icon="square-pen"></span><span class="svg" data-icon="history"></span><span class="svg" data-icon="search"></span><span class="svg" data-icon="x"></span></span><span class="pill">ollama</span></div>
+    <div class="ai-body" id="aiBody">
+      <div class="msg user">xwechat_files 这个文件夹是什么？能删吗？</div>
+      <div class="msg ai">这是微信 4.x 的数据根目录（含聊天媒体缓存、接收的文件）。<b>聊天数据库、收藏、账号状态是红线，不会被清理脚本触碰</b>；媒体缓存和超过保留期的接收文件可以走脚本回收。</div>
+      <div class="msg user">那 Steam 呢？</div>
+      <div class="msg ai">Steam 库在右侧「在 Steam 中卸载」更安全——游戏文件不建议直接删，Inspector 只做盘点不代删。</div>
+    </div>
+    <div class="ai-input">
+      <textarea placeholder="帮你看目录、判风险、给清理建议…"></textarea>
+      <button class="send" title="发送"><span class="svg" data-icon="send"></span></button>
+    </div>
+  </aside>
+</div>
+
+<footer class="statusbar">
+  <span>C:\ （浏览器预览 · mock 数据）</span>
+  <span>187.1 GB · 805,990 文件</span>
+  <div class="grow"></div>
+  <span>9 个脚本</span><span class="chip">A·md</span><span>v0.1.2</span>
+</footer>
+
+<script>
+const ICONS = {
+ "folder-tree": "<path d=\"M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z\"/><path d=\"M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z\"/><path d=\"M3 5a2 2 0 0 0 2 2h3\"/><path d=\"M3 3v13a2 2 0 0 0 2 2h3\"/>",
+ "list-checks": "<path d=\"M13 5h8\"/><path d=\"M13 12h8\"/><path d=\"M13 19h8\"/><path d=\"m3 17 2 2 4-4\"/><path d=\"m3 7 2 2 4-4\"/>",
+ "package": "<path d=\"M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z\"/><path d=\"M12 22V12\"/><polyline points=\"3.29 7 12 12 20.71 7\"/><path d=\"m7.5 4.27 9 5.15\"/>",
+ "history": "<path d=\"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\"/><path d=\"M3 3v5h5\"/><path d=\"M12 7v5l4 2\"/>",
+ "bot": "<path d=\"M12 8V4H8\"/><rect width=\"16\" height=\"12\" x=\"4\" y=\"8\" rx=\"2\"/><path d=\"M2 14h2\"/><path d=\"M20 14h2\"/><path d=\"M15 13v2\"/><path d=\"M9 13v2\"/>",
+ "send": "<path d=\"M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z\"/><path d=\"m21.854 2.147-10.94 10.939\"/>",
+ "terminal": "<path d=\"M12 19h8\"/><path d=\"m4 17 6-6-6-6\"/>",
+ "activity": "<path d=\"M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2\"/>",
+ "settings": "<path d=\"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/>",
+ "x": "<path d=\"M18 6 6 18\"/><path d=\"m6 6 12 12\"/>",
+ "plus": "<path d=\"M5 12h14\"/><path d=\"M12 5v14\"/>",
+ "sun": "<circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2\"/><path d=\"M12 20v2\"/><path d=\"m4.93 4.93 1.41 1.41\"/><path d=\"m17.66 17.66 1.41 1.41\"/><path d=\"M2 12h2\"/><path d=\"M20 12h2\"/><path d=\"m6.34 17.66-1.41 1.41\"/><path d=\"m19.07 4.93-1.41 1.41\"/>",
+ "moon": "<path d=\"M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401\"/>",
+ "refresh-cw": "<path d=\"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8\"/><path d=\"M21 3v5h-5\"/><path d=\"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16\"/><path d=\"M8 16H3v5\"/>",
+ "file-json-2": "NO_NODE",
+ "chevron-right": "<path d=\"m9 18 6-6-6-6\"/>",
+ "folder": "<path d=\"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z\"/>",
+ "file": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\"/><path d=\"M14 2v5a1 1 0 0 0 1 1h5\"/>",
+ "map": "<path d=\"M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z\"/><path d=\"M15 5.764v15\"/><path d=\"M9 3.236v15\"/>",
+ "sparkles": "<path d=\"M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z\"/><path d=\"M20 2v4\"/><path d=\"M22 4h-4\"/><circle cx=\"4\" cy=\"20\" r=\"2\"/>",
+ "search": "<path d=\"m21 21-4.34-4.34\"/><circle cx=\"11\" cy=\"11\" r=\"8\"/>",
+ "gauge": "<path d=\"m12 14 4-4\"/><path d=\"M3.34 19a10 10 0 1 1 17.32 0\"/>",
+ "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\"/>",
+ "file-code-2": "NO_NODE",
+ "square-terminal": "<path d=\"m7 11 2-2-2-2\"/><path d=\"M11 13h4\"/><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\"/>",
+ "trash-2": "<path d=\"M10 11v6\"/><path d=\"M14 11v6\"/><path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6\"/><path d=\"M3 6h18\"/><path d=\"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\"/>",
+ "shield": "<path d=\"M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z\"/>",
+ "circle-help": "NO_NODE",
+ "file-code": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\"/><path d=\"M14 2v5a1 1 0 0 0 1 1h5\"/><path d=\"M10 12.5 8 15l2 2.5\"/><path d=\"m14 12.5 2 2.5-2 2.5\"/>",
+ "circle-question-mark": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3\"/><path d=\"M12 17h.01\"/>",
+ "panel-left": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M9 3v18\"/>",
+ "panel-bottom": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M3 15h18\"/>",
+ "panel-right": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M15 3v18\"/>",
+ "message-square-plus": "<path d=\"M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z\"/><path d=\"M12 8v6\"/><path d=\"M9 11h6\"/>",
+ "archive-restore": "<rect width=\"20\" height=\"5\" x=\"2\" y=\"3\" rx=\"1\"/><path d=\"M4 8v11a2 2 0 0 0 2 2h2\"/><path d=\"M20 8v11a2 2 0 0 1-2 2h-2\"/><path d=\"m9 15 3-3 3 3\"/><path d=\"M12 12v9\"/>",
+ "circle-x": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"m15 9-6 6\"/><path d=\"m9 9 6 6\"/>",
+ "clock": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M12 6v6l4 2\"/>",
+ "calendar-days": "<path d=\"M8 2v4\"/><path d=\"M16 2v4\"/><rect width=\"18\" height=\"18\" x=\"3\" y=\"4\" rx=\"2\"/><path d=\"M3 10h18\"/><path d=\"M8 14h.01\"/><path d=\"M12 14h.01\"/><path d=\"M16 14h.01\"/><path d=\"M8 18h.01\"/><path d=\"M12 18h.01\"/><path d=\"M16 18h.01\"/>",
+ "layout-grid": "<rect width=\"7\" height=\"7\" x=\"3\" y=\"3\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"14\" y=\"3\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"14\" y=\"14\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"3\" y=\"14\" rx=\"1\"/>",
+ "scan-line": "<path d=\"M3 7V5a2 2 0 0 1 2-2h2\"/><path d=\"M17 3h2a2 2 0 0 1 2 2v2\"/><path d=\"M21 17v2a2 2 0 0 1-2 2h-2\"/><path d=\"M7 21H5a2 2 0 0 1-2-2v-2\"/><path d=\"M7 12h10\"/>",
+ "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\"/><path d=\"M14 2v5a1 1 0 0 0 1 1h5\"/><path d=\"M10 9H8\"/><path d=\"M16 13H8\"/><path d=\"M16 17H8\"/>",
+ "chevron-down": "<path d=\"m6 9 6 6 6-6\"/>",
+ "square-pen": "<path d=\"M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7\"/><path d=\"M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z\"/>"
+};
+const icon = (name, s = 16) =>
+  `<span class="svg"><svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg></span>`;
+// 全站静态占位图标
+document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon, 17); });
+
+// ── 主题 ──
+const themeBtn = document.getElementById('themeBtn');
+themeBtn.onclick = () => {
+  const dark = document.documentElement.classList.toggle('dark');
+  themeBtn.textContent = dark ? '☀' : '☾';
+};
+
+// ── 区域独立折叠 ──
+const regions = { sidebar: document.getElementById('sidebar'), bottom: document.getElementById('bottompanel'), ai: document.getElementById('aipanel') };
+document.querySelectorAll('[data-rg]').forEach(b => b.onclick = () => {
+  const el = regions[b.dataset.rg];
+  el.classList.toggle('hidden');
+  b.classList.toggle('on', !el.classList.contains('hidden'));
+});
+
+// ── 侧栏（每个面板带图标表头） ──
+function treeHTML(){
+  const row = (ic, n, s, d, root) => `<li class="${d?'dir':'file'} ${root?'root':''}">${icon(ic,14)}${n}<span class="sz">${s}</span></li>`;
+  return `<ul class="tree">
+    ${row('folder-open','C:','187.1 GB',1,1)}<ul>
+    ${row('folder','Users','90.3 GB',1)}${row('folder','Windows','36.2 GB',1)}${row('folder','Program Files','24.5 GB',1)}
+    ${row('folder','xwechat_files','21.4 GB',1)}${row('folder','conda','9.8 GB',1)}${row('folder','SteamLibrary','58.0 GB',1)}
+    ${row('file','hiberfil.sys','12.8 GB')}${row('file','pagefile.sys','8.0 GB')}</ul></ul>`;
+}
+const SIDE = {
+  explorer: { head: '资源管理器 · C:', ic: 'folder-tree', html: treeHTML() },
+  queue: { head: '巡查队列', ic: 'list-checks', html: `<div class="side-info"><div class="bucket"><b>1 / 6</b> 已审阅 <span class="go">继续 →</span></div><div class="bucket">本次已释放 <b>12.4 GB</b></div><div class="bucket">阈值 <b>1 GB</b></div></div>` },
+  scripts: { head: '脚本列表 · 9', ic: 'package', html: '<div class="tbody">' + ['wechat-pc 21.4GB','conda 9.8GB','jetbrains 6.2GB','vscode 3.1GB','cursor 2.7GB','python-tmp 0.4GB'].map(s=>'<div class="bucket"><b>'+s.split(' ')[0]+'</b><span class="go">打开详情 →</span></div>').join('') + '</div>' },
+  records: { head: '记录筛选', ic: 'history', html: `<div class="tbody"><div class="seg"><button class="on">${icon('list',12)}全部</button><button>${icon('trash-2',12)}回收站</button><button>${icon('archive-restore',12)}隔离</button><button>${icon('circle-x',12)}删除</button></div><div class="seg"><button class="on">${icon('clock',12)}全部时间</button><button>${icon('clock',12)}24 小时</button><button>${icon('calendar-days',12)}近 7 天</button><button>${icon('calendar-days',12)}近 30 天</button></div><p style="color:var(--fg-muted);font-size:12px">表格在编辑区「操作记录」tab。</p></div>` },
+};
+document.querySelectorAll('.act[data-side]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.act[data-side]').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  const s = SIDE[b.dataset.side];
+  document.getElementById('sideHead').innerHTML = icon(s.ic, 13) + s.head;
+  document.getElementById('sideBody').innerHTML = s.html;
+});
+document.getElementById('sideHead').innerHTML = icon('folder-tree',13) + SIDE.explorer.head;
+document.getElementById('sideBody').innerHTML = SIDE.explorer.html;
+
+// ── 浏览器式多 tab ──
+const tabbar = document.getElementById('tabbar');
+const editor = document.getElementById('editorarea');
+let tabs = [], activeId = null, seq = 0;
+
+const CONTENT = {
+  map:   t => `<div class="crumb">${t.crumb||'C:'} <span class="sz">187.1 GB · 805,990 文件</span></div>
+    <div class="tm" style="height:calc(100% - 32px)">
+      <div class="trow" style="flex:5">
+        <div class="blk" style="flex:3.2;background:#3f5f8f"><b>Users</b><span>90.3 GB</span></div>
+        <div class="blk" style="flex:1.3;background:#5a7ba6"><b>Windows</b><span>36.2 GB</span></div>
+        <div class="blk" style="flex:1;background:#7d99bd"><b>Program Files</b><span>24.5 GB</span></div>
+      </div>
+      <div class="trow" style="flex:4">
+        <div class="blk" style="flex:1.6;background:#93aac6"><b>xwechat_files</b><span>21.4 GB</span></div>
+        <div class="blk" style="flex:1.4;background:#a9bcd2;color:#2d2d2d"><b>SteamLibrary</b><span>58.0 GB</span></div>
+        <div class="blk" style="flex:1;background:#c3d1e0;color:#2d2d2d"><b>conda</b><span>9.8 GB</span></div>
+        <div class="blk" style="flex:1;background:#dde5ee;color:#2d2d2d"><b>其它</b><span>6.9 GB</span></div>
+      </div>
+    </div>`,
+  walk:  t => `<div class="tbody"><div style="font-family:var(--font-mono);font-weight:600;margin-bottom:12px">分诊报告 · 阈值 1 GB</div>
+    <div class="bucket"><b>🟢 100% 可清</b>12 项 · 12.4 GB<span class="go">开巡查 →</span></div>
+    <div class="bucket"><b>🟠 占用大但你常用</b>4 项 · 58.0 GB<span class="go">开巡查 →</span></div>
+    <div class="bucket"><b>🟡 很久没碰</b>7 项 · 3.2 GB<span class="go">开巡查 →</span></div>
+    <div class="bucket"><b>🔵 AI 不确定</b>2 项 · 1.1 GB<span class="go">让 AI 分析 →</span></div>
+    <div class="bucket"><b>⚫ 系统/不能动</b>9 项 · 46.2 GB</div></div>`,
+  script:t => `<div class="tbody"><div style="border:1px solid var(--border);border-radius:5px;padding:14px 16px;background:var(--editor)">
+    <b style="font-family:var(--font-mono)">${t.title}</b><p style="color:var(--fg-muted);margin:6px 0 12px">清理包缓存与长期未激活的 environments。Base env、.condarc、environments.txt 永不触动；全部走系统回收站可还原。</p>
+    <div class="bucket">包缓存（mtime &gt; 30 天）<b>6.2 GB</b></div>
+    <div class="bucket">下载的 tarball<b>1.1 GB</b></div>
+    <div class="bucket">未使用 environments<b>2.5 GB</b></div></div></div>`,
+  records:t => `<div class="tbody"><table class="list"><tr><th>时间</th><th>动作</th><th>路径</th></tr>
+    <tr><td>09-27 14:02</td><td><span class="pill">回收站</span></td><td>C:/Users/90740/AppData/Local/npm-cache</td></tr>
+    <tr><td>09-27 13:47</td><td><span class="pill">隔离</span></td><td>D:/tmp/old-build</td></tr>
+    <tr><td>09-27 11:20</td><td><span class="pill">回收站</span></td><td>C:/Users/90740/Downloads/setup_old.exe</td></tr></table></div>`,
+  entry: () => entryHTML(),
+};
+function entryHTML(){
+  const card = (k,c,ic,cap,sub)=>`<button class="entry" data-open="${k}"><span class="ico ${c}">${icon(ic,18)}</span><span class="cap"><b>${cap}</b><small>${sub}</small></span></button>`;
+  return `<div class="entrypage">
+    <div class="entry-hello">开始清理 <b>C:</b></div>
+    <div class="entry-hint">点卡片打开一个标签页 · 顶部可多开 · 可关闭 · 各区域可独立折叠</div>
+    <div class="entry-grid">
+      ${card('map','c-info','map','空间图','C: 已扫描')}
+      ${card('walk','c-ok','list-checks','巡查','分诊报告')}
+      ${card('script:conda','c-warn','package','脚本库','9 个')}
+      ${card('records','c-violet','history','操作记录','undo')}
+      ${card('map','c-info','map','空间图','D: 盘')}
+      ${card('records','c-neutral','settings','设置','AI · 主题 · 字号')}
+    </div></div>`;
+}
+
+function renderTabbar(){
+  tabbar.querySelectorAll('.edittab').forEach(e=>e.remove());
+  const plus = tabbar.querySelector('.plus');
+  tabs.forEach(t=>{
+    const ic = t.kind==='map' ? 'map' : t.kind==='walk' ? 'list-checks' : t.kind==='script:conda' ? 'package' : 'history';
+    const b=document.createElement('button');
+    b.className='edittab'+(t.id===activeId?' active':'');
+    b.innerHTML=`${icon(ic,13)}<span>${t.title}</span><span class="x" data-close="${t.id}">${icon('x',12)}</span>`;
+    b.onclick=e=>{ if(e.target.closest('[data-close]')){ closeTab(t.id); } else { activeId=t.id; renderTabbar(); renderEditor(); } };
+    tabbar.insertBefore(b, plus);
+  });
+}
+function renderEditor(){
+  const t = tabs.find(x=>x.id===activeId);
+  editor.innerHTML = t ? CONTENT[t.kind](t) : entryHTML();
+  editor.querySelectorAll('[data-open]').forEach(c=>c.onclick=()=>openTab(c.dataset.open, c.querySelector('.cap b').textContent));
+}
+function openTab(kind, title, crumb){
+  const dup = tabs.find(t=>t.kind===kind && t.title===title);
+  if (dup){ activeId=dup.id; renderTabbar(); renderEditor(); return; }
+  const t = { id:'t'+(++seq), kind, title: title || kind, crumb };
+  tabs.push(t); activeId=t.id; renderTabbar(); renderEditor();
+}
+function closeTab(id){
+  const i = tabs.findIndex(t=>t.id===id);
+  tabs.splice(i,1);
+  if (activeId===id) activeId = tabs.length ? tabs[Math.max(0,i-1)].id : null;
+  renderTabbar(); renderEditor();
+}
+tabbar.querySelector('.plus').onclick = ()=>{ activeId=null; renderTabbar(); renderEditor(); };
+tabbar.querySelector('.home').onclick = ()=>{ activeId=null; renderTabbar(); renderEditor(); };
+
+// ── 底面板：三个真 tab（输出/诊断/记录） ──
+const BP = {
+  out: { ic: 'terminal', label: '输出', html: `<div><span info>info</span> 扫描 C: 完成 · MFT 模式 · 2.41s · 805,990 文件 · 187.1 GB</div>
+    <div><span info>info</span> 检测到脚本: wechat-pc · conda · jetbrains · vscode · cursor · pip · npm · pnpm · python-tmp</div>
+    <div><span warn>warn</span> 已跳过: $Recycle.Bin · System Volume Information · 3 处目录联接</div>` },
+  diag: { ic: 'activity', label: '诊断', html: `<div>mft_ms=2,410 · walk_ms=0 · build_tree_ms=112 · tag_ms=38</div>
+    <div>ipc_ms=41 · setRoot_ms=8 · total_ms=2,577 · mode=mft · dirs_in_acc=0</div>` },
+  records: { ic: 'history', label: '记录', html: `<table class="list"><tr><th>时间</th><th>动作</th><th>路径</th></tr>
+    <tr><td>09-27 14:02</td><td>回收站</td><td>C:/Users/90740/AppData/Local/npm-cache</td></tr>
+    <tr><td>09-27 13:47</td><td>隔离</td><td>D:/tmp/old-build</td></tr></table>` },
+};
+const bpHead = document.getElementById('bpHead'), bpBody = document.getElementById('bpBody');
+let bpActive = 'out';
+function renderBP(){
+  bpHead.innerHTML = Object.entries(BP).map(([id, t]) =>
+    `<button class="bptab${bpActive===id?' on':''}" data-bp="${id}">${icon(t.ic,13)}${t.label}</button>`).join('')
+    + `<span class="right">2026-09-27</span>`;
+  bpBody.innerHTML = BP[bpActive].html;
+  bpHead.querySelectorAll('[data-bp]').forEach(b => b.onclick = () => { bpActive = b.dataset.bp; renderBP(); });
+}
+renderBP();
+
+// 初始：预开两个 tab 展示多开
+openTab('map','空间图 · C:','C:');
+openTab('records','操作记录');
+renderEditor();
+</script>
+</body>
+</html>

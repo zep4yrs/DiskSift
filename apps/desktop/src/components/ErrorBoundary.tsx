@@ -20,13 +20,13 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (!this.state.error) return this.props.children;
     return (
-      <div style={{ padding: 16, fontFamily: 'monospace', fontSize: 12, color: '#a40036', overflow: 'auto', maxHeight: '100%' }}>
+      <div style={{ padding: 16, fontFamily: 'monospace', fontSize: 12, color: 'var(--danger)', overflow: 'auto', maxHeight: '100%' }}>
         <div style={{ fontWeight: 600, marginBottom: 8 }}>
           {this.props.fallbackLabel ?? '组件渲染失败'}
         </div>
         <div style={{ marginBottom: 8 }}>{String(this.state.error.message ?? this.state.error)}</div>
         {this.state.error.stack && (
-          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', background: '#fff0f5', padding: 8, borderRadius: 6 }}>
+          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', background: 'color-mix(in srgb, var(--danger) 6%, var(--background))', padding: 8, borderRadius: 6 }}>
             {this.state.error.stack}
           </pre>
         )}

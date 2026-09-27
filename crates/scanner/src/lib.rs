@@ -6,7 +6,8 @@
 
 use jwalk::WalkDir as JWalk;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -60,10 +61,25 @@ struct DirAcc {
     file_count: u64,
     ext_bytes: HashMap<String, u64>,
     ext_count: HashMap<String, u64>,
-    files: Vec<(String, u64)>, // (file name, size) — only kept on the immediate parent
+    // plan §2.2 / 必修#3（含复核修正）：每目录只留前 keep_files_per_dir
+    // 大的文件。Reverse 把 BinaryHeap 变成最小堆——堆顶是保留集里最小的
+    // 那个，消费循环里实时裁剪（超限先弹堆顶）；第二字段 Reverse(seq) 是
+    // 消费到达序，并列大小时驱逐最晚到的，使保留集与排序同旧实现
+    // （全量 Vec + 稳定排序 + take(k)）逐项等价。原先 Vec 全量保留、到
+    // build_tree 才裁剪，npm/WinSxS 级平铺目录几万个 (String, u64) 常驻
+    // 内存，是 16G 轻薄本进 swap 的主因。
+    files: BinaryHeap<Reverse<(u64, Reverse<u64>, String)>>,
 }
 
 pub struct ScanOptions {
+    /// jwalk `follow_links` 透传。语义说明（复核标注，pub API 语义变化）：
+    /// 开启也会被安全剪枝压制——`process_read_dir` 对所有
+    /// `file_type.is_symlink()` 条目无条件剪除（BlueTidy 纪律，plan §2.4），
+    /// 而 jwalk 的下钻集合正是从过滤后的 children 派生的
+    /// （jwalk-0.8.1 core/read_dir.rs:22-28），所以无论 true/false 都不会
+    /// 进入联接/符号链接目录，该字段当前实际等于恒 false。保留字段仅为
+    /// API 兼容；扫描根自身是链接时仍会被扫描（根不经过 process_read_dir），
+    /// 两种取值行为一致。
     pub follow_symlinks: bool,
     pub max_depth: Option<usize>,
     /// How many files to keep per directory in the returned tree. None = all (memory hog on large dirs).
@@ -97,7 +113,7 @@ pub struct ScanStats {
     pub mft_succeeded: bool,
     pub mft_ms: u64,  // total time spent in the MFT branch (success or fallback)
     pub walk_ms: u64, // jwalk consume loop (only set in walkdir mode)
-    pub build_tree_ms: u64, // build_tree recursion + 2nd read_dir pass
+    pub build_tree_ms: u64, // build_tree recursion (consumes walk-collected dir edges; no 2nd IO pass)
     pub total_ms: u64,
     pub files_seen: u64,
     pub bytes_seen: u64,
@@ -136,60 +152,84 @@ where
     #[cfg(windows)]
     {
         if let Some(letter) = drive_letter_of(&root) {
-            let subroot = if is_drive_root(&root) {
-                None
-            } else {
-                Some(root.as_path())
-            };
-            let progress = &on_progress;
-            stats.mft_attempted = true;
-            let mft_t0 = Instant::now();
-            // The `ntfs` crate can panic on non-NTFS volumes (e.g. CI runners,
-            // ReFS, removable media) instead of returning an Err. Catch it so
-            // we always fall back to walkdir cleanly. AssertUnwindSafe is OK
-            // because we don't observe partial state on panic.
-            let mft_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                mft::scan_volume(letter, subroot, |records, bytes| {
-                    progress(&ScanProgress {
-                        files_seen: records,
-                        bytes_seen: bytes,
-                        current_path: format!("MFT record {}", records),
-                    });
-                })
-            }))
-            .unwrap_or_else(|_| {
-                Err(anyhow::anyhow!(
-                    "MFT scan panicked (likely non-NTFS volume)"
-                ))
-            });
-            match mft_result {
-                Ok(n) => {
-                    stats.mft_ms = mft_t0.elapsed().as_millis() as u64;
-                    stats.mft_succeeded = true;
-                    stats.mode = "mft".into();
-                    stats.files_seen = n.file_count;
-                    stats.bytes_seen = n.size;
-                    stats.total_ms = total_t0.elapsed().as_millis() as u64;
+            // #26 MFT 兼容修复：进快路径前先问操作系统卷类型。ntfs crate 的
+            // BootSector/bpb 解析对非 NTFS 卷会 binrw 意外错误（用户实测
+            // os error 87）乃至 unreachable panic——catch_unwind 只能事后兜底
+            // 降级（功能不丢但性能卖点整卷失效），这道预检让 ReFS/exFAT/
+            // BitLocker 卷零成本直达 walkdir。
+            let mft_allowed = match mft::volume_fs_check(letter) {
+                VolumeFsDecision::Ntfs | VolumeFsDecision::Unknown => true,
+                VolumeFsDecision::OtherFs(name) => {
                     tracing::info!(
-                        "scan: mode=mft mft_ms={} total_ms={} files={} bytes={}",
-                        stats.mft_ms,
-                        stats.total_ms,
-                        stats.files_seen,
-                        stats.bytes_seen,
+                        "scan: 卷 {letter}: 文件系统为 {name}（非 NTFS），跳过 MFT 直接 walkdir"
                     );
-                    progress(&ScanProgress {
-                        files_seen: n.file_count,
-                        bytes_seen: n.size,
-                        current_path: "done (mft)".into(),
-                    });
-                    return Ok((n, stats));
+                    false
                 }
-                Err(e) => {
-                    stats.mft_ms = mft_t0.elapsed().as_millis() as u64;
+                VolumeFsDecision::BitLockerLocked => {
                     tracing::warn!(
-                        "MFT scan failed after {} ms, falling back to walkdir: {e:#}",
-                        stats.mft_ms
+                        "scan: 卷 {letter}: 疑似 BitLocker 加锁（DEVICE LOCKER / ACCESS_DENIED），跳过 MFT 直接 walkdir；解锁该卷后重扫可恢复 MFT 快路径"
                     );
+                    false
+                }
+            };
+            // 预检否决时不设 mft_attempted，直接落到底下的 walkdir 段——
+            // 诊断面板自然显示走了慢路径。
+            if mft_allowed {
+                let subroot = if is_drive_root(&root) {
+                    None
+                } else {
+                    Some(root.as_path())
+                };
+                let progress = &on_progress;
+                stats.mft_attempted = true;
+                let mft_t0 = Instant::now();
+                // The `ntfs` crate can panic on non-NTFS volumes (e.g. CI runners,
+                // ReFS, removable media) instead of returning an Err. Catch it so
+                // we always fall back to walkdir cleanly. AssertUnwindSafe is OK
+                // because we don't observe partial state on panic.
+                let mft_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    mft::scan_volume(letter, subroot, |records, bytes| {
+                        progress(&ScanProgress {
+                            files_seen: records,
+                            bytes_seen: bytes,
+                            current_path: format!("MFT record {}", records),
+                        });
+                    })
+                }))
+                .unwrap_or_else(|_| {
+                    Err(anyhow::anyhow!(
+                        "MFT scan panicked (likely non-NTFS volume)"
+                    ))
+                });
+                match mft_result {
+                    Ok(n) => {
+                        stats.mft_ms = mft_t0.elapsed().as_millis() as u64;
+                        stats.mft_succeeded = true;
+                        stats.mode = "mft".into();
+                        stats.files_seen = n.file_count;
+                        stats.bytes_seen = n.size;
+                        stats.total_ms = total_t0.elapsed().as_millis() as u64;
+                        tracing::info!(
+                            "scan: mode=mft mft_ms={} total_ms={} files={} bytes={}",
+                            stats.mft_ms,
+                            stats.total_ms,
+                            stats.files_seen,
+                            stats.bytes_seen,
+                        );
+                        progress(&ScanProgress {
+                            files_seen: n.file_count,
+                            bytes_seen: n.size,
+                            current_path: "done (mft)".into(),
+                        });
+                        return Ok((n, stats));
+                    }
+                    Err(e) => {
+                        stats.mft_ms = mft_t0.elapsed().as_millis() as u64;
+                        tracing::warn!(
+                            "MFT scan failed after {} ms, falling back to walkdir: {e:#}",
+                            stats.mft_ms
+                        );
+                    }
                 }
             }
         }
@@ -210,6 +250,18 @@ where
         .process_read_dir(|_, _, _, children| {
             children.retain(|res| {
                 let Ok(entry) = res else { return true };
+                // BlueTidy 纪律（plan §2.4）：junction/symlink 目录项一律剪掉
+                // ——清理类 glob（literal_separator=false 的 **）穿过目录联接
+                // 会把联接目标当成待删内容。这道检查必须放在 is_dir 之前：
+                // 不同 std 版本对 reparse 点的 is_dir() 语义不一致（本机
+                // stable 实测 junction 报 is_dir=false，老版本报 true），只有
+                // is_symlink() 是版本无关的判据。剪在 process_read_dir 里能
+                // 同时拦住下钻：jwalk 的 read_children_specs 只从过滤后的
+                // results_list 派生（jwalk-0.8.1 core/read_dir.rs:22-28），
+                // 被剪目录既不会被 yield 也不会被 read_dir。
+                if entry.file_type.is_symlink() {
+                    return false;
+                }
                 if !entry.file_type.is_dir() {
                     return true;
                 }
@@ -221,9 +273,27 @@ where
     }
 
     let mut accs: HashMap<PathBuf, DirAcc> = HashMap::new();
+    // plan §2.3 / 必修#2：子目录关系在这趟 jwalk 里顺带收集，build_tree
+    // 直接吃内存结构——原先扫完后再对全树串行 read_dir，等于 QLC/机械盘
+    // 上把盘扫两遍，且发生在进度条停更之后，是用户眼里最直观的"卡死"。
+    // 被剪枝的目录（系统垃圾目录、junction/symlink）从未被 yield，天然
+    // 不会在这里复活；is_dir() 在现版 std 上只对真目录为 true（reparse
+    // 点不算），所以这里记录的就是真实的目录树边。
+    let mut child_dirs: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
     let walk_t0 = Instant::now();
 
     for entry in walker.into_iter().flatten() {
+        if entry.file_type().is_dir() {
+            // 根条目（depth 0）不记：它的 parent_path 在扫描根之外，记了
+            // 也只是一条不会被查询的垃圾边；真边全部来自根内部的目录项。
+            if entry.depth > 0 {
+                child_dirs
+                    .entry(entry.parent_path().to_path_buf())
+                    .or_default()
+                    .push(entry.path());
+            }
+            continue;
+        }
         if !entry.file_type().is_file() {
             continue;
         }
@@ -238,10 +308,40 @@ where
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
 
+        // files_seen 的自增序 = 消费循环到达序，兼作 top-K 的并列裁决序
+        //（与旧实现 Vec 的到达序一致）；顺带作为进度节流的计数。
+        let total_files = files_seen.fetch_add(1, Ordering::Relaxed) + 1;
+        bytes_seen.fetch_add(size, Ordering::Relaxed);
+
         // attribute to immediate parent (with files list) and walk upward (totals only)
         if let Some(parent) = path.parent() {
             let acc = accs.entry(parent.to_path_buf()).or_default();
-            acc.files.push((file_name, size));
+            // plan §2.2 / 必修#3 + 复核修正：top-K 实时裁剪。堆未满
+            // （len < k）时必须无条件入堆——旧实现全量保留后 sort+take(k)，
+            // 未满时任何文件都可能进前 K；若未满就按"比堆顶大"设门槛，
+            // 到达序里先来的一个大文件会把它之后所有更小文件永久丢掉
+            // （arrivals=[100, 70×10002]、k=500 只剩 1 个，旧实现 500 个）。
+            // 堆满后才驱逐：新文件严格大于堆顶（保留集里最小的）才弹堆顶。
+            // 并列大小时驱逐最晚到的（Reverse(seq)），先到的留下——与旧
+            // 实现稳定排序 + take(k) 的边界并列行为逐项一致。
+            match opts.keep_files_per_dir {
+                None => acc
+                    .files
+                    .push(Reverse((size, Reverse(total_files), file_name))),
+                Some(0) => {}
+                Some(k) => {
+                    if acc.files.len() < k {
+                        acc.files
+                            .push(Reverse((size, Reverse(total_files), file_name)));
+                    } else if let Some(&Reverse((min_size, _, _))) = acc.files.peek() {
+                        if size > min_size {
+                            acc.files.pop();
+                            acc.files
+                                .push(Reverse((size, Reverse(total_files), file_name)));
+                        }
+                    }
+                }
+            }
         }
         let mut cur = path.parent();
         while let Some(dir) = cur {
@@ -256,8 +356,6 @@ where
             cur = dir.parent();
         }
 
-        let total_files = files_seen.fetch_add(1, Ordering::Relaxed) + 1;
-        bytes_seen.fetch_add(size, Ordering::Relaxed);
         // Throttle progress to ~every 5k files to avoid IPC saturation.
         if total_files.wrapping_sub(last_emit.load(Ordering::Relaxed)) >= 5000 {
             last_emit.store(total_files, Ordering::Relaxed);
@@ -288,7 +386,7 @@ where
     });
 
     let build_t0 = Instant::now();
-    let tree = build_tree(&root, &accs, opts.keep_files_per_dir);
+    let tree = build_tree(&root, &accs, &child_dirs);
     stats.build_tree_ms = build_t0.elapsed().as_millis() as u64;
     stats.total_ms = total_t0.elapsed().as_millis() as u64;
     tracing::info!(
@@ -301,7 +399,11 @@ where
     Ok((tree, stats))
 }
 
-fn build_tree(dir: &Path, accs: &HashMap<PathBuf, DirAcc>, keep_files: Option<usize>) -> Node {
+fn build_tree(
+    dir: &Path,
+    accs: &HashMap<PathBuf, DirAcc>,
+    child_dirs: &HashMap<PathBuf, Vec<PathBuf>>,
+) -> Node {
     let acc = accs.get(dir);
     let size = acc.map(|a| a.size).unwrap_or(0);
     let file_count = acc.map(|a| a.file_count).unwrap_or(0);
@@ -329,27 +431,27 @@ fn build_tree(dir: &Path, accs: &HashMap<PathBuf, DirAcc>, keep_files: Option<us
 
     let mut children: Vec<Node> = Vec::new();
 
-    // Subdirectories — recurse. build_tree 用 std::fs::read_dir 重新枚举子目录
-    // （不复用 jwalk 的输出），所以 prune 必须在这里再做一次——否则即便 jwalk
-    // 跳过了 $Recycle.Bin，build_tree 仍会把它列为 dir 节点放进 Node tree，
-    // 前端 fallbackByNameContains 仍会把回收站里的伪 root 当成 app 数据。
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for entry in rd.flatten() {
-            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                if is_pruned_system_dir(&entry.file_name()) {
-                    continue;
-                }
-                children.push(build_tree(&entry.path(), accs, keep_files));
-            }
+    // Subdirectories — plan 必修#2（§2.3）：不再 read_dir 第二趟全盘 IO，
+    // 直接吃消费循环里收集的 child_dirs。语义等价性：
+    // - 系统垃圾目录 / junction 剪枝已在 process_read_dir 生效，被剪目录
+    //   从未被 yield，也就从未进入 child_dirs——不会在这里复活；
+    // - 空目录（无文件、accs.get 落空）也会作为 dir entry 被 yield 并记录，
+    //   照常成 0 字节节点，与旧行为一致；
+    // - 大小降序展示由下方 children.sort 统一保证，与旧实现相同。
+    if let Some(kids) = child_dirs.get(dir) {
+        for child in kids {
+            children.push(build_tree(child, accs, child_dirs));
         }
     }
 
-    // Files — pull the largest from this dir's acc and emit as leaf nodes.
+    // Files — 堆内就是本目录的 top-K（消费循环已实时裁剪，default 500），
+    // 这里直接消费。into_sorted_vec() 按元素 Ord 升序 = Reverse 的 Ord
+    // 升序 = 内层 (size, Reverse(seq), name) 降序 = size 降序、并列按
+    // 到达序升序——与旧实现 sort_by_key(Reverse(size)) 稳定排序的输出
+    // 顺序一致。
     if let Some(a) = acc {
-        let mut files = a.files.clone();
-        files.sort_by_key(|f| std::cmp::Reverse(f.1));
-        let limit = keep_files.unwrap_or(usize::MAX);
-        for (fname, fsize) in files.into_iter().take(limit) {
+        let files = a.files.clone().into_sorted_vec();
+        for Reverse((fsize, _, fname)) in files {
             let fpath = dir.join(&fname);
             children.push(Node {
                 name: fname,
@@ -400,6 +502,56 @@ fn is_drive_root(p: &Path) -> bool {
             && (s.as_bytes()[2] == b'\\' || s.as_bytes()[2] == b'/'))
 }
 
+/// MFT 快路径的卷类型预检决策（#26 MFT 兼容修复）。数据来自
+/// GetVolumeInformationW（文件系统名字符串 / 查询错误码，Win32 取数在
+/// mft::volume_fs_check）；判定本身是纯函数，CI 模拟不了非 NTFS 物理卷，
+/// 单元测试用 mock 字符串输入锁死决策矩阵。
+#[cfg(windows)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum VolumeFsDecision {
+    /// 文件系统名明确为 NTFS → 放行 MFT 快路径。
+    Ntfs,
+    /// BitLocker 未解锁卷：FS 名报 "DEVICE LOCKER"（过滤驱动名，不是真文件
+    /// 系统），或查询直接撞 ACCESS_DENIED。ntfs crate 解不了锁着的卷。
+    BitLockerLocked,
+    /// 其它文件系统（ReFS / exFAT / FAT32 / CDFS…），携带原始名供日志。
+    OtherFs(String),
+    /// 无法判定（查询因无关原因失败、名字为空）→ 仍放行 MFT，catch_unwind
+    /// 兜底；不因信息缺失阉割快路径。
+    Unknown,
+}
+
+/// 纯决策：GetVolumeInformationW 的输出 → 是否走 MFT。与 Win32 取数分离
+/// 才能脱离物理卷做单元测试。
+#[cfg(windows)]
+pub(crate) fn volume_fs_decision(
+    fs_name: Option<&str>,
+    query_error: Option<u32>,
+) -> VolumeFsDecision {
+    // ERROR_ACCESS_DENIED（windows_sys::Win32::Foundation）。值是 ABI 稳定的
+    // Win32 错误码，硬编码让纯函数免引 windows-sys，可在任意平台单测。
+    const ERROR_ACCESS_DENIED: u32 = 5;
+    if query_error == Some(ERROR_ACCESS_DENIED) {
+        // 锁着的 BitLocker 卷连文件系统名都问不出来，只回一个拒绝。
+        return VolumeFsDecision::BitLockerLocked;
+    }
+    match fs_name {
+        None => VolumeFsDecision::Unknown,
+        Some(name) => {
+            let trimmed = name.trim();
+            if trimmed.eq_ignore_ascii_case("DEVICE LOCKER") {
+                VolumeFsDecision::BitLockerLocked
+            } else if trimmed.eq_ignore_ascii_case("NTFS") {
+                VolumeFsDecision::Ntfs
+            } else if trimmed.is_empty() {
+                VolumeFsDecision::Unknown
+            } else {
+                VolumeFsDecision::OtherFs(trimmed.to_string())
+            }
+        }
+    }
+}
+
 /// Pull up to `n` sample paths from a directory, ordered shallowest-first.
 pub fn sample_paths<P: AsRef<Path>>(root: P, n: usize) -> Vec<String> {
     let root = root.as_ref();
@@ -408,6 +560,11 @@ pub fn sample_paths<P: AsRef<Path>>(root: P, n: usize) -> Vec<String> {
         .into_iter()
         .filter_entry(|e| !e.file_type().is_dir() || !is_pruned_system_dir(e.file_name()))
         .filter_map(|e| e.ok())
+        // BlueTidy 纪律（plan §2.4）：junction/symlink 条目绝不作为采样
+        // 路径流出。walkdir 2.5.0 本身不会下钻（handle_entry 的
+        // is_normal_dir = !is_symlink && is_dir），但联接条目本身仍会被
+        // yield，这里从结果流里再拦一道。
+        .filter(|e| !e.file_type().is_symlink())
         .filter(|e| e.file_type().is_file())
         .take(n)
         .map(|e| e.path().to_string_lossy().to_string())
@@ -473,6 +630,127 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    // BlueTidy 纪律（plan §2.4）：junction/symlink 目录绝不能被进入——
+    // 清理类 glob（literal_separator=false 的 **）穿过目录联接会把联接
+    // 目标当成待删内容。用 \\?\ verbatim 前缀绕开 MFT 快路径：本测试只
+    // 针对 walker 链路（process_read_dir 剪枝 + build_tree 复用第一趟
+    // 数据）；MFT 模式按 parent FRN 建树是另一条链路，不在本测试范围。
+    #[cfg(windows)]
+    #[test]
+    fn scan_does_not_enter_junctions() {
+        let dir = tempdir_path();
+        let real = dir.join("real");
+        fs::create_dir_all(&real).unwrap();
+        fs::write(real.join("inside.txt"), b"payload").unwrap();
+
+        let link = dir.join("link");
+        let status = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&real)
+            .status()
+            .expect("spawn cmd for mklink /J");
+        assert!(status.success(), "mklink /J failed: {status}");
+
+        let verbatim_root = PathBuf::from(format!(r"\\?\{}", dir.display()));
+        let node = scan(&verbatim_root).unwrap();
+
+        let mut paths: Vec<String> = Vec::new();
+        collect_paths(&node, &mut paths);
+        let leaked: Vec<&String> = paths
+            .iter()
+            .filter(|p| {
+                let lower = p.to_ascii_lowercase();
+                lower.contains("\\link\\") || lower.ends_with("\\link")
+            })
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "junction `link` leaked into the scan tree: {leaked:?}"
+        );
+        assert_eq!(
+            node.file_count, 1,
+            "junction content must not be counted a second time"
+        );
+        let real_node = node
+            .children
+            .iter()
+            .find(|c| c.name == "real")
+            .expect("`real` subdir missing from tree root");
+        assert!(
+            real_node
+                .children
+                .iter()
+                .any(|c| !c.is_dir && c.name == "inside.txt"),
+            "junction target content must appear exactly once, via its real path"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn collect_paths(node: &Node, out: &mut Vec<String>) {
+        out.push(node.path.clone());
+        for c in &node.children {
+            collect_paths(c, out);
+        }
+    }
+
+    // plan §2.2 / 必修#3（含复核修正）回归：锁死「len<k 无条件入堆」语义。
+    // 复核员复现 case：同目录到达序 [100, 70×10002]、k=500。曾因"未满也按
+    // 比堆顶大设门槛"，先到的 100 成为永久门槛，其后所有 70 被永久丢弃——
+    // 堆里只剩 1 项；正确行为是未满即无条件入堆，最终保留恰好 500 项。
+    // 到达序由 jwalk 并行消费决定、不可控，但本 case 与到达序无关：修复版
+    // 无论顺序如何都恰好保留 500 项（100 要么未满时入堆、要么满堆后 >堆顶
+    // 驱逐一个 70），而门槛 bug 版任何顺序下都只剩 1 项。
+    #[test]
+    fn topk_regression_len_lt_k_admits_all_arrivals() {
+        let dir = tempdir_path();
+        let bulk = dir.join("bulk");
+        fs::create_dir_all(&bulk).unwrap();
+        for i in 0..10002 {
+            fs::write(bulk.join(format!("f{i}.bin")), vec![0u8; 70]).unwrap();
+        }
+        fs::write(bulk.join("big.txt"), vec![0u8; 100]).unwrap();
+
+        let small = dir.join("small");
+        fs::create_dir_all(&small).unwrap();
+        fs::write(small.join("a.txt"), vec![0u8; 100]).unwrap();
+        fs::write(small.join("b.txt"), vec![0u8; 50]).unwrap();
+        fs::write(small.join("c.txt"), vec![0u8; 60]).unwrap();
+
+        // 与 scan_does_not_enter_junctions 相同的 \\?\ verbatim 手法绕开 MFT
+        // 快路径：top-K 堆只存在于 walker 链路，MFT 链路的 breadth cap 会把
+        // 断言带偏。
+        let scan_root = if cfg!(windows) {
+            PathBuf::from(format!(r"\\?\{}", dir.display()))
+        } else {
+            dir.clone()
+        };
+        let node = scan(&scan_root).unwrap();
+
+        let bulk_node = node
+            .children
+            .iter()
+            .find(|c| c.is_dir && c.name == "bulk")
+            .expect("bulk dir missing from tree root");
+        let kept = bulk_node.children.iter().filter(|c| !c.is_dir).count();
+        assert_eq!(
+            kept, 500,
+            "len<k 必须无条件入堆：[100, 70×10002] 在 k=500 下必须保留恰好 500 项（门槛 bug 只剩 1 项）"
+        );
+        // top-K 只裁展示不裁统计。
+        assert_eq!(bulk_node.file_count, 10003);
+        assert_eq!(bulk_node.size, 100 + 10002 * 70);
+
+        let small_node = node
+            .children
+            .iter()
+            .find(|c| c.is_dir && c.name == "small")
+            .expect("small dir missing from tree root");
+        let small_kept = small_node.children.iter().filter(|c| !c.is_dir).count();
+        assert_eq!(small_kept, 3, "目录文件数 < k 时 [100,50,60] 必须全保留");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     fn tempdir_path() -> PathBuf {
         let p = std::env::temp_dir().join(format!(
             "pinkbin-test-{}",
@@ -483,5 +761,49 @@ mod tests {
         ));
         std::fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    // #26 MFT 兼容修复：卷类型预检是纯函数，CI 模拟不了非 NTFS 物理卷，
+    // 这里 mock GetVolumeInformationW 的两类输出（FS 名字符串 / Win32 错误码）
+    // 直接锁死决策矩阵——预检放错了卷，轻则白付一次 panic 降级，重则把
+    // 可扫的卷挡在快路径外。
+    #[cfg(windows)]
+    #[test]
+    fn volume_fs_decision_matrix() {
+        use super::VolumeFsDecision as D;
+
+        // NTFS（大小写不敏感）→ 放行。
+        assert_eq!(super::volume_fs_decision(Some("NTFS"), None), D::Ntfs);
+        assert_eq!(super::volume_fs_decision(Some("ntfs"), None), D::Ntfs);
+        assert_eq!(super::volume_fs_decision(Some(" Ntfs "), None), D::Ntfs);
+
+        // BitLocker 特征一：FS 名 "DEVICE LOCKER"（过滤驱动名，大小写不敏感）。
+        assert_eq!(
+            super::volume_fs_decision(Some("Device Locker"), None),
+            D::BitLockerLocked
+        );
+        // BitLocker 特征二：查询撞 ACCESS_DENIED(5)，此时名字拿不到。
+        assert_eq!(super::volume_fs_decision(None, Some(5)), D::BitLockerLocked);
+        // ACCESS_DENIED 优先于任何名字（防异常组合下误放行）。
+        assert_eq!(
+            super::volume_fs_decision(Some("NTFS"), Some(5)),
+            D::BitLockerLocked
+        );
+
+        // 其它文件系统：ReFS / exFAT 原样带出给日志。
+        assert_eq!(
+            super::volume_fs_decision(Some("ReFS"), None),
+            D::OtherFs("ReFS".into())
+        );
+        assert_eq!(
+            super::volume_fs_decision(Some("exFAT"), None),
+            D::OtherFs("exFAT".into())
+        );
+
+        // 无法判定 → 放行（catch_unwind 兜底）：无关错误（21 = ERROR_NOT_READY）、
+        // 空白名、无名无错。
+        assert_eq!(super::volume_fs_decision(None, Some(21)), D::Unknown);
+        assert_eq!(super::volume_fs_decision(Some("   "), None), D::Unknown);
+        assert_eq!(super::volume_fs_decision(None, None), D::Unknown);
     }
 }
