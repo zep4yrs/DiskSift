@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { hierarchy, treemap, treemapSquarify } from 'd3-hierarchy';
 import type { Node } from '../types';
 import { formatBytes } from '../format';
+import { VERDICT_META, type VerdictEntry } from '../triage-cache';
 
 type Props = {
   node: Node;                       // 当前 treemap 根（可下钻后的子树）
@@ -9,7 +10,11 @@ type Props = {
   height: number;
   onSelect: (path: string) => void;
   selectedPath: string | null;
-  onOpen: (path: string) => void;   // 单击目录块 = 下钻进该目录
+  onOpen: (path: string) => void;   // 双击目录块 = 下钻进该目录（单击让位给选中，spec §2.0）
+  /** 分诊图层 O1（triage-overlay-spec §3）：path → 判定 */
+  verdicts: Map<string, VerdictEntry>;
+  /** 祖先聚合徽标数据源：path → 子树内可清理字节（spec §2.1.1） */
+  cleanableUnder: Map<string, number>;
 };
 
 // slate 渐进中性色板（spec §1 废除粉色板）：--foreground 对 --card 的 10 档
@@ -50,7 +55,7 @@ function fit(s: string, maxW: number, fontSize: number): string {
   return s.slice(0, Math.max(1, end)) + '…';
 }
 
-export function Treemap({ node, width, height, onSelect, selectedPath, onOpen }: Props) {
+export function Treemap({ node, width, height, onSelect, selectedPath, onOpen, verdicts, cleanableUnder }: Props) {
   const layout = useMemo(() => {
     // 性能关键：先把树剪到 2 层再 hierarchy。否则 hierarchy 会遍历整棵扫描树
     // （几十万节点），每次尺寸变化全量重建 = 渲染后持续卡顿的根因。
@@ -92,17 +97,29 @@ export function Treemap({ node, width, height, onSelect, selectedPath, onOpen }:
         const isDir = d.data.is_dir || !!(d.data.children && d.data.children.length);
         const isSelected = d.data.path === selectedPath;
         const fill = colorFor(d.data.name);
+        // ── 分诊图层 O1（triage-overlay-spec §3/§2.1.1）─────────────────
+        const entry = verdicts.get(d.data.path) ?? null;
+        const cleanable = cleanableUnder.get(d.data.path) ?? 0;
+        // 祖先聚合徽标：块自身是 safe 时左缘色条已表意，不再重复挂 pill；
+        // 块太窄放不下也省略（标签优先）。
+        const pillLabel = formatBytes(cleanable);
+        const pillW = 22 + pillLabel.length * 5.6;
+        const showPill = cleanable > 0 && entry?.verdict !== 'safe' && w > pillW + 14;
         return (
           <g
             key={d.data.path}
-            onClick={() => {
-              onSelect(d.data.path);
+            onClick={() => onSelect(d.data.path)}
+            onDoubleClick={() => {
               if (isDir) onOpen(d.data.path);
             }}
             style={{ cursor: isDir ? 'pointer' : 'default' }}
           >
-            {/* 原生 tooltip：完整路径 + 精确大小（截断标签的补偿） */}
-            <title>{`${d.data.path}\n${formatBytes(d.data.size)} · ${d.data.file_count.toLocaleString()} 文件`}</title>
+            {/* 原生 tooltip：完整路径 + 精确大小（截断标签的补偿）+ 判定理由 */}
+            <title>
+              {`${d.data.path}\n${formatBytes(d.data.size)} · ${d.data.file_count.toLocaleString()} 文件${
+                entry ? `\n${VERDICT_META[entry.verdict].label} · ${entry.reason}` : ''
+              }`}
+            </title>
             <rect
               x={x}
               y={y}
@@ -113,16 +130,47 @@ export function Treemap({ node, width, height, onSelect, selectedPath, onOpen }:
               stroke={isSelected ? 'var(--treemap-stroke-selected)' : 'var(--treemap-stroke)'}
               strokeWidth={isSelected ? 2 : 1}
             />
-            {/* 父块标签：画在 16px 标题条内（paddingTop 保证子块不侵入） */}
+            {/* 判定染色（spec §3）：uncertain = 白 + 虚线边；其余 = 左缘 4px 判定色条
+                （不替换尺寸语义；语义色 CSS 变量暗色自适应） */}
+            {entry && entry.verdict === 'uncertain' ? (
+              <rect
+                x={x + 1} y={y + 1} width={Math.max(1, w - 2)} height={Math.max(1, h - 2)}
+                fill="none" stroke={VERDICT_META.uncertain.color} strokeWidth={1.5} strokeDasharray="4 3"
+              />
+            ) : entry ? (
+              <rect x={x} y={y} width={4} height={h} fill={VERDICT_META[entry.verdict].color} />
+            ) : null}
+            {/* 祖先聚合徽标「🟢 X GB」：depth1 画在标题条内右端，depth2 画在块右上角 */}
+            {showPill && (
+              <g className="tm-pill">
+                <rect
+                  className="tm-pill-bg"
+                  x={x + w - pillW - 4}
+                  y={y + (d.depth === 1 ? 2 : 3)}
+                  width={pillW}
+                  height={13}
+                  rx={6.5}
+                />
+                <circle className="tm-pill-dot" cx={x + w - pillW + 3.5} cy={y + (d.depth === 1 ? 8.5 : 9.5)} r={2.8} />
+                <text
+                  className="tm-pill-text"
+                  x={x + w - pillW + 8.5}
+                  y={y + (d.depth === 1 ? 11.8 : 12.8)}
+                >
+                  {pillLabel}
+                </text>
+              </g>
+            )}
+            {/* 父块标签：画在 16px 标题条内（paddingTop 保证子块不侵入）；挂徽标时右侧让位 */}
             {d.depth === 1 && w > 56 && (
               <text x={x + 6} y={y + 12} fill="var(--treemap-ink)" fontSize={10.5} fontWeight={700}>
-                {fit(d.data.name, w, 10.5)}
+                {fit(d.data.name, showPill ? w - pillW - 12 : w, 10.5)}
               </text>
             )}
             {/* 子块标签 */}
             {d.depth === 2 && w > 62 && h > 19 && (
               <text x={x + 6} y={y + 14} fill="var(--treemap-ink)" fontSize={11} fontWeight={700}>
-                {fit(d.data.name, w, 11)}
+                {fit(d.data.name, showPill ? w - pillW - 12 : w, 11)}
               </text>
             )}
             {d.depth === 2 && w > 62 && h > 33 && (

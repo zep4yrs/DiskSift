@@ -54,6 +54,10 @@ export interface AdvisorRequest {
   sample_paths: string[];
   neighbors: string[];
   scaffold_hint?: string | null;
+  /** 分诊图层 O2 反馈通道：如「用户曾忽略此目录的判定」。后端把整个请求
+   *  JSON 作为 prompt，此字段随之到达模型；缺省时不出现（types 镜像见
+   *  crates/advisor/src/lib.rs AdvisorRequest）。 */
+  user_note?: string;
 }
 
 export interface AdvisorResponse {

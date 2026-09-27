@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { api } from './api';
@@ -14,6 +14,8 @@ import { RecordsView } from './components/RecordsView';
 import { Settings } from './components/Settings';
 import { Treemap } from './components/Treemap';
 import { TriageView } from './components/TriageView';
+import { TriageLegend } from './components/TriageLegend';
+import { BlockDetailCard } from './components/BlockDetailCard';
 import { AutoWalk } from './components/AutoWalk';
 import { Splitter } from './components/Splitter';
 import { Logo } from './components/Logo';
@@ -21,6 +23,8 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { Icon } from './components/Icon';
 import { formatBytes } from './format';
 import { loadSettings, isConfigured, ensureApiKey } from './advisorClient';
+import { applyCache, parseCache, serializeCache, useVerdicts, type CachedVerdict } from './triage-cache';
+import { cacheHitFor, pickAiTriageTargets, runAiTriage, FREE_AI_PATHS } from './triage-ai';
 
 // ═══ pinkbin · workbench v2（redesign-spec v2 §2 五区）══════════════════
 // titlebar 35（品牌+呼吸点 · 菜单占位 · 区域三开关 icon-only · 主题切换）
@@ -34,7 +38,7 @@ import { loadSettings, isConfigured, ensureApiKey } from './advisorClient';
 
 // 版本规则（2026-09-27 用户定）：年份后两位.破坏性+1.新功能+1.补丁+1
 // Cargo/tauri 只认三段 semver，第四位补丁段仅在用户可见处展示。
-const APP_VERSION = '26.1.1.0';
+const APP_VERSION = '26.1.2.0';
 
 function isDriveRoot(p: string): boolean {
   // C: / C:\ / C:/  — anything beyond is a subfolder
@@ -338,6 +342,79 @@ export default function App() {
 
 
   const walkThresholdBytes = walkThresholdGB * 1024 ** 3;
+  // ── 分诊图层 O1（triage-overlay-spec §3）：规则染色（scaffold + NEVER_TOUCH + 阈值）──
+  const ruleVerdicts = useVerdicts(root, walkThresholdBytes);
+  // ── O2：判定缓存（triage-cache.json，api.cacheGetAll/ SetAll；§7 决策 1）──
+  // cacheMap = 持久化缓存的单一副本（启动恢复 + 批量判定 + 忽略反馈都写这里）；
+  // cacheRef 供异步批量循环读现值（App 既有 navRef 同款渲染期同步模式）。
+  const [cacheMap, setCacheMap] = useState<Map<string, CachedVerdict>>(new Map());
+  const cacheRef = useRef(cacheMap);
+  cacheRef.current = cacheMap;
+  useEffect(() => {
+    api.cacheGetAll()
+      .then((json) => setCacheMap(parseCache(json)))
+      .catch(() => { /* 读不到缓存就当空表，规则层照常 */ });
+  }, []);
+  const upsertCache = (path: string, entry: CachedVerdict) => {
+    const next = new Map(cacheRef.current);
+    next.set(path, entry);
+    cacheRef.current = next;
+    setCacheMap(next);
+    api.cacheSetAll(serializeCache(next)).catch(() => pushOut('warn', '判定缓存写盘失败（triage-cache.json）'));
+  };
+  // ── O2：AI 批量分诊（spec §6 串行可停 / §7 决策 2 半自动确认 + 决策 4 免费接入引导）──
+  type AiPhase = 'idle' | 'confirm' | 'running';
+  const [aiPhase, setAiPhase] = useState<AiPhase>('idle');
+  const [aiProgress, setAiProgress] = useState({ done: 0, total: 0 });
+  const aiStopRef = useRef(false);
+  const [showAiGuide, setShowAiGuide] = useState(false);
+  const [settingsPrefill, setSettingsPrefill] = useState<{ baseUrl: string; model: string } | null>(null);
+  // AI 分诊候选（spec §2：无规则判定且 ≥ 阈值的未识别目录，体积降序）
+  const aiTargets = useMemo(
+    () => (root ? pickAiTriageTargets(root, walkThresholdBytes) : []),
+    [root, walkThresholdBytes],
+  );
+  const aiUncachedCount = useMemo(
+    () => aiTargets.filter((t) => !cacheHitFor(t, cacheMap)).length,
+    [aiTargets, cacheMap],
+  );
+  const startAiTriage = () => {
+    if (aiTargets.length === 0) return;
+    aiStopRef.current = false;
+    setAiProgress({ done: 0, total: aiTargets.length });
+    setAiPhase('running');
+    pushOut('info', `AI 分诊开始：${aiTargets.length} 个目录 · 串行执行（只发目录元数据，不读文件内容）`);
+    void runAiTriage(aiTargets, cacheRef.current, {
+      onVerdict: (path, entry) => upsertCache(path, entry),
+      onProgress: (done, total) => setAiProgress({ done, total }),
+      shouldStop: () => aiStopRef.current,
+    }).then((out) => {
+      setAiPhase('idle');
+      if (out.failed > 0) pushOut('error', `AI 分诊结束：新增 ${out.applied}（其中缓存复用 ${out.skipped}）· 失败 ${out.failed}${out.stopped ? ' · 已停止' : ''} · 首个错误：${out.errors[0]}`);
+      else pushOut('info', `AI 分诊结束：新增 ${out.applied}（其中缓存复用 ${out.skipped}）· 失败 0${out.stopped ? ' · 已停止' : ''}`);
+    });
+  };
+  const stopAiTriage = () => { aiStopRef.current = true; };
+  // 新扫描替换 root：在途批量立即叫停（旧目标的判定即使落盘也会被签名校验挡住，但不该继续花钱）
+  useEffect(() => { aiStopRef.current = true; }, [root]);
+  // 忽略反馈闭环（spec §5.3）：verdict=user-ignored 入缓存；下次 AI prompt 附提示
+  const ignoreVerdict = (path: string) => {
+    const n = root ? findNodeByPath(root, path) : null;
+    if (!n) return;
+    upsertCache(path, {
+      verdict: 'user-ignored',
+      bytes: n.size, fileCount: n.file_count,
+      reason: '用户忽略了此前的 AI 判定',
+      source: 'user', ts: Date.now(),
+    });
+    pushOut('info', `已忽略 ${n.name} 的 AI 判定（反馈只存本机）`);
+  };
+  // 合并索引：规则 + 缓存/AI（签名校验、规则 safe/system 优先、user-ignored 不上色）
+  // ——每条 AI 判定落地 upsertCache → cacheMap 变化 → 这里重算 → 图/树/卡渐进上色
+  const verdicts = useMemo(
+    () => (root ? applyCache(ruleVerdicts, root, cacheMap) : ruleVerdicts),
+    [ruleVerdicts, root, cacheMap],
+  );
   // 巡查进行中（队列未空且还有未完成的项）；空队列或走完后回到 TriageView。
   const walkActive = walkQueue.length > 0 && walkIndex < walkQueue.length;
 
@@ -463,6 +540,13 @@ export default function App() {
       const mapNode = matchesRoot ? (mapRoots[tab.id] ?? root) : null;
       const segs = (mapNode?.path ?? tab.crumb ?? '').split(/[\\/]/).filter(Boolean);
       let acc = '';
+      // 详情卡数据（spec §2.0：单击块 = 选中 → 卡片）。选中即当前空间图根时
+      // （刚下钻/刚扫描完）不展示——信息已在面包屑行，卡片纯属遮挡；
+      // 选中路径不在当前 tab 子树内（另一盘的 tab）同样不展示。
+      const detailNode = root && selectedPath ? findNodeByPath(root, selectedPath) : null;
+      const inMapSubtree = !!detailNode && !!mapNode &&
+        (detailNode.path === mapNode.path || detailNode.path.startsWith(mapNode.path + (mapNode.path.endsWith('\\') ? '' : '\\')));
+      const showDetail = !!(mapNode && detailNode && detailNode.path !== mapNode.path && inMapSubtree);
       return (
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           <div className="crumb">
@@ -483,6 +567,36 @@ export default function App() {
                 })
               : <span className="path-clip">{tab.crumb ?? tab.title}</span>}
             <div className="grow" />
+            {/* AI 批量分诊（spec §6/§7：半自动确认 + 串行可停 + 未配置走免费接入引导） */}
+            {aiPhase === 'running' ? (
+              <span className="ai-triage-strip">
+                <span className="ai-triage-progress" title="AI 串行分诊中 · 只发目录元数据">
+                  AI 分诊 {aiProgress.done}/{aiProgress.total}
+                </span>
+                <button className="btn ghost" onClick={stopAiTriage}>停止</button>
+              </span>
+            ) : aiPhase === 'confirm' ? (
+              <span className="ai-triage-strip">
+                <span className="ai-triage-progress" title="未识别且 ≥ 巡查阈值的目录 · 缓存命中不重复请求">
+                  AI 可分诊 {aiTargets.length} 个未知目录 · 约 {aiUncachedCount} 次请求
+                </span>
+                <button className="btn primary" onClick={startAiTriage} disabled={aiUncachedCount === 0 && aiTargets.length === 0}>开始</button>
+                <button className="btn ghost" onClick={() => setAiPhase('idle')}>取消</button>
+              </span>
+            ) : (
+              <button
+                className="btn ghost ai-triage-btn"
+                disabled={!root}
+                title={advisorTag
+                  ? `对 ${aiTargets.length} 个未识别目录逐个问 AI（约 ${aiUncachedCount} 次请求）`
+                  : '还没有配置 AI — 点开有免费接入方案'}
+                onClick={() => (advisorTag ? setAiPhase('confirm') : setShowAiGuide(true))}
+              >
+                <Icon name="sparkles" size={12} /> AI 分诊
+              </button>
+            )}
+            {/* 分诊图例（triage-overlay-spec §3：图例条常驻 tab 工具行） */}
+            <TriageLegend />
             {mapNode && (
               <span className="sz">{formatBytes(mapNode.size)} · {mapNode.file_count.toLocaleString()} 文件</span>
             )}
@@ -496,6 +610,8 @@ export default function App() {
                   height={treemapSize.h}
                   onSelect={select}
                   selectedPath={selectedPath}
+                  verdicts={verdicts.verdicts}
+                  cleanableUnder={verdicts.cleanableUnder}
                   onOpen={(p) => {
                     const n = findNodeByPath(root, p);
                     if (n) drillTo(tab.id, n);
@@ -507,6 +623,24 @@ export default function App() {
                 <div className="empty-title">还没扫描</div>
                 <div className="empty-sub">{tab.crumb ?? '该盘'} 还没有扫描数据；回入口页选择路径并点「扫描」。</div>
               </div>
+            )}
+            {showDetail && detailNode && (
+              <ErrorBoundary fallbackLabel="详情卡渲染失败">
+                <BlockDetailCard
+                  node={detailNode}
+                  entry={verdicts.verdicts.get(detailNode.path) ?? null}
+                  cleanableBytes={verdicts.cleanableUnder.get(detailNode.path) ?? 0}
+                  canEnter={detailNode.is_dir && (detailNode.children?.length ?? 0) > 0}
+                  canIgnore={verdicts.verdicts.get(detailNode.path)?.source === 'ai'}
+                  onIgnore={() => ignoreVerdict(detailNode.path)}
+                  scriptName={detailNode.scaffold_id
+                    ? scaffolds.find((sc) => sc.id === detailNode.scaffold_id)?.name ?? null
+                    : null}
+                  onJumpToScript={(name) => openTab('script', name)}
+                  onEnter={() => drillTo(tab.id, detailNode)}
+                  onClose={() => select(null)}
+                />
+              </ErrorBoundary>
             )}
           </div>
         </div>
@@ -655,6 +789,7 @@ export default function App() {
             selectedPath={selectedPath}
             onSelect={selectFromTree}
             focusPath={treeFocusPath}
+            verdicts={verdicts.verdicts}
           />
         ) : (
           <div className="side-info">
@@ -983,7 +1118,48 @@ export default function App() {
         <span>v{APP_VERSION}</span>
       </footer>
 
-      {showSettings && <Settings onClose={() => { setShowSettings(false); refreshAdvisorTag(); }} />}
+      {/* 免费 AI 接入引导（triage-overlay-spec §7 决策 4）：三条免费路径，点「去设置」
+          直达设置页并预填 Base URL/Model。隐私口径与 Settings 一致：只发目录元数据。 */}
+      {showAiGuide && (
+        <div className="modal-bg" onClick={() => setShowAiGuide(false)}>
+          <div className="card ai-guide" onClick={(e) => e.stopPropagation()}>
+            <span className="sec-title">接入免费 AI，开启批量分诊</span>
+            <p className="muted">
+              还没有配置 AI。三个免费方案任选其一——分诊只会把目录元数据（路径、大小、文件数、
+              扩展名分布、抽样路径）发给 AI，<b>绝不读取文件内容</b>。
+            </p>
+            {FREE_AI_PATHS.map((p) => (
+              <div key={p.key} className="ai-guide-row">
+                <div className="ai-guide-info">
+                  <b>{p.label}</b>
+                  <div className="muted small">{p.note}</div>
+                  <div className="ai-guide-ep mono-num">{p.baseUrl} · {p.model}</div>
+                </div>
+                <button
+                  className="btn"
+                  onClick={() => {
+                    setSettingsPrefill({ baseUrl: p.baseUrl, model: p.model });
+                    setShowAiGuide(false);
+                    setShowSettings(true);
+                  }}
+                >
+                  去设置
+                </button>
+              </div>
+            ))}
+            <div className="overview-actions">
+              <button className="btn ghost" onClick={() => setShowAiGuide(false)}>稍后再说</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSettings && (
+        <Settings
+          onClose={() => { setShowSettings(false); setSettingsPrefill(null); refreshAdvisorTag(); }}
+          prefill={settingsPrefill}
+        />
+      )}
     </div>
   );
 }

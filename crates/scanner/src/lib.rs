@@ -752,14 +752,26 @@ mod tests {
     }
 
     fn tempdir_path() -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        // 只用时间戳命名会在 libtest 并行起线程时互踩：Windows 的 SystemTime
+        // 来自 FILETIME，粒度 100ns（as_nanos 恒为 100 的倍数），两个测试在
+        // 同一量子内各拿同一时间戳 → 同名 fixture 目录、彼此的文件混进对方
+        // 断言（实测 scans_temp_dir 的 size 多 1 字节、trash 测试 file_count
+        // 多 2，恰好是对方 fixture 的文件）。pid + 进程内序号保证同一进程内
+        // 绝不重名，nanos 保证跨进程/跨运行不与残留目录相撞。
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
         let p = std::env::temp_dir().join(format!(
-            "pinkbin-test-{}",
+            "pinkbin-test-{}-{}-{}",
+            std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            seq,
         ));
-        std::fs::create_dir_all(&p).unwrap();
+        // create_dir（而非 create_dir_all）：重名即刻报错，而不是静默共享目录。
+        std::fs::create_dir(&p).unwrap();
         p
     }
 

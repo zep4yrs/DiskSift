@@ -80,7 +80,9 @@ const HIGH_RISK_SCAFFOLDS = new Set([
   'windows-old', 'node-modules', 'recycle-bin',
 ]);
 
-function isNeverTouch(path: string): boolean {
+// 导出给 triage-cache.ts（分诊图层 O1）复用：同一份 NEVER_TOUCH 清单，
+// 保证分诊列表 / 空间图 / 树视图三处判定一致（triage-overlay-spec §4）。
+export function isNeverTouch(path: string): boolean {
   const norm = path.replace(/\\/g, '/');
   // anything directly under user "personal content" dirs is system-protected
   if (USER_CONTENT_FRAGS.some(f => norm.includes(f))) return true;
@@ -125,7 +127,8 @@ export function triage(
   };
 }
 
-function classify(n: Node, scaffoldById: Map<string, Scaffold>): Triaged {
+// 导出给 triage-cache.ts 复用（spec §3「规则先行」：scaffold 命中零成本即时判定）
+export function classify(n: Node, scaffoldById: Map<string, Scaffold>): Triaged {
   const sid = n.scaffold_id ?? null;
 
   if (isNeverTouch(n.path)) {
