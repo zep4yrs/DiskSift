@@ -1,0 +1,115 @@
+# pip 清理 scaffold —— 设计依据 docs/research/python-dev-cleanup-landscape.md
+# §1.4（pip 残留）+ §1.5 对 `scaffolds/pip.toml` 的改动清单（不做：
+# ~/.local/lib/python*/site-packages——写进 disclaimer 引导 pip uninstall）。
+#
+# 2026-09-27 复核修正：原 build-temp scope（P0）已整体迁移至 scaffolds/python-tmp.toml
+# —— scope 匹配总是以 detect 命中的目录为扫描根（CleanupModal.tsx 把每个 m.path
+# 传给 scopeSizes/executeScope），而 %TEMP% 不在本文件任何 detect 根的子树内，
+# 根锚定的 {%TEMP%/pip-*,...} 运行时永远零命中。能力搬家而非删除，见 python-tmp.toml。
+#
+# apps/desktop/src/mocks.ts 里的 legacy 定义（detect 只有 **/pip/cache，scope 用
+# **/http/**、**/wheels/** 裸 glob 一刀切）只当路径参考，没有拷贝：裸 **/wheels/**
+# 会命中全机任意叫 wheels 的目录。本文件所有 scope 都锚定 **/pip/<桶>，并按平台
+# 差异同时覆盖 Windows 的 pip/cache/<桶> 与 Linux/macOS 的 pip/<桶> 两级布局。
+#
+# 2026-09-27 本机实测（pip 22.3.1 / Python 3.10.10 + 3.13.13，Windows 11，
+# 只列目录名，未读文件内容）：
+#   pip cache dir   → c:/users/localuser/appdata/local/pip/cache
+#   cache/ 一级     → { http, http-v2, selfcheck, wheels }
+#   http/、http-v2/ → 1 位 hex 逐级分片，叶子是单个无扩展名文件
+#   wheels/         → <2hex>/<2hex>/<2hex>/<40hex>/ 叶子目录，内含 *.whl +
+#                     origin.json（目录名实测，文件内容未读）
+#   selfcheck/      → 40 位 hex 单文件（版本自检缓存，KB 级）
+#   %TEMP% 一级     → 本次勘测无 pip-* 残留（残留是间歇性泄漏，非常态存在）
+#
+# 实测修正（相对 research §1.4.2 草案）：
+# - 现代 pip（≥23.3）的 HTTP 缓存桶是 http-v2/，legacy pip 是 http/——两个都留，
+#   多 Python 共存时同一台机器两套并存（本机即如此）。
+# - 草案里的 ${TMPDIR}/pip-* 分支不采纳：TMPDIR 未设置时 shellexpand 整体回退、
+#   变成死分支，且模板的 %VAR%-only 测试 expand() 无法对其断言；Linux/macOS 用
+#   /tmp、/var/tmp 字面量覆盖（自定义 TMPDIR 的用户不在覆盖范围，见 disclaimer）。
+# - selfcheck/ 不进 scope：KB 级、pip 自维护，`pip cache purge` 也不清它。
+#
+# lint:  cargo run -p pinkbin-scaffold-lint -- scaffolds/pip.toml
+# test:  cargo test -p pinkbin-scaffold --test pip_safety
+
+id          = "pip"
+name        = "pip cache"
+homepage    = "https://pip.pypa.io/"
+# medium：不是纯日志类缓存——删掉后下次安装要重新下载，wheel 桶还要在本地
+# 重新构建（PyPI 无现成 wheel 的包需要编译器/构建链）。与 conda.toml（包缓存
+# 同评 medium）一致。
+risk        = "medium"
+disclaimer  = """\
+等同于 pip cache purge 的文件系统版：清 HTTP 下载缓存（http / http-v2）与本地构建的 \
+wheel 缓存。%TEMP% 里 pip 没来得及自清的 pip-* 构建临时残留已迁移至 python-tmp 卡片，\
+本卡片不再覆盖 %TEMP%。\
+HTTP 缓存删掉后，下次 pip install 会重新下载对应文件；wheel 缓存删掉后，PyPI 上没有 \
+现成 wheel 的包要在本地重新构建（可能需要编译器/构建链）。\
+绝不删：已安装的包本体（任何 site-packages / dist-packages，含 pip install --user 的 \
+~/.local 与 %APPDATA%/Python——要卸载请用 pip uninstall）、pip 配置与凭据（pip.ini / \
+pip.conf / .pypirc，以及环境变量里的 index token）、virtualenv 与 conda env 本体、\
+pip 缓存根下的 selfcheck、任何项目源码与 .git。\
+只覆盖默认缓存位置与名为 pip/ 的缓存根；PIP_CACHE_DIR 指到任意自定义名字的路径时 \
+检测不到。删除进行中的 pip install 可能因文件被占用而失败，重跑即可。\
+所有删除走系统回收站，可还原。\
+"""
+
+# ---------------------------------------------------------------------------
+# detect：三大平台默认路径 + ** 通配兜底（兼容改盘 / 重定位到仍叫 pip/cache 的
+# 位置）。XDG_CACHE_HOME 自定义且根不叫 .cache 的情况靠 [match] 兜（见下）。
+# ---------------------------------------------------------------------------
+detect = [
+  "%LOCALAPPDATA%/pip/cache",
+  "${HOME}/.cache/pip",
+  "${HOME}/Library/Caches/pip",
+  "**/pip/cache",
+  "**/.cache/pip",
+]
+
+# 最后一道兜底：PIP_CACHE_DIR 指到任意名字的目录。基名含 "pip" 且必须真长得像
+# 缓存根（有 cache/ 子目录）才标。"pip" 是短片段，pipx / pipenv 项目目录会误标
+# ——代价只是一张零命中的空卡片：scope glob 锚定 <pip 根>/<桶> 两级，误标不会
+# 多删东西。注意 Linux 默认根 ~/.cache/pip 没有 cache/ 子目录，这条兜底覆盖不到
+# 它——但该路径已被 detect 的 ${HOME}/.cache/pip 直接覆盖。
+[match]
+name_contains   = ["pip"]
+must_have_child = ["cache"]
+
+# ============================================================================
+# 桶锚定形态：**/pip/{cache/<桶>,<桶>}——前者覆盖 Windows 默认布局
+# （%LOCALAPPDATA%/pip/cache/<桶>），后者覆盖 Linux/macOS 布局（~/.cache/pip/<桶>、
+# ~/Library/Caches/pip/<桶>）以及任何名叫 pip/ 的缓存根直挂桶的变体。同一桶的两
+# 条分支指向不同路径，互斥、不会双计。
+# ============================================================================
+
+# HTTP 缓存用 directory 粒度整桶 recycle（= `pip cache purge` 对 http 部分的语义）：
+# http/、http-v2/ 是几十万级 hex 分片小文件（本机实测叶子是单文件），file-by-file
+# 会产生海量回收站记录（理由同 conda.toml 的 pkgs/cache）。桶目录的 mtime 每次
+# install 都刷新，days 过滤在桶级没有意义——prompt 用 none（全量清）。
+[[scope]]
+id                  = "http-cache"
+label               = "HTTP 下载缓存（http / http-v2，等同 pip cache purge）"
+glob                = "**/pip/{cache/http,cache/http-v2,http,http-v2}"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+# 唯一 file 粒度的桶：叶子目录里每个 *.whl 对应一次本地 sdist 构建（+ origin.json
+# 元数据），总量通常几十~几百个文件，逐文件 recycle 可接受；且 wheel 的 mtime =
+# 构建/下载时间，days 保留才有意义。glob 带 /** 只清内容不整桶——30 天内构建过的
+# wheel 保留，更早的重装时重建（见 disclaimer 的编译链提醒）。
+[[scope]]
+id                  = "wheels"
+label               = "本地构建的 wheel 缓存（重装需重新构建）"
+glob                = "**/pip/{cache/wheels,wheels}/**"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "file"
+prompt              = { kind = "days", default = 30, label = "保留最近多少天" }
+
+# research §1.4.2 的 build-temp（P0）已迁移至 scaffolds/python-tmp.toml：scope 以
+# detect 根为扫描根，%TEMP% 不在本文件任何 detect 根的子树内，根锚定 glob 运行时
+# 永远零命中；python-tmp 的 detect 覆盖临时目录本身，能力等价搬家（recycle、
+# directory 粒度、prompt none 均保持）。

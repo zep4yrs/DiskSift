@@ -8,23 +8,19 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
 import { CleanupModal } from './CleanupModal';
 import { SteamInspectorModal } from './SteamInspectorModal';
+import { Icon } from './Icon';
 
-const FEATURED_IDS = [
+export const FEATURED_IDS = [
   'wechat-pc',
   'conda',
 ];
-
-const ICONS: Record<string, string> = {
-  'wechat-pc': '💬',
-  'conda':     '🐍',
-};
 
 /// Collect every top-level node tagged with `scaffoldId`. We deliberately
 /// don't recurse into a subtree that already matched — a single scaffold
 /// rarely re-tags itself deeper, and skipping the descent keeps walks under
 /// each match disjoint so scope_sizes aggregation can't double-count the
 /// same files.
-function findAllMatchesByScaffold(root: Node | null, scaffoldId: string): Node[] {
+export function findAllMatchesByScaffold(root: Node | null, scaffoldId: string): Node[] {
   if (!root) return [];
   const out: Node[] = [];
   const dfs = (n: Node) => {
@@ -38,7 +34,7 @@ function findAllMatchesByScaffold(root: Node | null, scaffoldId: string): Node[]
   return out;
 }
 
-function fallbackByNameContains(root: Node | null, sc: Scaffold): Node | null {
+export function fallbackByNameContains(root: Node | null, sc: Scaffold): Node | null {
   const fragments = (sc.match?.name_contains ?? []).map((s) => s.toLowerCase());
   if (fragments.length === 0 || !root) return null;
   const dfs = (n: Node | null): Node | null => {
@@ -54,48 +50,56 @@ function fallbackByNameContains(root: Node | null, sc: Scaffold): Node | null {
   return dfs(root);
 }
 
-interface CardData {
+export interface CardData {
   scaffold: Scaffold;
   matches: Node[];
   totalSize: number;
   totalFiles: number;
 }
 
-export function Studio() {
+/// 检测态聚合（Studio 拆解时抽出，逻辑不动）：编辑区大卡片与侧栏精简列表
+/// 共用这一份检测/排序/合计逻辑，避免两处各算各的出现口径不一致。
+export function buildScaffoldCards(root: Node | null, scaffolds: Scaffold[]): CardData[] {
+  const items: CardData[] = scaffolds.map((sc) => {
+    let matches = findAllMatchesByScaffold(root, sc.id);
+    if (matches.length === 0) {
+      const fb = fallbackByNameContains(root, sc);
+      if (fb) matches = [fb];
+    }
+    matches.sort((a, b) => b.size - a.size);
+    const totalSize = matches.reduce((s, m) => s + m.size, 0);
+    const totalFiles = matches.reduce((s, m) => s + m.file_count, 0);
+    return { scaffold: sc, matches, totalSize, totalFiles };
+  });
+  items.sort((a, b) => {
+    const aDet = a.matches.length > 0;
+    const bDet = b.matches.length > 0;
+    if (aDet && !bDet) return -1;
+    if (!aDet && bDet) return 1;
+    if (aDet && bDet) return b.totalSize - a.totalSize;
+    return a.scaffold.name.localeCompare(b.scaffold.name);
+  });
+  return items;
+}
+
+export function Studio({ focusId }: { focusId?: string }) {
   const root = useStore((s) => s.root);
   const scaffolds = useStore((s) => s.scaffolds);
   const requestStudio = useStore((s) => s.requestStudio);
 
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // v2（spec §4 脚本详情 tab）：focusId = 从侧栏脚本卡片点进来的脚手架 id，
+  // 该卡片初始即展开（检测详情 / CleanupModal 入口都还在卡片里，逻辑不动）。
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(focusId ? [focusId] : []));
   const [openTool, setOpenTool] = useState<null | 'steam-inspector'>(null);
 
   const hidden = (() => {
     try { return localStorage.getItem('pinkbin.hideStudio') === '1'; } catch { return false; }
   })();
 
-  const allCards: CardData[] = useMemo(() => {
-    if (hidden) return [];
-    const items: CardData[] = scaffolds.map((sc) => {
-      let matches = findAllMatchesByScaffold(root, sc.id);
-      if (matches.length === 0) {
-        const fb = fallbackByNameContains(root, sc);
-        if (fb) matches = [fb];
-      }
-      matches.sort((a, b) => b.size - a.size);
-      const totalSize = matches.reduce((s, m) => s + m.size, 0);
-      const totalFiles = matches.reduce((s, m) => s + m.file_count, 0);
-      return { scaffold: sc, matches, totalSize, totalFiles };
-    });
-    items.sort((a, b) => {
-      const aDet = a.matches.length > 0;
-      const bDet = b.matches.length > 0;
-      if (aDet && !bDet) return -1;
-      if (!aDet && bDet) return 1;
-      if (aDet && bDet) return b.totalSize - a.totalSize;
-      return a.scaffold.name.localeCompare(b.scaffold.name);
-    });
-    return items;
-  }, [scaffolds, root, hidden]);
+  const allCards: CardData[] = useMemo(
+    () => (hidden ? [] : buildScaffoldCards(root, scaffolds)),
+    [root, scaffolds, hidden],
+  );
 
   if (hidden) {
     return (
@@ -244,7 +248,7 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
         title={sc.disclaimer}
       >
         <Caret size={14} className="studio-caret" />
-        <div className="studio-card-icon">{ICONS[sc.id] ?? '🧹'}</div>
+        <div className="studio-card-icon"><Icon name="package" size={18} /></div>
         <div className="studio-card-body">
           <div className="studio-card-name">{sc.name}</div>
           <div className="studio-card-meta">
@@ -323,7 +327,7 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
                         onContextMenu={(e) => openCtx(e, c.path)}
                         title={c.path + '  ·  右键查看选项'}
                       >
-                        <span className="studio-child-name">{c.is_dir ? '📁' : '📄'} {c.name}</span>
+                        <span className="studio-child-name" style={{display:"inline-flex",alignItems:"center",gap:5}}><Icon name={c.is_dir ? 'folder' : 'file'} size={12} /> {c.name}</span>
                         <span className="mono-num">{formatBytes(c.size)}</span>
                       </li>
                     ))}

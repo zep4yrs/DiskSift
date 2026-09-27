@@ -7,6 +7,7 @@ import { isTauri } from '../env';
 import { useStore } from '../store';
 import { formatBytes } from '../format';
 import { freeChat, overviewChat } from '../advisorClient';
+import type { ChatHistoryTurn } from '../advisorClient';
 import type { Node, AdvisorResponse, Scaffold } from '../types';
 
 function uid() {
@@ -70,6 +71,9 @@ export function ChatPanel() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const overviewFiredFor = useRef<string | null>(null);
+  // 未配置报错去重用：读最新 turns（闭包里的 chat.turns 会过期）
+  const turnsRef = useRef(chat.turns);
+  turnsRef.current = chat.turns;
 
   const node = chat.node;
 
@@ -199,10 +203,25 @@ export function ChatPanel() {
       const reply = await overviewChat(summary);
       patchTurn(turnId, { text: reply, pending: false });
     } catch (e) {
-      patchTurn(turnId, {
-        text: `（AI 总览失败：${String(e)}）\n你可以从左边把任意文件夹/文件拖进来问。`,
-        pending: false,
-      });
+      const msg = String(e);
+      // AI 未配置的失败每次扫描都重发 = 面板里刷屏重复报错：
+      // 只在首次给出引导文案，后续扫描以空文本收场（不新增气泡）。
+      if (msg.includes('未配置')) {
+        const already = turnsRef.current.some(
+          (t) => t.role === 'assistant' && t.text.includes('AI 还没配置'),
+        );
+        patchTurn(turnId, {
+          text: already
+            ? ''
+            : 'AI 还没配置：点右上角 ⚙ 填一个 API key（或本地 Ollama）后，扫描完成会自动生成整体解析。',
+          pending: false,
+        });
+      } else {
+        patchTurn(turnId, {
+          text: `（AI 总览失败：${msg}）\n你可以从左边把任意文件夹/文件拖进来问。`,
+          pending: false,
+        });
+      }
     } finally {
       setBusy(false);
     }
@@ -221,6 +240,13 @@ export function ChatPanel() {
     const dropDesc = drops.length > 0 ? `（关于：${drops.map((d) => d.path).join('、')}）` : '';
     const imgDesc = images.length > 0 ? `（带 ${images.length} 张图片）` : '';
     const userText = [text, dropDesc, imgDesc].filter(Boolean).join('\n');
+    // 多轮上下文：只带已完成的 user/assistant 轮（system 通知、pending 占位不进
+    // 历史），最多取最近 20 轮控制 token。在 push 当前消息之前取，保证当前这条
+    // 不算在历史里。
+    const history: ChatHistoryTurn[] = chat.turns
+      .filter((t) => !t.pending && t.role !== 'system')
+      .slice(-20)
+      .map((t) => ({ role: t.role as ChatHistoryTurn['role'], text: t.text }));
     pushTurn({ id: uid(), role: 'user', text: userText });
     setBusy(true);
     const turnId = uid();
@@ -245,6 +271,7 @@ export function ChatPanel() {
         contextLine,
         text || (images.length > 0 ? '看看这张图，告诉我是什么、能不能删。' : '这些是什么？能不能删？'),
         images.length > 0 ? images.map((i) => ({ dataUrl: i.dataUrl, mimeType: i.mimeType })) : undefined,
+        history,
       );
       patchTurn(turnId, { text: reply, pending: false });
     } catch (e) {
@@ -335,7 +362,7 @@ export function ChatPanel() {
         <Sparkles size={15} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="chat-title">
-            {root ? (root.name || root.path) : 'Pinkbin AI'}
+            {root ? (root.name || root.path) : 'DiskSift AI'}
           </div>
           <div className="chat-sub">
             {root
@@ -352,7 +379,7 @@ export function ChatPanel() {
         {empty && !root && (
           <div className="chat-hero">
             <MessageSquare size={32} />
-            <h3>Pinkbin AI</h3>
+            <h3>DiskSift AI</h3>
             <p>选一个磁盘 → 点扫描 → AI 自动给整体解析。<br />扫完之后，可以把左边的任意文件 / 文件夹拖进来问。</p>
             {!isTauri && <p className="muted">浏览器预览模式：扫描数据是模拟的，但 AI 会走真实接口。</p>}
           </div>
@@ -383,56 +410,44 @@ export function ChatPanel() {
         {chat.busy && <div className="chat-typing">AI 正在打字…</div>}
       </div>
 
+      {/* Copilot 式输入区：一体化圆角容器（chips + 无框 textarea + 工具行）+ 底部细提示 */}
       <div className="chat-input-wrap">
-        {pendingDrops.length > 0 && (
-          <div className="chat-pills">
-            {pendingDrops.map((d) => (
-              <span key={d.path} className="chat-pill" title={d.path}>
-                {d.path.endsWith(d.name) && d.path !== d.name ? <Folder size={11} /> : <File size={11} />}
-                {d.name}
-                <button onClick={() => setPendingDrops((prev) => prev.filter((p) => p.path !== d.path))}><X size={11} /></button>
-              </span>
-            ))}
-          </div>
-        )}
-        {pendingImages.length > 0 && (
-          <div className="chat-image-pills">
-            {pendingImages.map((img) => (
-              <span key={img.id} className="chat-image-pill" title={img.name}>
-                <img src={img.dataUrl} alt={img.name} />
-                <button
-                  type="button"
-                  onClick={() => setPendingImages((prev) => prev.filter((p) => p.id !== img.id))}
-                ><X size={11} /></button>
-              </span>
-            ))}
-          </div>
-        )}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          style={{ display: 'none' }}
-          onChange={async (e) => {
-            const files = Array.from(e.target.files ?? []);
-            for (const f of files) await addImageFile(f);
-            if (fileInputRef.current) fileInputRef.current.value = '';
-          }}
-        />
-        <div className="chat-input">
-          <button
-            type="button"
-            className="ghost icon chat-attach"
-            onClick={() => fileInputRef.current?.click()}
-            title="加图片（也可以粘贴/拖进来）"
-            disabled={chat.busy}
-          >
-            <ImagePlus size={15} />
-          </button>
+        <div className="chat-input-box">
+          {(pendingDrops.length > 0 || pendingImages.length > 0) && (
+            <div className="chat-pills">
+              {pendingDrops.map((d) => (
+                <span key={d.path} className="chat-pill" title={d.path}>
+                  {d.path.endsWith(d.name) && d.path !== d.name ? <Folder size={11} /> : <File size={11} />}
+                  {d.name}
+                  <button onClick={() => setPendingDrops((prev) => prev.filter((p) => p.path !== d.path))}><X size={11} /></button>
+                </span>
+              ))}
+              {pendingImages.map((img) => (
+                <span key={img.id} className="chat-image-pill" title={img.name}>
+                  <img src={img.dataUrl} alt={img.name} />
+                  <button
+                    type="button"
+                    onClick={() => setPendingImages((prev) => prev.filter((p) => p.id !== img.id))}
+                  ><X size={11} /></button>
+                </span>
+              ))}
+            </div>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: 'none' }}
+            onChange={async (e) => {
+              const files = Array.from(e.target.files ?? []);
+              for (const f of files) await addImageFile(f);
+              if (fileInputRef.current) fileInputRef.current.value = '';
+            }}
+          />
           <textarea
             rows={2}
-            placeholder={root ? '问 AI：这是什么？能删吗？把文件 / 图片拖进来…（图片粘贴也行）' : '先选一个磁盘开始扫描，或贴张图片直接问'}
+            placeholder={root ? '问 AI：这是什么？能删吗？' : '先选一个磁盘开始扫描，或贴张图片直接问'}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onPaste={onPaste}
@@ -444,17 +459,33 @@ export function ChatPanel() {
             }}
             disabled={!root && pendingImages.length === 0}
           />
-          <button
-            className="primary"
-            onClick={askFollowUp}
-            disabled={
-              (!input.trim() && pendingDrops.length === 0 && pendingImages.length === 0) ||
-              chat.busy ||
-              (!root && pendingImages.length === 0)
-            }
-          >
-            <Send size={14} /> 发送
-          </button>
+          <div className="chat-input-tools">
+            <button
+              type="button"
+              className="tool-icon"
+              onClick={() => fileInputRef.current?.click()}
+              title="加图片（也可以粘贴/拖进来）"
+              disabled={chat.busy}
+            >
+              <ImagePlus size={15} />
+            </button>
+            <div className="grow" />
+            <button
+              className="send-icon"
+              onClick={askFollowUp}
+              title="发送（Enter）"
+              disabled={
+                (!input.trim() && pendingDrops.length === 0 && pendingImages.length === 0) ||
+                chat.busy ||
+                (!root && pendingImages.length === 0)
+              }
+            >
+              <Send size={14} />
+            </button>
+          </div>
+        </div>
+        <div className="chat-tip">
+          提示: 把左侧任意文件 / 文件夹拖进来，AI 告诉你它是什么、能不能删。
         </div>
       </div>
     </div>

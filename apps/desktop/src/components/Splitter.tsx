@@ -3,18 +3,21 @@ import { useEffect, useRef } from 'react';
 type Props = {
   onDrag: (deltaPx: number) => void;
   onDoubleClick?: () => void;
+  /** horizontal=左右拖（Side Bar↔Editor，默认，兼容旧用法）；vertical=上下拖（Bottom Panel 高度）。 */
+  orientation?: 'horizontal' | 'vertical';
 };
 
-export function Splitter({ onDrag, onDoubleClick }: Props) {
-  const startX = useRef(0);
+export function Splitter({ onDrag, onDoubleClick, orientation = 'horizontal' }: Props) {
+  const start = useRef(0);
   const dragging = useRef(false);
+  const vertical = orientation === 'vertical';
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!dragging.current) return;
-      const dx = e.clientX - startX.current;
-      startX.current = e.clientX;
-      onDrag(dx);
+      const delta = vertical ? e.clientY - start.current : e.clientX - start.current;
+      start.current = vertical ? e.clientY : e.clientX;
+      onDrag(delta);
     };
     const onUp = () => {
       if (!dragging.current) return;
@@ -28,15 +31,15 @@ export function Splitter({ onDrag, onDoubleClick }: Props) {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [onDrag]);
+  }, [onDrag, vertical]);
 
   return (
     <div
-      className="splitter"
+      className={'splitter' + (vertical ? ' splitter-v' : '')}
       onMouseDown={(e) => {
         dragging.current = true;
-        startX.current = e.clientX;
-        document.body.style.cursor = 'col-resize';
+        start.current = vertical ? e.clientY : e.clientX;
+        document.body.style.cursor = vertical ? 'row-resize' : 'col-resize';
         document.body.style.userSelect = 'none';
       }}
       onDoubleClick={onDoubleClick}

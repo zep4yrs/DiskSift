@@ -1,0 +1,104 @@
+id          = "pnpm"
+name        = "pnpm"
+homepage    = "https://pnpm.io/"
+risk        = "medium"
+disclaimer  = """\
+清理 pnpm 的包存储（store/<version>/files，content-addressable store）与 registry 元数据缓存（pnpm-cache 等 cache 目录）。\
+删除后 pnpm 下次安装会重新下载对应包；已安装项目的 node_modules 是硬链接/副本，内容不会因此丢失，走系统回收站可还原。\
+绝不动：pnpm 全局安装的包（pnpm/global）与命令 shim（pnpm/bin）、pnpm 配置（config/rc、.npmrc）与\
+运行状态（pnpm-state / pnpm-state.json）、store 的索引与项目记录（index.db / index / projects）、\
+项目内的 node_modules / .pnpm 虚拟存储与 pnpm-lock.yaml。\
+删掉整个 store 的代价是下次 install 全量重新下载，出差或弱网环境请谨慎勾选。\
+store-dir / cache-dir 被改到其它名字的路径时检测不到，不在覆盖范围。"""
+
+# 实测（2026-09-27，Windows 11，只列目录名、未读任何文件内容）：
+# - pnpm home %LOCALAPPDATA%/pnpm/ 下只有 store/，store/v11/ 内是
+#   files/ + index.db + projects/（store/ 下仅 v11 一代）；
+# - registry 元数据缓存在同级 %LOCALAPPDATA%/pnpm-cache/：
+#   { metadata-v1.3/registry.npmjs.org, metadata-full-v1.3/registry.npmjs.org,
+#     v11/{metadata, metadata-full}, lockfile-verified.jsonl }；
+# - 运行状态在 %LOCALAPPDATA%/pnpm-state/pnpm-state.json（pnpm home 的兄弟目录）；
+# - per-drive 兜底 store 在 D:/.pnpm-store/ 下有 v3（仅 files/）、
+#   v10（files/ + index/ + projects/）、v11（files/ + index.db + projects/）三代并存。
+# 因此：
+# - scope 只锚 store/v*/files（CAS 数据本体）——index.db 是 *.db（CLAUDE.md 红线），
+#   index/ / projects/ 是体积很小的簿记数据，收益为零还破坏 prune 记账，全都不进 scope；
+# - store 版本号随 pnpm 大版本演进（v3 → v10 → v11），glob 用 v* 兼容多版本；
+# - 旧版 mocks.ts 的 **/store/** 会命中任意叫 store 的目录（如前端项目 src/store/），绝不采用。
+detect = [
+  "%LOCALAPPDATA%/pnpm",
+  "%LOCALAPPDATA%/pnpm-cache",
+  "%USERPROFILE%/.pnpm-store",
+  "${HOME}/.local/share/pnpm",
+  "${HOME}/.cache/pnpm",
+  "${HOME}/Library/pnpm",
+  "${HOME}/Library/Caches/pnpm",
+  "**/pnpm/store",
+  "**/pnpm-cache",
+  "**/.pnpm-store",
+]
+
+[match]
+# 裸 "pnpm" 不能进 name_contains——克隆的 pnpm 源码仓库目录就叫 pnpm（wechat-pc
+# 对 "WeChat" 子串误报的同一教训）。pnpm-cache / pnpm-store 片段无歧义。
+name_contains   = ["pnpm-cache", "pnpm-store"]
+must_have_child = []
+
+# ============================================================================
+# CAS 包存储（大头，多 GB；目录粒度——files/ 内是数以十万计的小文件，
+# file-by-file recycle 会产生海量回收站条目，同 conda pkgs 的取舍）
+# 三个桶一律 directory 粒度整目录 recycle、prompt none（无 30 天档）：
+# 桶目录 mtime 随每次 install 刷新，CAS 内容块单独看无意义，days 保留期
+# 在桶级没有过滤价值（同 pip.toml http-cache 的取舍）。
+# ============================================================================
+
+# pnpm home 下的 store（Windows %LOCALAPPDATA%/pnpm、POSIX ~/.local/share/pnpm、
+# macOS pnpm 10 起 ~/Library/pnpm——布局都是 <pnpm-home>/store/<version>/files）。
+[[scope]]
+id                  = "store-files"
+label               = "包存储 store（pnpm 目录下）"
+glob                = "**/pnpm/store/v*/files"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"
+
+# per-drive 兜底 store（项目在其他盘时 pnpm 在该盘根建 .pnpm-store）与
+# pnpm ≤6 的 POSIX legacy store（~/.pnpm-store）。与上面的 home store 是
+# 两个独立位置，分开成两个 scope 便于用户分别看到 C 盘 / D 盘的占用。
+[[scope]]
+id                  = "store-files-legacy"
+label               = "包存储 .pnpm-store（其他盘 / 旧版）"
+glob                = "**/.pnpm-store/v*/files"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"
+
+# ============================================================================
+# registry 元数据缓存（纯缓存，全量清）
+# pnpm cache 目录三平台形态：Windows pnpm-cache、Linux ~/.cache/pnpm、
+# macOS ~/Library/Caches/pnpm。整个目录都是可重生的元数据 / 校验记录，
+# lockfile-verified.jsonl 一并重来只是下次 install 多一次校验。
+#
+# glob 用尾部 /** 的"根内内容"形态——不带 /** 的根形态运行时永远 zero match：
+# scope 匹配总是以 detect 命中的目录为扫描根（CleanupModal.tsx 把每个 m.path 传
+# 给 scopeSizes / executeScope），而 find_matching_dirs 无条件丢弃 path == root
+# （防整根误删保护，apps/desktop/src-tauri/src/lib.rs）。根形态命中的恰是扫描根
+# 自身，两条路都零命中：pnpm-cache 卡片根下没有任何子路径匹配根形态；pnpm home
+# 卡片根的子树里根本没有 pnpm-cache（它是 pnpm home 的兄弟目录）。改尾部 /** 后，
+# v11、metadata-* 子目录从 pnpm-cache 卡片根可达（pnpm-cache 自带 detect 根），
+# 目录粒度整目录 recycle（v11 / metadata-v1.3 / metadata-full-v1.3 各一条回收站
+# 记录，总量与整根相同）；缓存根内的 lockfile-verified.jsonl 是文件，目录粒度
+# 扫描天然不碰。不变量：scope 的正向路径必须是某个 detect 根的严格后代
+# （tests/pnpm_safety.rs 文件头）。
+# ============================================================================
+
+[[scope]]
+id                  = "metadata-cache"
+label               = "registry 元数据缓存"
+glob                = "**/{pnpm-cache,.cache/pnpm,Library/Caches/pnpm}/**"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"

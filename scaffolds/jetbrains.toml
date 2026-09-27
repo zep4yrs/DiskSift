@@ -1,0 +1,143 @@
+# JetBrains 全家桶：IntelliJ IDEA / PyCharm / CLion / WebStorm / GoLand / Rider /
+# PhpStorm / RubyMine / DataGrip / RustRover / Android Studio 共用同一套目录约定
+# （JetBrains 官方 "Directories used by the IDE to store settings, caches, plugins
+# and logs"；docs/research/python-dev-cleanup-landscape.md §2.1 / §2.3）。
+#
+# 2026-09-27 本机实测（只列目录名，未读文件内容）：
+#   %LOCALAPPDATA%/JetBrains/ = { CLion2026.2, Daemon, PyCharm2026.2 }
+#   %APPDATA%/JetBrains/      = { CLion2026.2, PermanentDeviceId, PermanentUserId,
+#                                 PyCharm2026.2, bl, consentOptions, crl, discovery }
+#   <Product><Ver>/（Local 侧）= { LocalHistory, caches, coverage, editor,
+#     extResources, fileHistory, full-line, global-model-cache, httpFileSystem,
+#     icon-cache-v2.db, index, jcef_cache(_temp), log, openapi, plugins, projects,
+#     python_packages, python_stubs, splash, tmp, ts-go-fork-*, ts-go-native-preview,
+#     intellij-rust, resharper-host }
+#   <Product><Ver>/（Roaming 侧）= { app-internal-state.db, bundled_plugins.txt,
+#     disabled_plugins.txt, early-access-registry.txt, event-log-metadata, grazie,
+#     inspection, light-edit, options, plugins, splash-subscription-mode.txt, ssl,
+#     tasks, updatedBrokenPlugins.db, workspace, *.key, codestyles(CLIon) }
+# 要点：2020.1+ 的 system/caches 侧直接平铺在 %LOCALAPPDATA%/<Product><Ver>/ 下，
+# 没有 `system/` 中间层；LocalHistory 是大写驼峰（research §2.3.3 的待确认项，
+# 小写 local_history 一并划红线兼容社区报告的旧拼写）。
+# plugins/ 在 Local 侧产品目录下也存在（2026.2 实测）——与 Roaming 侧一样划红线；
+# Roaming 侧 tasks/ 存的是用户任务上下文 zip（实测），event-log-metadata、light-edit
+# 均为配置侧目录，全部不沾。
+# research §2.1.8 方案 A 的 `**/system/caches/**` 形态对应 2020 之前的旧版布局
+# （%USERPROFILE%/.<Product><Ver>/system/…，本机实测不存在）：裸 `**/system/…`
+# 会误中任意项目的 system/ 目录，且旧版 config 与 system 同级相邻，未实测不放行；
+# 旧版残留交给 IDE 自带的 Help | Delete Leftover IDE Directories 处理。
+# research §2.1.6 推荐的 LocalHistory L2 方案（路径 B）在本 scaffold 不采纳——
+# LocalHistory 按红线处理，任何 scope 都不沾。
+id          = "jetbrains"
+name        = "JetBrains IDEs"
+homepage    = "https://www.jetbrains.com/help/idea/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html"
+risk        = "medium"
+disclaimer  = """\
+清理 JetBrains IDE 的索引缓存、运行日志、临时文件、内嵌浏览器缓存、下载的 AI 补全模型缓存、PyCharm Python 存根缓存与 Toolbox 下载缓存。\
+下次启动 IDE 会重建索引（大项目可能需要几分钟到半小时），模型与存根会按需重新生成或重新下载。\
+绝不删：%APPDATA%/JetBrains 下的 IDE 配置（options / keymaps / codestyles / inspection / workspace），\
+用户手装的插件（plugins/），LocalHistory（本地编辑历史——删掉将无法恢复未提交、未进版本控制的改动），\
+许可证文件（*.key），设备 / 账号标识（PermanentDeviceId、PermanentUserId），以及 Toolbox 管理的 IDE 安装目录（Toolbox/apps）。\
+所有文件走系统回收站，可还原。清理前请关闭所有 JetBrains IDE，正在使用的文件可能无法进回收站。\
+"""
+
+# Windows 双根 + macOS/Linux 各根只作 detect（UI 展示用）；scope 起点只有可清桶，
+# config 侧目录不会落进任何 glob。`**/JetBrains/*` 通配兜底改盘 / 自定义安装位置：
+# 要求至少有一个子目录，避免把项目里恰好叫 "JetBrains" 的空目录标成卡片。
+detect = [
+  "%LOCALAPPDATA%/JetBrains",
+  "%APPDATA%/JetBrains",
+  "${HOME}/Library/Caches/JetBrains",
+  "${HOME}/Library/Application Support/JetBrains",
+  "${HOME}/Library/Logs/JetBrains",
+  "${HOME}/.cache/JetBrains",
+  "${HOME}/.config/JetBrains",
+  "${HOME}/.local/share/JetBrains",
+  "**/JetBrains/*",
+]
+
+# must_have_child 留空：Local 根（产品目录 + Daemon）与 Roaming 根（产品目录 +
+# PermanentDeviceId 等）没有共同的固定子目录，任何 must_have_child 都会错杀一侧；
+# "JetBrains" 基名本身歧义低，误标的代价只是一张空卡片（wechat-pc 的
+# uploadwechatfile 类误报在这里不存在等价物）。
+[match]
+name_contains   = ["JetBrains"]
+must_have_child = []
+
+# ============================================================================
+# 可清桶全部锚在 /JetBrains/*/ 下：`*` 兼容任意 <Product><Ver>（多版本多实例一起
+# 出，旧版本残留正是要清的东西——research §2.1.5）；Daemon（2026.x 新的后台进程
+# 平台，实测含 cache/ logs/）落在同一形态里。caches / index / jcef / 模型 / 存根
+# 桶用 directory 粒度整目录 recycle——索引几万小文件，file-by-file 会产生几万条
+# 回收站记录（理由同 conda.toml）；只有 log 桶按文件 recycle + days 保留（每个
+# 日志文件独立、mtime 有意义）。
+# ============================================================================
+
+[[scope]]
+id                  = "ide-caches"
+label               = "索引与编译缓存（下次启动重建）"
+glob                = "**/JetBrains/*/{caches,cache,index}"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"
+
+[[scope]]
+id       = "ide-logs"
+label    = "IDE 日志"
+glob     = "**/JetBrains/*/{log,logs}/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
+
+[[scope]]
+id                  = "ide-tmp"
+label               = "临时文件"
+glob                = "**/JetBrains/*/tmp"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"
+
+[[scope]]
+id                  = "webview-cache"
+label               = "内嵌浏览器（JCEF）缓存"
+# jcef_cache（PyCharm 2026.2 实测）/ jcef_cache_temp（CLion 2026.2 实测）；
+# JCEF / chrome-cache 兼容旧版拼写，不存在时 zero match 无害。
+glob                = "**/JetBrains/*/{jcef_cache,jcef_cache_temp,JCEF,chrome-cache}"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"
+
+[[scope]]
+id                  = "ai-model-caches"
+label               = "AI 补全模型缓存（重新下载）"
+glob                = "**/JetBrains/*/{full-line,global-model-cache}"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"
+
+[[scope]]
+id                  = "pycharm-python-caches"
+label               = "PyCharm Python 存根 / 包索引（重新生成）"
+# python_stubs / python_packages / cpython-cache 只在 PyCharm 系产品出现，其他
+# IDE 用户 zero match 无害（research §2.3.2 的"不拆 pycharm.toml"决策）。实测
+# 2026.2 无 cpython-cache，保留是为了覆盖老版本。
+glob                = "**/JetBrains/*/{python_stubs,python_packages,cpython-cache}"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"
+
+[[scope]]
+id                  = "toolbox-download-cache"
+label               = "Toolbox 下载缓存"
+# 固定字面路径，不用 `*` 通配：Toolbox/apps 是 IDE 安装本体，绝不能被扫到
+# （research §2.4 P1）。Toolbox 未安装时 zero match 无害。
+glob                = "**/JetBrains/Toolbox/{cache,download-cache}"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"

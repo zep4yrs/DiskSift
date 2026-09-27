@@ -1,0 +1,92 @@
+# npm 清理 scaffold —— apps/desktop/src/mocks.ts 里的 legacy 定义（detect 只有
+# **/npm-cache，单 scope 用裸 **/* 一刀切）只当路径参考，没有拷贝：裸 **/* 命中
+# 全机任意路径，红线全失守。本文件所有 scope 锚定 {npm-cache,.npm}/<点名桶> 两段。
+#
+# 2026-09-27 本机实测（npm 11.16.0，Windows 11，只 ls 目录名，未读文件内容）：
+#   npm config get cache → D:/devTools/npm-cache（cache 被整体搬迁，根名未改）
+#   搬迁根一级     → { _cacache, _logs, _npx, _update-notifier-last-checked }
+#   _cacache/ 一级 → { content-v2, index-v5, tmp }
+#   _npx/          → 16 位 hex 命名的实例目录（每次 npx 解出的独立 node_modules）
+#   %LOCALAPPDATA%/npm-cache（默认位，本机与搬迁根并存）→ { _cacache, _logs,
+#   _update-notifier-last-checked }
+#   %APPDATA%/npm-cache（npm<5 legacy 位）→ 本机不存在
+#   _prebuilds/ 本机没有——glob 保留（prebuild-install 的官方缓存布局）
+#
+# 实测修正：
+# - cache 整体搬迁到非默认盘符但沿用原名——detect 除默认路径外必须 **/npm-cache /
+#   **/.npm 通配兜底，scope glob 也锚根名不锚盘符。
+# - 缓存根直下的 _update-notifier-last-checked 等杂项不进 scope：只点名四个桶，
+#   未知目录/文件一律不碰（safety test 的红线断言覆盖这一点）。
+#
+# lint:  cargo run -p pinkbin-scaffold-lint -- scaffolds/npm.toml
+# test:  cargo test -p pinkbin-scaffold --test npm_safety
+
+id          = "npm"
+name        = "npm cache"
+homepage    = "https://docs.npmjs.com/cli/commands/npm-cache"
+# medium：桶是下载类缓存——删掉后下次 npm install / npx 要按需重新下载（_npx 相当
+# 于整包重装）；不是日志类"本地重建"的纯缓存。与 pip.toml / pnpm.toml（包缓存同评
+# medium）一致。
+risk        = "medium"
+disclaimer  = """\
+清理 npm 的下载缓存（_cacache / _prebuilds）、运行日志（_logs）与 npx 临时安装包（_npx）。\
+删除后下次 npm install / npx 会按需重新下载对应包。\
+绝不删：用户与项目的 .npmrc 配置（内含 registry 登录令牌）、全局安装的包与命令\
+（%APPDATA%/npm、/usr/local/lib/node_modules 等全局 prefix）、任何项目里的 \
+node_modules 与 package*.json、Node.js / nvm / pnpm / yarn 自身的存储目录、\
+缓存根下未点名的杂项文件。\
+只覆盖默认缓存位置与沿用 npm-cache / .npm 原名的位置；用 npm config set cache 把 \
+cache 指到自定义名字的路径时检测不到。\
+删除进行中的 install / npx 可能因文件被占用而失败，重跑即可。\
+所有删除走系统回收站，可还原。\
+"""
+
+# 缓存根两种命名：Windows npm>=5 为 %LOCALAPPDATA%/npm-cache（npm<5 在
+# %APPDATA%/npm-cache），POSIX 为 ~/.npm。cache 可整体搬迁（npm config set cache）
+# ——实测样例：npm 11.16.0 搬到 D:/devTools/npm-cache，默认位的 npm-cache 同时还在。
+# 所以除默认路径外还要 **/<根名> 通配兜底。
+detect = [
+  "%LOCALAPPDATA%/npm-cache",
+  "%APPDATA%/npm-cache",
+  "%USERPROFILE%/.npm",
+  "${HOME}/.npm",
+  "**/npm-cache",
+  "**/.npm",
+]
+
+# name_contains 只放 "npm-cache"——".npm" 作为 substring 会命中 .npmrc 配置文件；
+# must_have_child 留空：全新/刚清过的 cache 可能只有 _logs，没有 _cacache。
+[match]
+name_contains   = ["npm-cache"]
+must_have_child = []
+
+# 所有 glob 锚到 {npm-cache,.npm} 根名（不锚盘符/家目录），搬迁过的 cache 同样命中；
+# 且只点名四个桶（_cacache / _prebuilds / _logs / _npx），缓存根直下的杂项
+# （如 _update-notifier-last-checked 状态文件、任何未知目录）一律不在 scope 内。
+
+[[scope]]
+id       = "cacache"
+label    = "下载缓存（_cacache / _prebuilds）"
+glob     = "**/{npm-cache,.npm}/{_cacache,_prebuilds}/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
+
+[[scope]]
+id       = "logs"
+label    = "运行日志（_logs）"
+glob     = "**/{npm-cache,.npm}/_logs/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "none" }
+
+# _npx/<hash>/ 下是每次 npx 运行解出的整棵 node_modules，成千上万小文件；
+# directory granularity 让每个 hash 实例只产生一条回收站记录。
+[[scope]]
+id                  = "npx-cache"
+label               = "npx 临时安装包（_npx，按实例整目录清）"
+glob                = "**/{npm-cache,.npm}/_npx/*"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "days", default = 30, label = "保留最近多少天" }
+recycle_granularity = "directory"

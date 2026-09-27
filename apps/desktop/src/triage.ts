@@ -5,12 +5,12 @@ import type { Node, Scaffold } from './types';
 
 export type Bucket = 'safe' | 'heavy' | 'stale' | 'system' | 'unknown';
 
-export const BUCKET_META: Record<Bucket, { emoji: string; label: string; tone: string; description: string; }> = {
-  safe:    { emoji: '🟢', label: '100% 可清', tone: '#5fc88a', description: '缓存类，删了会自动重建' },
-  heavy:   { emoji: '🟠', label: '占用大但你常用', tone: '#ff9f5e', description: '已知应用，要不要清你说了算' },
-  stale:   { emoji: '🟡', label: '占用不大但很久没碰', tone: '#ffd166', description: '考古时间' },
-  system:  { emoji: '⚫', label: '系统/不能动',  tone: '#7a6675', description: 'Windows、Program Files、用户文档' },
-  unknown: { emoji: '🔵', label: 'AI 不确定', tone: '#5b8def', description: '点开让 AI 分析' },
+export const BUCKET_META: Record<Bucket, { label: string; tone: string; description: string; }> = {
+  safe:    { label: '100% 可清', tone: '#5fc88a', description: '缓存类，删了会自动重建' },
+  heavy:   { label: '占用大但你常用', tone: '#ff9f5e', description: '已知应用，要不要清你说了算' },
+  stale:   { label: '占用不大但很久没碰', tone: '#ffd166', description: '考古时间' },
+  system:  { label: '系统/不能动',  tone: '#7a6675', description: 'Windows、Program Files、用户文档' },
+  unknown: { label: 'AI 不确定', tone: '#5b8def', description: '点开让 AI 分析' },
 };
 
 export interface Triaged {

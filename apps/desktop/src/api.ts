@@ -121,4 +121,34 @@ export const api = {
     appid: number,
   ) =>
     isTauri ? invoke<void>('open_steam_url', { action, appid }) : Promise.resolve(),
+
+  // ── 操作记录视图（redesign-spec §4）：list_undo / restore_quarantine / open_recycle_bin ──
+  // 仅新增封装，不改动既有条目。浏览器预览模式下 listUndo 返回空表，
+  // restoreQuarantine / openRecycleBin 不产生副作用（与 executeScope 同策略）。
+
+  /** undo.jsonl 记录，倒序（最新在前）；limit 缺省 = 全部。 */
+  listUndo: (limit?: number) =>
+    isTauri
+      ? invoke<UndoEntry[]>('list_undo', { limit: limit ?? null })
+      : Promise.resolve([] as UndoEntry[]),
+
+  /** 还原一条隔离记录：destination 移回 source。源已存在/非隔离记录由后端 Err 阻断。 */
+  restoreQuarantine: (entry: UndoEntry) =>
+    isTauri ? invoke<void>('restore_quarantine', { entry }) : Promise.resolve(),
+
+  /** 打开系统回收站（explorer shell:RecycleBinFolder）。 */
+  openRecycleBin: () =>
+    isTauri ? invoke<void>('open_recycle_bin') : Promise.resolve(),
+
+  // ── Secure storage（Windows DPAPI，对标 BlueTidy 方案）──
+  // 密钥类数据（AI apiKey 等）经这里落盘：Rust 侧 DPAPI 加密后存
+  // %APPDATA% 存储目录的 secure.json，浏览器/前端侧任何持久层都不再有明文。
+
+  /** 加密并保存 `plain` 到 secure.json 的 `key` 条目（明文只走 IPC，不落前端存储）。 */
+  secureSet: (key: string, plain: string) =>
+    isTauri ? invoke<void>('secure_set', { key, plain }) : Promise.resolve(),
+
+  /** 取回并解密 `key` 条目；缺失或解不开（跨用户/被篡改）返回 null。 */
+  secureGet: (key: string) =>
+    isTauri ? invoke<string | null>('secure_get', { key }) : Promise.resolve(null),
 };

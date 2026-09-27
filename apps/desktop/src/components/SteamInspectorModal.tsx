@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
 import { SteamInspector } from './SteamInspector';
+import { Icon } from './Icon';
 import { ErrorBoundary } from './ErrorBoundary';
 
 /// Modal wrapper for the Steam Inspector. Click backdrop or press Esc to
@@ -33,7 +34,7 @@ export function SteamInspectorModal({ onClose }: { onClose: () => void }) {
     >
       <div className="steam-modal-dialog" role="dialog" aria-modal="true" aria-label="Steam Inspector">
         <div className="steam-modal-head">
-          <div className="steam-modal-title">🎮 Steam Inspector</div>
+          <div className="steam-modal-title" style={{display:"flex",alignItems:"center",gap:6}}><Icon name="gamepad-2" size={16} /> Steam Inspector</div>
           <div className="steam-modal-subtitle">查看你的 Steam 库 · 哪些游戏占地大、好久没玩</div>
           <button className="steam-modal-close" onClick={onClose} title="关闭 (Esc)">
             <X size={16} />

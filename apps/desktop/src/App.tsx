@@ -1,23 +1,48 @@
 import { useEffect, useRef, useState } from 'react';
-import { Folder, ScanLine, Settings as SettingsIcon } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { api } from './api';
 import { isTauri } from './env';
-import { useStore } from './store';
+import { buildWalkQueue, useStore, type EditorTab, type TabKind, type WalkItem } from './store';
+import type { Triaged } from './triage';
+import type { Node, UndoEntry } from './types';
 import { TreeView } from './components/TreeView';
-import { ChatPanel } from './components/ChatPanel';
 import { Studio } from './components/Studio';
+import { ChatPanel } from './components/ChatPanel';
+import { ScaffoldSideList } from './components/ScaffoldSideList';
+import { RecordsView } from './components/RecordsView';
 import { Settings } from './components/Settings';
+import { Treemap } from './components/Treemap';
+import { TriageView } from './components/TriageView';
+import { AutoWalk } from './components/AutoWalk';
 import { Splitter } from './components/Splitter';
 import { Logo } from './components/Logo';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { Icon } from './components/Icon';
 import { formatBytes } from './format';
-import { loadSettings, isConfigured } from './advisorClient';
+import { loadSettings, isConfigured, ensureApiKey } from './advisorClient';
+
+// ═══ pinkbin · workbench v2（redesign-spec v2 §2 五区）══════════════════
+// titlebar 35（品牌+呼吸点 · 菜单占位 · 区域三开关 icon-only · 主题切换）
+// activitybar 48（explorer/queue/scripts/records + 设置；只切侧栏，编辑器是
+//   独立 tab 床，两者零重复；active=左缘 2px accent；点同项=折叠/展开侧栏）
+// sidebar 240 可折叠（四面板挂既有组件）· tab 床（store tab 模型驱动）·
+// bottompanel 150 可折叠（输出/诊断/记录）· aipanel 300 可折叠（占位，
+//   ChatPanel 下一阶段挂）· statusbar 22。
+// 扫描全套逻辑/事件监听/诊断、Splitter、ErrorBoundary、Settings 原样保留。
+// 图标一律 docs/_icons.json 的 Lucide 提取路径（components/Icon.tsx），禁手绘。
+
+// 版本规则（2026-09-27 用户定）：年份后两位.破坏性+1.新功能+1.补丁+1
+// Cargo/tauri 只认三段 semver，第四位补丁段仅在用户可见处展示。
+const APP_VERSION = '26.1.1.0';
 
 function isDriveRoot(p: string): boolean {
   // C: / C:\ / C:/  — anything beyond is a subfolder
   return /^[A-Za-z]:[\\/]?$/.test(p);
+}
+
+function driveOf(p: string): string {
+  return /^[A-Za-z]:/.test(p) ? `${p[0]}:` : p;
 }
 
 interface ScanStatsEvent {
@@ -43,11 +68,48 @@ interface ScanDiag {
   totalMs: number;            // entire scan() handler
 }
 
-const DEFAULT_LEFT = 620;
-const DEFAULT_RIGHT = 320;
-const MIN_LEFT = 320;
-const MIN_RIGHT = 220;
+// ── 几何（spec §2：sidebar 240 / aipanel 300 / bottompanel 150，均可拖拽） ──
+const DEFAULT_SIDEBAR = 300;
+const MIN_SIDEBAR = 280;
+const DEFAULT_AI = 340;
+const MIN_AI = 280;
+const DEFAULT_BOTTOM = 150;
+const MIN_BOTTOM = 90;
+const MAX_BOTTOM = 420;
 const MIN_CENTER = 360;
+
+// 操作记录筛选（第三波增量，spec §2 侧栏 records 面板 = 筛选分段控件）
+const RECORD_ACTIONS: { id: 'all' | UndoEntry['action']; label: string; icon: string }[] = [
+  { id: 'all', label: '全部', icon: 'list-checks' },
+  { id: 'recycle', label: '回收站', icon: 'trash-2' },
+  { id: 'quarantine', label: '隔离', icon: 'archive-restore' },
+  { id: 'delete', label: '删除', icon: 'circle-x' },
+];
+const RECORD_SINCE: { id: number | null; label: string; icon: string }[] = [
+  { id: null, label: '全部时间', icon: 'clock' },
+  { id: 1, label: '24 小时', icon: 'clock' },
+  { id: 7, label: '近 7 天', icon: 'calendar-days' },
+  { id: 30, label: '近 30 天', icon: 'calendar-days' },
+];
+
+const TAB_ICONS: Record<TabKind, string> = {
+  map: 'map',
+  walk: 'list-checks',
+  script: 'package',
+  records: 'history',
+};
+
+type SideId = 'explorer' | 'queue' | 'scripts' | 'records';
+const SIDE_IDS: SideId[] = ['explorer', 'queue', 'scripts', 'records'];
+const SIDE_META: { id: SideId; icon: string; label: string }[] = [
+  { id: 'explorer', icon: 'folder-tree', label: '资源管理器' },
+  { id: 'queue', icon: 'list-checks', label: '巡查队列' },
+  { id: 'scripts', icon: 'package', label: '脚本列表' },
+  { id: 'records', icon: 'history', label: '记录筛选' },
+];
+
+type BpTab = 'out' | 'diag' | 'records';
+type OutLine = { level: 'info' | 'warn' | 'error'; text: string };
 
 export default function App() {
   const root = useStore((s) => s.root);
@@ -56,6 +118,120 @@ export default function App() {
   const scaffolds = useStore((s) => s.scaffolds);
   const selectedPath = useStore((s) => s.selectedPath);
   const select = useStore((s) => s.selectPath);
+  const walkQueue = useStore((s) => s.walkQueue);
+  const walkIndex = useStore((s) => s.walkIndex);
+  const walkThresholdGB = useStore((s) => s.walkThresholdGB);
+  const reclaimedBytes = useStore((s) => s.reclaimedBytes);
+  const setWalk = useStore((s) => s.setWalk);
+  const setThreshold = useStore((s) => s.setThreshold);
+  // tab 床（spec §3）
+  const openTabs = useStore((s) => s.openTabs);
+  const activeTabId = useStore((s) => s.activeTabId);
+  const openTab = useStore((s) => s.openTab);
+  const closeTab = useStore((s) => s.closeTab);
+  const activateTab = useStore((s) => s.activateTab);
+  const goEntry = useStore((s) => s.goEntry);
+  // AI 面板表头「新对话」（square-pen）——与 ChatPanel 内部清空同源
+  const resetChat = useStore((s) => s.resetChat);
+
+  // ── 主题（localStorage pinkbin.theme + document 根 .dark class） ──
+  const [theme, setTheme] = useState<'light' | 'dark'>(() =>
+    localStorage.getItem('pinkbin.theme') === 'dark' ? 'dark' : 'light',
+  );
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    localStorage.setItem('pinkbin.theme', theme);
+  }, [theme]);
+
+  // ── 字号档位（spec §1 data-fs：md(默认) → sm → lg → xl 循环，状态栏 A·md） ──
+  const [fsTier, setFsTier] = useState<'md' | 'sm' | 'lg' | 'xl'>(() => {
+    const v = localStorage.getItem('pinkbin.fs');
+    return v === 'sm' || v === 'lg' || v === 'xl' ? v : 'md';
+  });
+  useEffect(() => {
+    if (fsTier === 'md') delete document.documentElement.dataset.fs;
+    else document.documentElement.dataset.fs = fsTier;
+    localStorage.setItem('pinkbin.fs', fsTier);
+  }, [fsTier]);
+  const cycleFsTier = () =>
+    setFsTier((t) => (t === 'md' ? 'sm' : t === 'sm' ? 'lg' : t === 'lg' ? 'xl' : 'md'));
+
+  // ── 区域三开关（spec §2：侧栏/底面板/右 AI 面板任意组合，IDE 五态全可达） ──
+  const [regions, setRegions] = useState<{ sidebar: boolean; bottom: boolean; ai: boolean }>(() => {
+    try {
+      const raw = localStorage.getItem('pinkbin.regions');
+      if (raw) {
+        const r = JSON.parse(raw) as { sidebar?: boolean; bottom?: boolean; ai?: boolean };
+        return { sidebar: r.sidebar !== false, bottom: r.bottom !== false, ai: r.ai !== false };
+      }
+    } catch { /* 忽略持久化读取失败 */ }
+    return { sidebar: true, bottom: true, ai: true };
+  });
+  useEffect(() => {
+    localStorage.setItem('pinkbin.regions', JSON.stringify(regions));
+  }, [regions]);
+  const toggleRegion = (k: 'sidebar' | 'bottom' | 'ai') =>
+    setRegions((r) => ({ ...r, [k]: !r[k] }));
+
+  // ── 活动栏（只切侧栏；点同项=折叠/展开侧栏） ──
+  const [activeSide, setActiveSide] = useState<SideId>(() => {
+    const v = localStorage.getItem('pinkbin.side') as SideId | null;
+    return v && (SIDE_IDS as string[]).includes(v) ? v : 'explorer';
+  });
+  useEffect(() => { localStorage.setItem('pinkbin.side', activeSide); }, [activeSide]);
+  const clickAct = (side: SideId) => {
+    if (activeSide === side) {
+      toggleRegion('sidebar');
+    } else {
+      setActiveSide(side);
+      setRegions((r) => (r.sidebar ? r : { ...r, sidebar: true }));
+    }
+  };
+
+  // ── 区域几何（Splitter 拖拽 + 双击重置；持久化键为 v2 新键） ──
+  const [sidebarW, setSidebarW] = useState<number>(() => {
+    const v = Number(localStorage.getItem('pinkbin.sidebarW'));
+    return Number.isFinite(v) && v >= MIN_SIDEBAR ? v : DEFAULT_SIDEBAR;
+  });
+  const [aiW, setAiW] = useState<number>(() => {
+    const v = Number(localStorage.getItem('pinkbin.aiW'));
+    return Number.isFinite(v) && v >= MIN_AI ? v : DEFAULT_AI;
+  });
+  const [bottomH, setBottomH] = useState<number>(() => {
+    const v = Number(localStorage.getItem('pinkbin.bottomH'));
+    return Number.isFinite(v) && v >= MIN_BOTTOM && v <= MAX_BOTTOM ? v : DEFAULT_BOTTOM;
+  });
+  useEffect(() => { localStorage.setItem('pinkbin.sidebarW', String(sidebarW)); }, [sidebarW]);
+  useEffect(() => { localStorage.setItem('pinkbin.aiW', String(aiW)); }, [aiW]);
+  useEffect(() => { localStorage.setItem('pinkbin.bottomH', String(bottomH)); }, [bottomH]);
+  const dragSidebar = (dx: number) => {
+    setSidebarW((w) => {
+      const winW = window.innerWidth;
+      const others = 48 + (regions.ai ? aiW : 0);
+      const maxSide = Math.max(MIN_SIDEBAR, winW - others - MIN_CENTER);
+      return Math.max(MIN_SIDEBAR, Math.min(maxSide, w + dx));
+    });
+  };
+  const dragAI = (dx: number) => {
+    setAiW((w) => {
+      const winW = window.innerWidth;
+      const others = 48 + (regions.sidebar ? sidebarW : 0) + 8 /* 两条 splitter */;
+      const maxAi = Math.max(MIN_AI, winW - others - MIN_CENTER);
+      return Math.max(MIN_AI, Math.min(maxAi, w - dx));
+    });
+  };
+  const dragBottom = (dy: number) => {
+    // 上拖（dy<0）增高
+    setBottomH((h) => Math.max(MIN_BOTTOM, Math.min(MAX_BOTTOM, h - dy)));
+  };
+
+  // ── 底面板 tab（输出/诊断/记录） ──
+  const [bpTab, setBpTab] = useState<BpTab>('out');
+  const [outLines, setOutLines] = useState<OutLine[]>([
+    { level: 'info', text: '就绪。选择磁盘并点「扫描」；扫描时这里会显示进度。' },
+  ]);
+  const pushOut = (level: OutLine['level'], text: string) =>
+    setOutLines((ls) => [...ls.slice(-199), { level, text }]);
 
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<{ files: number; bytes: number; path: string } | null>(null);
@@ -72,36 +248,113 @@ export default function App() {
   const refreshAdvisorTag = () => {
     const s = loadSettings();
     setAdvisorTag(isConfigured(s) ? { provider: s.provider } : null);
+    // 启动/配置变化即把 DPAPI 里的 key 预热进内存，之后 freeChat 免去首聊解密等待。
+    void ensureApiKey(s);
   };
   useEffect(() => { refreshAdvisorTag(); }, []);
-  const [leftWidth, setLeftWidth] = useState<number>(() => {
-    const v = Number(localStorage.getItem('pinkbin.leftWidth'));
-    return Number.isFinite(v) && v > MIN_LEFT ? v : DEFAULT_LEFT;
-  });
-  const [rightWidth, setRightWidth] = useState<number>(() => {
-    const v = Number(localStorage.getItem('pinkbin.rightWidth'));
-    return Number.isFinite(v) && v > MIN_RIGHT ? v : DEFAULT_RIGHT;
-  });
 
-  useEffect(() => { localStorage.setItem('pinkbin.leftWidth', String(leftWidth)); }, [leftWidth]);
-  useEffect(() => { localStorage.setItem('pinkbin.rightWidth', String(rightWidth)); }, [rightWidth]);
+  // 脚本库装载（此前 listScaffolds 从未被调用，能力恢复；状态栏「脚本数」依赖它）
+  useEffect(() => {
+    api.listScaffolds()
+      .then((scs) => {
+        setScaffolds(scs);
+        pushOut('info', `脚本库已加载：${scs.length} 个清理脚本`);
+      })
+      .catch(() => pushOut('warn', '脚本库加载失败（可稍后重扫）'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const dragLeft = (dx: number) => {
-    setLeftWidth((w) => {
-      const winW = window.innerWidth;
-      const maxLeft = Math.max(MIN_LEFT, winW - rightWidth - MIN_CENTER);
-      return Math.max(MIN_LEFT, Math.min(maxLeft, w + dx));
-    });
+  // 空间图 tab 的 Treemap 需要实测容器尺寸（窗口/分栏/区域折叠都会经过 ResizeObserver）
+  const activeTab = activeTabId ? (openTabs.find((t) => t.id === activeTabId) ?? null) : null;
+  const treemapWrapRef = useRef<HTMLDivElement | null>(null);
+  const [treemapSize, setTreemapSize] = useState<{ w: number; h: number } | null>(null);
+  useEffect(() => {
+    if (activeTab?.kind !== 'map') return;
+    const el = treemapWrapRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      // 恒等守卫：尺寸没变就不 setState，杜绝 ResizeObserver→重渲染→布局微变→再触发的回流循环
+      setTreemapSize((prev) => (prev && prev.w === w && prev.h === h ? prev : { w, h }));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab?.id, activeTab?.kind, root]);
+
+  // 空间图下钻：每个 map tab 各自的 treemap 根（点目录块/面包屑切换）；新扫描重置
+  const [mapRoots, setMapRoots] = useState<Record<string, Node>>({});
+  useEffect(() => { setMapRoots({}); }, [root]);
+  const findNodeByPath = (n: Node | null, p: string): Node | null => {
+    if (!n || n.path === p) return n;
+    for (const c of n.children) {
+      const f = findNodeByPath(c, p);
+      if (f) return f;
+    }
+    return null;
   };
-  const dragRight = (dx: number) => {
-    setRightWidth((w) => {
-      const winW = window.innerWidth;
-      const maxRight = Math.max(MIN_RIGHT, winW - leftWidth - MIN_CENTER);
-      return Math.max(MIN_RIGHT, Math.min(maxRight, w - dx));
-    });
+
+  // ── 双向同步导航（sync-nav）────────────────────────────────────────
+  // ①③ 空间图 → 资源管理器：drillTo（点目录块下钻/面包屑返回）时记录聚焦路径，
+  // TreeView 据此自动展开祖先链 + scrollIntoView。
+  const [treeFocusPath, setTreeFocusPath] = useState<string | null>(null);
+  useEffect(() => { setTreeFocusPath(null); }, [root]); // 新扫描：旧聚焦路径失效
+
+  // ② 资源管理器 → 空间图：map tab 激活时，TreeView 选中目录 300ms 防抖后下钻。
+  // 防抖回调读「最新」tab/roots（300ms 内用户可能已切 tab/再选），经 ref 取现值。
+  const navRef = useRef({ activeTabId, openTabs, mapRoots, root });
+  navRef.current = { activeTabId, openTabs, mapRoots, root };
+  const mapFollowTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (mapFollowTimer.current !== null) window.clearTimeout(mapFollowTimer.current);
+  }, []);
+
+  const drillTo = (tabId: string, n: Node) => {
+    select(n.path);
+    if (n.children?.length) setMapRoots((m) => ({ ...m, [tabId]: n }));
+    setTreeFocusPath(n.path); // 资源管理器跟随：展开祖先链并滚动定位
   };
 
-  useEffect(() => { api.listScaffolds().then(setScaffolds).catch(() => {}); }, [setScaffolds]);
+  // TreeView 专用选中：普通选中之外，若活动 tab 是空间图且目标目录在其当前
+  // 子树内，300ms 防抖后自动下钻（拖动选择不狂跳）；跨盘/不在子树内/非目录不动。
+  const selectFromTree = (p: string) => {
+    select(p);
+    if (mapFollowTimer.current !== null) window.clearTimeout(mapFollowTimer.current);
+    mapFollowTimer.current = window.setTimeout(() => {
+      mapFollowTimer.current = null;
+      const cur = navRef.current;
+      const tab = cur.activeTabId ? cur.openTabs.find((t) => t.id === cur.activeTabId) : null;
+      if (!tab || tab.kind !== 'map' || !cur.root) return;
+      if (tab.crumb && tab.crumb !== driveOf(cur.root.path)) return; // 该 tab 属其他盘
+      const mapNode = cur.mapRoots[tab.id] ?? cur.root;
+      if (p === mapNode.path) return; // 已是当前空间图根
+      const target = findNodeByPath(mapNode, p);
+      if (target && target.is_dir) drillTo(tab.id, target); // 子树内目录才跟随
+    }, 300);
+  };
+
+
+  const walkThresholdBytes = walkThresholdGB * 1024 ** 3;
+  // 巡查进行中（队列未空且还有未完成的项）；空队列或走完后回到 TriageView。
+  const walkActive = walkQueue.length > 0 && walkIndex < walkQueue.length;
+
+  // 操作记录筛选（第三波增量；侧栏 records 面板与记录 tab 共享）
+  const [recordAction, setRecordAction] = useState<'all' | UndoEntry['action']>('all');
+  const [recordSinceDays, setRecordSinceDays] = useState<number | null>(null);
+
+  const startWalk = (jumpTo?: string) => {
+    if (!root) return;
+    const items: WalkItem[] = buildWalkQueue(root, walkThresholdBytes)
+      .map((w) => ({ ...w, status: 'pending' as const }));
+    const idx = jumpTo ? items.findIndex((w) => w.node.path === jumpTo) : -1;
+    setWalk(items, idx >= 0 ? idx : 0);
+    if (jumpTo) select(jumpTo);
+    // spec §3 侧栏联动：开巡查 tab
+    openTab('walk', '巡查');
+  };
 
   useEffect(() => {
     if (!isTauri) return;
@@ -134,6 +387,10 @@ export default function App() {
     if (!pickedPath) return;
     setErr(null); setScanning(true); setScanProgress(null); setScanTotalBytes(null); setDiag(null);
     lastBackendStats.current = null;
+    pushOut('info', `开始扫描 ${pickedPath}`);
+    // spec §2：扫描时自动展开底面板显示进度
+    setRegions((r) => (r.bottom ? r : { ...r, bottom: true }));
+    setBpTab('out');
     if (isTauri) {
       if (isDriveRoot(pickedPath)) {
         // Drive root: ask the OS for used bytes — instant, exact.
@@ -175,6 +432,10 @@ export default function App() {
         totalMs,
       };
       setDiag(next);
+      pushOut(
+        'info',
+        `扫描完成 · mode=${backend?.mode ?? 'n/a'} · ${node.file_count.toLocaleString()} 文件 · ${formatBytes(node.size)} · 总耗时 ${fmtMs(totalMs)}`,
+      );
       // eslint-disable-next-line no-console
       console.log('[pinkbin.diag]', {
         backend,
@@ -183,97 +444,546 @@ export default function App() {
         setRootMs: next.setRootMs.toFixed(1),
         totalMs: totalMs.toFixed(1),
       });
+      // spec §3：扫描完成 → 自动开/聚焦对应「空间图」tab
+      const drive = driveOf(pickedPath);
+      openTab('map', `空间图 · ${drive}`, drive);
     } catch (e) {
       setErr(String(e));
+      pushOut('error', `扫描失败：${String(e)}`);
     } finally {
       setScanning(false);
     }
   };
 
-  return (
-    <div className="app">
-      <header>
-        <span className="brand"><Logo size={22} /> Pinkbin</span>
-        <button className="ghost" onClick={pickDirectory}>
-          <Folder size={14} /> {pickedPath || '选择磁盘或文件夹'}
-        </button>
-        <button className="primary" onClick={scan} disabled={!pickedPath || scanning}>
-          <ScanLine size={14} /> {scanning ? '扫描中…' : '扫描'}
-        </button>
-        <div className="grow" />
-        <span className="muted small">
-          {root ? `${formatBytes(root.size)} · ${root.file_count.toLocaleString()} 文件` : '未扫描'}
-        </span>
-        <button
-          className={'ghost icon settings-btn' + (advisorTag ? ' bound' : '')}
-          onClick={() => setShowSettings(true)}
-          title={advisorTag ? `已绑定 ${advisorTag.provider} · 点开管理` : 'AI 还没配置 · 点开设置'}
-        >
-          <SettingsIcon size={16} />
-          {advisorTag && <span className="settings-dot" />}
-        </button>
-        {advisorTag && (
-          <span className="provider-pill" title="当前 AI 提供商">
-            {advisorTag.provider}
-          </span>
-        )}
-      </header>
-
-      {scanning && (
-        <div className="scan-bar">
-          <div
-            className={'scan-bar-fill' + (scanTotalBytes && scanProgress ? ' determinate' : ' indeterminate')}
-            style={
-              scanTotalBytes && scanProgress
-                ? { width: `${Math.min(99, (scanProgress.bytes / scanTotalBytes) * 100)}%` }
-                : undefined
-            }
-          />
-          <div className="scan-bar-label">
-            {scanProgress
-              ? `${scanProgress.files.toLocaleString()} 个文件 · ${formatBytes(scanTotalBytes ? Math.min(scanProgress.bytes, scanTotalBytes) : scanProgress.bytes)}${scanTotalBytes ? ` / ${formatBytes(scanTotalBytes)}` : ''}`
-              : '准备扫描…'}
+  // ── 编辑器 tab 床内容（spec §3：tab 种类 map/walk/script/records） ──
+  const renderTabContent = (tab: EditorTab) => {
+    if (tab.kind === 'map') {
+      const matchesRoot = !!root && (!tab.crumb || tab.crumb === driveOf(root.path));
+      // 下钻根：tab 专属；无下钻记录时 = 整盘扫描根
+      const mapNode = matchesRoot ? (mapRoots[tab.id] ?? root) : null;
+      const segs = (mapNode?.path ?? tab.crumb ?? '').split(/[\\/]/).filter(Boolean);
+      let acc = '';
+      return (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <div className="crumb">
+            {mapNode
+              ? segs.map((seg, i) => {
+                  acc = i === 0 ? seg + '\\' : (acc.endsWith('\\') ? acc + seg : acc + '\\' + seg);
+                  const n = findNodeByPath(root, acc) ?? findNodeByPath(root, seg);
+                  return (
+                    <span key={i}>
+                      {n ? (
+                        <button className="crumb-link" onClick={() => drillTo(tab.id, n)}>{seg}</button>
+                      ) : (
+                        <span className="crumb-link" style={{ cursor: 'default' }}>{seg}</span>
+                      )}
+                      {i < segs.length - 1 && <span className="crumb-sep">›</span>}
+                    </span>
+                  );
+                })
+              : <span className="path-clip">{tab.crumb ?? tab.title}</span>}
+            <div className="grow" />
+            {mapNode && (
+              <span className="sz">{formatBytes(mapNode.size)} · {mapNode.file_count.toLocaleString()} 文件</span>
+            )}
+          </div>
+          <div className="treemap-wrap" ref={treemapWrapRef} style={{ flex: 1, minHeight: 0 }}>
+            {mapNode ? (
+              treemapSize && treemapSize.w > 0 && treemapSize.h > 0 ? (
+                <Treemap
+                  node={mapNode}
+                  width={treemapSize.w}
+                  height={treemapSize.h}
+                  onSelect={select}
+                  selectedPath={selectedPath}
+                  onOpen={(p) => {
+                    const n = findNodeByPath(root, p);
+                    if (n) drillTo(tab.id, n);
+                  }}
+                />
+              ) : null
+            ) : (
+              <div className="empty">
+                <div className="empty-title">还没扫描</div>
+                <div className="empty-sub">{tab.crumb ?? '该盘'} 还没有扫描数据；回入口页选择路径并点「扫描」。</div>
+              </div>
+            )}
           </div>
         </div>
-      )}
-      {diag && !scanning && <DiagnosticsBar diag={diag} />}
-      {err && <div className="banner error">{err}</div>}
+      );
+    }
+    if (tab.kind === 'walk') {
+      return (
+        <div className="center-body">
+          {!root ? (
+            <div className="empty">
+              <div className="empty-title">还没扫描</div>
+              <div className="empty-sub">先选好磁盘并点「扫描」，扫描完成后这里才能分类和巡查。</div>
+            </div>
+          ) : walkActive ? (
+            <AutoWalk />
+          ) : (
+            <>
+              <div className="walk-entry">
+                <span className="muted small">逐个审阅大于 {walkThresholdGB} GB 的目录</span>
+                <button className="btn primary" onClick={() => startWalk()}>
+                  <Icon name="list-checks" size={14} /> 开始巡查
+                </button>
+              </div>
+              <TriageView
+                root={root}
+                thresholdBytes={walkThresholdBytes}
+                onJumpToWalk={(it: Triaged) => startWalk(it.node.path)}
+                onSelect={select}
+              />
+            </>
+          )}
+        </div>
+      );
+    }
+    if (tab.kind === 'script') {
+      // spec §4：脚本详情 tab —— Studio 全量挂载（buildScaffoldCards 复用）：
+      // 卡片展开详情、CleanupModal、问 AI、Steam Inspector 工具卡都在。
+      // 从侧栏脚本卡片点进来的 tab（title=脚本名）初始展开该卡片（focusId）。
+      const sc = scaffolds.find((s) => s.name === tab.title);
+      if (tab.title !== '脚本库' && !sc) {
+        return (
+          <div className="tbody">
+            <p className="muted">没有找到脚本「{tab.title}」。</p>
+          </div>
+        );
+      }
+      return (
+        <div className="center-body">
+          <ErrorBoundary fallbackLabel="脚本详情渲染失败">
+            <Studio focusId={sc?.id} />
+          </ErrorBoundary>
+        </div>
+      );
+    }
+    // records
+    return (
+      <div className="center-body">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '10px 14px 0' }}>
+          <div className="seg">
+            {RECORD_ACTIONS.map((a) => (
+              <button
+                key={a.id}
+                className={recordAction === a.id ? 'on' : ''}
+                onClick={() => setRecordAction(a.id)}
+              >
+                <Icon name={a.icon} size={12} /> {a.label}
+              </button>
+            ))}
+          </div>
+          <div className="seg">
+            {RECORD_SINCE.map((s) => (
+              <button
+                key={String(s.id)}
+                className={recordSinceDays === s.id ? 'on' : ''}
+                onClick={() => setRecordSinceDays(s.id)}
+              >
+                <Icon name={s.icon} size={12} /> {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <ErrorBoundary fallbackLabel="操作记录视图渲染失败">
+          <RecordsView actionFilter={recordAction} sinceDays={recordSinceDays} />
+        </ErrorBoundary>
+      </div>
+    );
+  };
 
-      <main style={{ gridTemplateColumns: `${leftWidth}px 4px 1fr 4px ${rightWidth}px` }}>
-        <aside className="left">
-          {root ? <TreeView root={root} selectedPath={selectedPath} onSelect={select} /> : <EmptyLeft />}
-        </aside>
+  // ── 入口页（无 tab 空态）：居中大标题 + 提示行 + 扫描行 + 六卡格 3×2 ──
+  const entryDrive = driveOf(pickedPath || 'C:\\');
+  // 六卡接线：空间图卡直接开空间图 tab（v5 预览行为）；未扫描时 tab 内有空态兜底
+  const renderEntry = () => {
+    const cards: { key: string; icon: string; cap: string; sub: string; onClick: () => void }[] = [
+      {
+        key: 'map-new',
+        icon: 'map',
+        cap: '空间图',
+        sub: root ? '新扫描' : `${entryDrive} 新扫描`,
+        onClick: () => openTab('map', `空间图 · ${entryDrive}`),
+      },
+      { key: 'walk', icon: 'list-checks', cap: '巡查', sub: '分诊报告', onClick: () => openTab('walk', '巡查') },
+      { key: 'lib', icon: 'package', cap: '脚本库', sub: `${scaffolds.length} 个`, onClick: () => openTab('script', '脚本库') },
+      { key: 'records', icon: 'history', cap: '操作记录', sub: 'undo', onClick: () => openTab('records', '操作记录') },
+      {
+        key: 'rescan',
+        icon: 'refresh-cw',
+        cap: '重新扫描',
+        sub: pickedPath || '先选择目录',
+        onClick: () => void scan(),
+      },
+      { key: 'settings', icon: 'settings', cap: '设置', sub: 'AI · 主题 · 字号', onClick: () => setShowSettings(true) },
+    ];
+    return (
+      <div className="entrypage">
+        <div className="entry-hello">开始清理 <b>{entryDrive}</b></div>
+        <div className="entry-hint">点卡片打开一个标签页 · 顶部可多开 · 可关闭 · 各区域可独立折叠</div>
+        <div className="entry-scan">
+          <Icon name="folder-open" size={14} />
+          <span className="path-clip" style={{ maxWidth: 320 }} title={pickedPath || undefined}>
+            {pickedPath || '选择磁盘或文件夹'}
+          </span>
+          <button className="btn ghost" onClick={() => void pickDirectory()}>选择…</button>
+          <button className="btn primary" onClick={() => void scan()} disabled={!pickedPath || scanning}>
+            <Icon name="scan-line" size={13} /> {scanning ? '扫描中…' : '扫描'}
+          </button>
+        </div>
+        <div className="entry-grid">
+          {cards.map((c) => (
+            <button key={c.key} className="entry-card" onClick={c.onClick}>
+              <span className="ico"><Icon name={c.icon} size={18} /></span>
+              <span className="cap"><b>{c.cap}</b><small>{c.sub}</small></span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
-        <Splitter onDrag={dragLeft} onDoubleClick={() => setLeftWidth(DEFAULT_LEFT)} />
+  // ── 侧栏四面板（spec §2；本阶段挂既有组件） ──
+  const renderSideBody = (side: SideId) => {
+    switch (side) {
+      case 'explorer':
+        return root ? (
+          <TreeView
+            root={root}
+            selectedPath={selectedPath}
+            onSelect={selectFromTree}
+            focusPath={treeFocusPath}
+          />
+        ) : (
+          <div className="side-info">
+            <p className="muted">先选一个文件夹并点「扫描」，这里会列出每个文件夹和文件（支持右键删除）。</p>
+          </div>
+        );
+      case 'queue':
+        return (
+          <div className="side-list">
+            <div className="side-line" onClick={() => openTab('walk', '巡查')} role="button" tabIndex={0}>
+              <Icon name="list-checks" size={14} />
+              <span className="side-line-name">已审阅 {Math.min(walkIndex, walkQueue.length)} / {walkQueue.length}</span>
+              <span className="side-line-meta">巡查 →</span>
+            </div>
+            <div className="side-line">
+              <Icon name="hard-drive" size={14} />
+              <span className="side-line-name">本次已释放</span>
+              <span className="side-line-meta">{formatBytes(reclaimedBytes)}</span>
+            </div>
+            <div className="side-line">
+              <Icon name="gauge" size={14} />
+              <span className="side-line-name">大小阈值</span>
+              <input
+                className="side-line-input"
+                type="number"
+                min={1}
+                max={100}
+                value={walkThresholdGB}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v) && v >= 1) setThreshold(v);
+                }}
+                title="巡查只审阅大于该体积的目录"
+              />
+              <span className="side-line-meta">GB</span>
+            </div>
+            {root && (
+              <div className="side-actions">
+                <button className="btn primary" onClick={() => startWalk()}>
+                  <Icon name="radar" size={14} /> 开始巡查
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      case 'scripts':
+        return <ScaffoldSideList onOpen={(sc) => openTab('script', sc.name)} />;
+      case 'records':
+        return (
+          <div className="side-list">
+            <div className="side-group">按动作</div>
+            <div className="seg">
+              {RECORD_ACTIONS.map((a) => (
+                <button
+                  key={a.id}
+                  className={recordAction === a.id ? 'on' : ''}
+                  onClick={() => setRecordAction(a.id)}
+                >
+                  <Icon name={a.icon} size={12} /> {a.label}
+                </button>
+              ))}
+            </div>
+            <div className="side-group">按时间</div>
+            <div className="seg">
+              {RECORD_SINCE.map((s) => (
+                <button
+                  key={String(s.id)}
+                  className={recordSinceDays === s.id ? 'on' : ''}
+                  onClick={() => setRecordSinceDays(s.id)}
+                >
+                  <Icon name={s.icon} size={12} /> {s.label}
+                </button>
+              ))}
+            </div>
+            <div className="side-actions">
+              <button className="btn ghost" onClick={() => openTab('records', '操作记录')}>
+                <Icon name="history" size={13} /> 打开操作记录
+              </button>
+            </div>
+          </div>
+        );
+    }
+  };
 
-        <section className="center">
-          <ChatPanel />
+  return (
+    <div className="app-v2">
+      {/* ── 顶带 35px ── */}
+      <header className="titlebar">
+        <span className="brand">
+          <Logo size={16} />
+          <span className="dot" />
+          DiskSift
+        </span>
+        <nav className="menus" aria-label="菜单占位">
+          <span>文件</span><span>编辑</span><span>查看</span><span>扫描</span><span>帮助</span>
+        </nav>
+        <div className="grow" />
+        <div className="rg" role="group" aria-label="区域开关">
+          <button
+            className={regions.sidebar ? 'on' : ''}
+            onClick={() => toggleRegion('sidebar')}
+            title="侧栏"
+            aria-label="侧栏开关"
+            aria-pressed={regions.sidebar}
+          >
+            <Icon name="panel-left" size={14} />
+          </button>
+          <button
+            className={regions.bottom ? 'on' : ''}
+            onClick={() => toggleRegion('bottom')}
+            title="底面板"
+            aria-label="底面板开关"
+            aria-pressed={regions.bottom}
+          >
+            <Icon name="panel-bottom" size={14} />
+          </button>
+          <button
+            className={regions.ai ? 'on' : ''}
+            onClick={() => toggleRegion('ai')}
+            title="AI 面板"
+            aria-label="AI 面板开关"
+            aria-pressed={regions.ai}
+          >
+            <Icon name="panel-right" size={14} />
+          </button>
+        </div>
+        <button
+          className="tb-icon"
+          onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+          title={theme === 'dark' ? '切换到浅色' : '切换到深色'}
+          aria-label="切换主题"
+        >
+          {theme === 'dark' ? '☀' : '☾'}
+        </button>
+      </header>
+
+      {/* ── 工作台 ── */}
+      <div className="workbench-v2">
+        <nav className="activitybar" aria-label="活动栏">
+          {SIDE_META.map((m) => (
+            <button
+              key={m.id}
+              className={'act' + (activeSide === m.id ? ' active' : '')}
+              onClick={() => clickAct(m.id)}
+              title={m.label}
+              aria-label={m.label}
+              aria-pressed={activeSide === m.id}
+            >
+              <Icon name={m.icon} size={20} />
+            </button>
+          ))}
+          <button
+            className="act act-bottom"
+            onClick={() => setShowSettings(true)}
+            title={advisorTag ? `设置 · 已绑定 ${advisorTag.provider}` : '设置 · AI 还没配置'}
+            aria-label="设置"
+          >
+            <Icon name="settings" size={20} />
+          </button>
+        </nav>
+
+        {regions.sidebar && (
+          <>
+            <aside className="sidebar" style={{ width: sidebarW }}>
+              <div className="side-head">
+                <Icon name={SIDE_META.find((m) => m.id === activeSide)?.icon ?? 'folder-tree'} size={13} />
+                {activeSide === 'scripts' ? `脚本列表 · ${scaffolds.length}` : SIDE_META.find((m) => m.id === activeSide)?.label}
+              </div>
+              <div className="side-body">{renderSideBody(activeSide)}</div>
+            </aside>
+            <Splitter onDrag={dragSidebar} onDoubleClick={() => setSidebarW(DEFAULT_SIDEBAR)} />
+          </>
+        )}
+
+        <section className="maincol">
+          {err && <div className="banner error" style={{ flexShrink: 0 }}>{err}</div>}
+          <div className="tabbar" role="tablist" aria-label="编辑器标签页">
+            <button className="tb-btn" onClick={goEntry} title="回入口页" aria-label="回入口页">
+              <Icon name="home" size={14} />
+            </button>
+            {openTabs.map((t) => (
+              <button
+                key={t.id}
+                className={'edittab' + (t.id === activeTabId ? ' active' : '')}
+                onClick={() => activateTab(t.id)}
+                role="tab"
+                aria-selected={t.id === activeTabId}
+                title={t.title}
+              >
+                <span className="ticon"><Icon name={TAB_ICONS[t.kind]} size={13} /></span>
+                <span className="tlabel">{t.title}</span>
+                <span
+                  className="x"
+                  role="button"
+                  aria-label={`关闭 ${t.title}`}
+                  onClick={(e) => { e.stopPropagation(); closeTab(t.id); }}
+                >
+                  <Icon name="x" size={12} />
+                </span>
+              </button>
+            ))}
+            <div className="grow" />
+            <button className="tb-btn" onClick={goEntry} title="新标签页（回入口页）" aria-label="新标签页">
+              <Icon name="plus" size={14} />
+            </button>
+          </div>
+
+          <div className="editorarea">
+            {activeTab ? renderTabContent(activeTab) : renderEntry()}
+          </div>
+
+          {regions.bottom && (
+            <>
+              <Splitter orientation="vertical" onDrag={dragBottom} onDoubleClick={() => setBottomH(DEFAULT_BOTTOM)} />
+              <section className="bottompanel" style={{ height: bottomH }}>
+                <div className="bp-head">
+                  <button className={'bptab' + (bpTab === 'out' ? ' on' : '')} onClick={() => setBpTab('out')}>
+                    <Icon name="terminal" size={13} /> 输出
+                  </button>
+                  <button className={'bptab' + (bpTab === 'diag' ? ' on' : '')} onClick={() => setBpTab('diag')}>
+                    <Icon name="activity" size={13} /> 诊断
+                  </button>
+                  <button className={'bptab' + (bpTab === 'records' ? ' on' : '')} onClick={() => setBpTab('records')}>
+                    <Icon name="history" size={13} /> 记录
+                  </button>
+                  <span className="bp-right">
+                    {scanning
+                      ? `${(scanProgress?.files ?? 0).toLocaleString()} 文件`
+                      : root
+                        ? `${formatBytes(root.size)} · ${root.file_count.toLocaleString()} 文件`
+                        : '就绪'}
+                  </span>
+                </div>
+                <div className="bp-body">
+                  {bpTab === 'out' && (
+                    <>
+                      {scanning && (
+                        <div className="scan-bar" style={{ marginBottom: 8 }}>
+                          <div
+                            className={'scan-bar-fill' + (scanTotalBytes && scanProgress ? ' determinate' : ' indeterminate')}
+                            style={
+                              scanTotalBytes && scanProgress
+                                ? { width: `${Math.min(99, (scanProgress.bytes / scanTotalBytes) * 100)}%` }
+                                : undefined
+                            }
+                          />
+                          <div className="scan-bar-label">
+                            {scanProgress
+                              ? `${scanProgress.files.toLocaleString()} 个文件 · ${formatBytes(scanTotalBytes ? Math.min(scanProgress.bytes, scanTotalBytes) : scanProgress.bytes)}${scanTotalBytes ? ` / ${formatBytes(scanTotalBytes)}` : ''}`
+                              : '准备扫描…'}
+                          </div>
+                        </div>
+                      )}
+                      {outLines.map((l, i) => (
+                        <div key={i}>
+                          <span className={`log-tag ${l.level}`}>{l.level}</span> {l.text}
+                        </div>
+                      ))}
+                    </>
+                  )}
+                  {bpTab === 'diag' && (
+                    diag ? (
+                      <DiagnosticsBar diag={diag} />
+                    ) : (
+                      <div>暂无诊断数据 — 先扫描一次。</div>
+                    )
+                  )}
+                  {bpTab === 'records' && (
+                    <ErrorBoundary fallbackLabel="记录简表渲染失败">
+                      <RecordsView actionFilter={recordAction} sinceDays={recordSinceDays} />
+                    </ErrorBoundary>
+                  )}
+                </div>
+              </section>
+            </>
+          )}
         </section>
 
-        <Splitter onDrag={dragRight} onDoubleClick={() => setRightWidth(DEFAULT_RIGHT)} />
+        {regions.ai && (
+          <>
+            <Splitter onDrag={dragAI} onDoubleClick={() => setAiW(DEFAULT_AI)} />
+            <aside className="aipanel" style={{ width: aiW }}>
+              <div className="ai-head">
+                <span className="hicon"><Icon name="bot" size={14} /></span> AI 顾问
+                {advisorTag && <span className="mono" title="当前 AI 提供商">{advisorTag.provider}</span>}
+                <div className="grow" />
+                <span className="ai-actions">
+                  <button title="新对话（清空当前多轮会话）" aria-label="新对话" onClick={resetChat}>
+                    <Icon name="square-pen" size={14} />
+                  </button>
+                  <button title="历史（暂未开放）" aria-label="历史">
+                    <Icon name="history" size={14} />
+                  </button>
+                  <button title="搜索（暂未开放）" aria-label="搜索">
+                    <Icon name="search" size={14} />
+                  </button>
+                  <button title="关闭 AI 面板" aria-label="关闭 AI 面板" onClick={() => toggleRegion('ai')}>
+                    <Icon name="x" size={14} />
+                  </button>
+                </span>
+              </div>
+              {/* ChatPanel 全量（spec §4）：多轮（最近 20 轮上下文）/ 图片（粘贴·拖拽·选择）/
+                  扫描完成自动总览 / Studio 问 AI 联动（studioRequest）。多轮历史不回退。 */}
+              <div className="ai-chat-host">
+                <ErrorBoundary fallbackLabel="AI 对话面板渲染失败">
+                  <ChatPanel />
+                </ErrorBoundary>
+              </div>
+            </aside>
+          </>
+        )}
+      </div>
 
-        <aside className="right">
-          <ErrorBoundary fallbackLabel="Studio 面板渲染失败">
-            <Studio />
-          </ErrorBoundary>
-        </aside>
-      </main>
-
-      <footer>
-        <span>Pinkbin v0.1.1 · {scaffolds.length} 个脚本</span>
-        <span>{root?.path ?? '还没扫描'}</span>
+      {/* ── 状态栏 22px ── */}
+      <footer className="statusbar">
+        <span className="path-clip" style={{ maxWidth: 280 }} title={(root?.path ?? pickedPath) || '未选择路径'}>
+          {(root?.path ?? pickedPath) || '未选择路径'}
+        </span>
+        <span>{root ? `${formatBytes(root.size)} · ${root.file_count.toLocaleString()} 文件` : '未扫描'}</span>
+        <div className="grow" />
+        <span>{advisorTag ? advisorTag.provider : 'AI 未配置'}</span>
+        <span>{scaffolds.length} 个脚本</span>
+        <button className="chip" onClick={cycleFsTier} title="界面字号（字号档位循环）">
+          A·{fsTier}
+        </button>
+        <span>v{APP_VERSION}</span>
       </footer>
 
       {showSettings && <Settings onClose={() => { setShowSettings(false); refreshAdvisorTag(); }} />}
-    </div>
-  );
-}
-
-function EmptyLeft() {
-  return (
-    <div className="empty">
-      <div className="empty-title">还没扫描</div>
-      <div className="empty-sub">在顶栏选一个文件夹，然后点「扫描」。<br />扫完之后，左侧会列出每个文件夹和文件。</div>
     </div>
   );
 }

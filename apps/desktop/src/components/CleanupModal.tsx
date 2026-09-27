@@ -4,6 +4,7 @@ import { api } from '../api';
 import { formatBytes } from '../format';
 import type { Node, Scaffold, Scope, CondaEnv } from '../types';
 import { ProgressButton } from './ProgressButton';
+import { Icon } from './Icon';
 
 interface ScopeSize {
   scope_id: string;
@@ -566,15 +567,15 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
         {coverageBreakdown && coverageBreakdown.outsideScope > 0 && (
           <div className="cleanup-coverage" title="清理脚本只覆盖缓存 / 接收的媒体 / 临时数据。聊天记录、收藏、账号、加密物料属于红线区域，永远不会被任何 scope 命中——这就是 13 GB 总量和 scope 加起来对不上的原因。">
             <div className="cleanup-coverage-row">
-              <span>📦 文件夹总计</span>
+              <span style={{display:"inline-flex",alignItems:"center",gap:5}}><Icon name="folder" size={13} /> 文件夹总计</span>
               <strong>{formatBytes(coverageBreakdown.folderTotal)}</strong>
             </div>
             <div className="cleanup-coverage-row">
-              <span>🧹 清理脚本覆盖</span>
+              <span style={{display:"inline-flex",alignItems:"center",gap:5}}><Icon name="package" size={13} /> 清理脚本覆盖</span>
               <strong>{formatBytes(coverageBreakdown.inScope)}</strong>
             </div>
             <div className="cleanup-coverage-row protected">
-              <span>🔒 红线保护（聊天记录·收藏·账号·加密物料 — 永远不动）</span>
+              <span style={{display:"inline-flex",alignItems:"center",gap:5}}><Icon name="shield" size={13} /> 红线保护（聊天记录·收藏·账号·加密物料 — 永远不动）</span>
               <strong>{formatBytes(coverageBreakdown.outsideScope)}</strong>
             </div>
           </div>

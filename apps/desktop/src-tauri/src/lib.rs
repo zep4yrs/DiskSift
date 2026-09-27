@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime};
 
 use include_dir::{include_dir, Dir};
 use pinkbin_advisor::{advise as advise_provider, AdvisorRequest, AdvisorResponse, Provider};
-use pinkbin_executor::{execute, Plan, UndoEntry};
+use pinkbin_executor::{execute, Plan, UndoEntry, DRY_RUN_REASON_PREFIX};
 use pinkbin_scaffold::{
     compile_all, detect_compiled, detect_for, expand_env, load_dir, parse_toml, CompiledScaffold,
     RecycleGranularity, Scaffold,
@@ -31,6 +31,10 @@ struct AppState {
     advisor: Mutex<Option<Provider>>,
     quarantine_root: PathBuf,
     undo_log: PathBuf,
+    /// %APPDATA% 存储目录，secure.json（DPAPI 加密的密钥仓库）落在这里。
+    data_dir: PathBuf,
+    /// secure.json 是 read-modify-write，用它把并发命令串行化，避免丢条目。
+    secure_io_lock: Mutex<()>,
 }
 
 #[tauri::command]
@@ -351,6 +355,26 @@ fn is_pruned_system_dir(name: &std::ffi::OsStr) -> bool {
     PRUNED_SYSTEM_DIRS.iter().any(|p| *p == lower)
 }
 
+/// Windows 上"目录联接 / 符号链接目录"的判别。std 的 readdir/symlink_metadata
+/// file_type 对 reparse point 不再报 is_dir()（rustc 1.97.1 实测：junction 与
+/// 目录符号链接均报 is_dir()=false / is_file()=false / is_symlink()=true），
+/// 所以不能拿 is_dir() 先分流——那会把联接项当"非目录"原样放行。
+/// is_symlink_dir() 才是正确判别（实测）：junction 与目录符号链接都命中，
+/// 符号链接文件（is_symlink_file()=true）与普通目录/文件都不命中。
+#[cfg(windows)]
+fn is_symlink_dir_entry(file_type: std::fs::FileType) -> bool {
+    use std::os::windows::fs::FileTypeExt;
+    file_type.is_symlink_dir()
+}
+
+/// 非 Windows 没有"目录联接"威胁模型：readdir 层无法区分符号链接指向目录
+/// 还是文件（都不带 is_dir()），且 follow_links(false) 本就不下钻，保持原
+/// 逻辑（不剪）。
+#[cfg(not(windows))]
+fn is_symlink_dir_entry(_file_type: std::fs::FileType) -> bool {
+    false
+}
+
 /// 本文件里所有 scaffold 侧路径扫描共用的 walker 构造器。两条策略集中在这里：
 /// (a) `skip_hidden(false)`——很多 app cache 落在 dotted 目录里，必须能进；
 /// (b) `process_read_dir` 在读目录时直接 prune 系统垃圾箱/卷元数据子树，
@@ -363,10 +387,21 @@ fn pinkbin_walker(root: &Path) -> jwalk::WalkDir {
         .process_read_dir(|_, _, _, children| {
             children.retain(|res| {
                 let Ok(entry) = res else { return true };
-                if !entry.file_type.is_dir() {
-                    return true;
+                let file_type = entry.file_type;
+                // BlueTidy 项目纪律：scope glob 以 literal_separator(false) 编译，
+                // `**` 会穿过 `/`。目录联接（junction / 符号链接目录）若被当普通
+                // 目录走进去，glob 就会匹配到联接指向的真实数据，清理计划会误删
+                // 联接目标里用户根本没勾的文件。所以在读目录时直接剪掉符号链接
+                // 目录项——只剪目录项，符号链接文件不在此列，按原逻辑继续。
+                // scope_sizes / execute_scope / dir_size_excluding 都走这个
+                // walker，剪一处全生效。
+                if is_symlink_dir_entry(file_type) {
+                    return false;
                 }
-                !is_pruned_system_dir(&entry.file_name)
+                if file_type.is_dir() {
+                    return !is_pruned_system_dir(&entry.file_name);
+                }
+                true
             });
         })
 }
@@ -709,7 +744,7 @@ async fn execute_scope(
     let plan = Plan {
         action,
         paths: matched,
-        reason: format!("Pinkbin scaffold {}/{} (Studio)", scaffold.id, scope.id),
+        reason: format!("DiskSift scaffold {}/{} (Studio)", scaffold.id, scope.id),
     };
     execute(&plan, dry_run, &state.undo_log, &state.quarantine_root).map_err(|e| e.to_string())
 }
@@ -906,12 +941,126 @@ fn reveal_in_explorer(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn execute_plan(
+async fn execute_plan(
     state: State<'_, AppState>,
     plan: Plan,
     dry_run: bool,
 ) -> Result<Vec<UndoEntry>, String> {
-    execute(&plan, dry_run, &state.undo_log, &state.quarantine_root).map_err(|e| e.to_string())
+    // execute() 是重同步 IO：清理一个 node_modules 是几万次文件操作，直接跑在
+    // Tauri 命令线程上会让整个 UI 冻死（plan.md §4.1 必修项 #5）。照本文件
+    // scan_path / execute_scope 的既有模式包进 spawn_blocking。undo_log /
+    // quarantine_root 是普通 PathBuf 字段（无锁），clone 进闭包即可——绝不把
+    // AppState 的 MutexGuard 带进阻塞线程。
+    let undo_log = state.undo_log.clone();
+    let quarantine_root = state.quarantine_root.clone();
+    tokio::task::spawn_blocking(move || {
+        execute(&plan, dry_run, &undo_log, &quarantine_root).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 操作记录视图数据面（redesign-spec §4）：读 undo.jsonl，倒序（最新在前）
+/// 返回最多 `limit` 条；`limit = None` 返回全部。坏行跳过并记 warn——
+/// append-only 文本日志混进一条脏数据不应该顶翻整个记录视图。
+#[tauri::command]
+async fn list_undo(
+    state: State<'_, AppState>,
+    limit: Option<u32>,
+) -> Result<Vec<UndoEntry>, String> {
+    let undo_log = state.undo_log.clone();
+    tokio::task::spawn_blocking(move || -> Result<Vec<UndoEntry>, String> {
+        let text = match std::fs::read_to_string(&undo_log) {
+            Ok(t) => t,
+            // 首次使用时文件还不存在——空记录不是错误。
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.to_string()),
+        };
+        let mut out: Vec<UndoEntry> = Vec::new();
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<UndoEntry>(line) {
+                Ok(e) => {
+                    // 复核修补：executor 修复前，dry-run 预览也会把 reason 前缀为
+                    // DRY_RUN_REASON_PREFIX 的条目 append 进 undo.jsonl。这些预览
+                    // 条目混进记录视图会误导用户（recycle 预览条目渲染「打开回收
+                    // 站」按钮）。undo.jsonl 是 append-only，存量文件里旧版本写入
+                    // 的预览条目不会消失，这里按前缀滤掉——该前缀全仓库只有
+                    // executor 的 dry_run 分支生成过，不会误伤真实操作记录。
+                    if e.reason.starts_with(DRY_RUN_REASON_PREFIX) {
+                        continue;
+                    }
+                    out.push(e);
+                }
+                Err(e) => tracing::warn!("undo.jsonl: skipping unparseable line: {e}"),
+            }
+        }
+        out.reverse();
+        if let Some(n) = limit {
+            out.truncate(n as usize);
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 还原一条 quarantine 记录：把隔离区的 destination 移回 source。
+/// 防线（spec §4「源存在则阻断」+ 防覆盖）：
+/// 1) 只接受 action=quarantine（recycle 条目走「打开回收站」引导，
+///    delete 条目无从还原）；
+/// 2) destination 必须存在，且必须位于本 app 的隔离区根之内——undo.jsonl
+///    是 append-only 文本，异常/手工数据可能把 destination 指到任意路径，
+///    这道检查防止把用户任意文件移走；
+/// 3) source 已存在则 Err，绝不覆盖。用 symlink_metadata 判存在：
+///    exists() 会跟随链接，悬空联接/符号链接存根同样占着源路径，rename
+///    落上去会失败或产生嵌套，一样要挡。
+/// 还原是单次 rename；跨盘隔离（quarantine 曾走 copy_then_remove 兜底）
+/// 的条目 rename 会失败并原样报错——还原宁缺毋错，不做复制兜底。
+#[tauri::command]
+fn restore_quarantine(state: State<'_, AppState>, entry: UndoEntry) -> Result<(), String> {
+    if entry.action != pinkbin_executor::Action::Quarantine {
+        return Err("仅隔离（quarantine）记录支持还原；回收站条目请用「打开回收站」".into());
+    }
+    let Some(dst) = entry.destination else {
+        return Err("该记录没有隔离区路径（destination 为空），无法还原".into());
+    };
+    if !dst.exists() {
+        return Err(format!("隔离区条目已不存在：{}", dst.display()));
+    }
+    if !dst.starts_with(&state.quarantine_root) {
+        return Err(format!(
+            "destination 不在隔离区内，拒绝还原：{}",
+            dst.display()
+        ));
+    }
+    let src = &entry.source;
+    if std::fs::symlink_metadata(src).is_ok() {
+        return Err(format!("源路径已存在，为防覆盖拒绝还原：{}", src.display()));
+    }
+    std::fs::rename(&dst, src)
+        .map_err(|e| format!("还原失败（{} → {}）：{e}", dst.display(), src.display()))
+}
+
+/// 打开系统回收站（spec §4：回收站条目是"引导"——东西已在系统回收站里，
+/// pinkbin 不代理还原，交给资源管理器）。
+#[tauri::command]
+fn open_recycle_bin() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg("shell:RecycleBinFolder")
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("open_recycle_bin 仅在 Windows 上实现".into())
+    }
 }
 
 /// Inspect the Steam install (registry + default paths). Returns a full
@@ -1254,6 +1403,215 @@ fn open_steam_url(action: String, appid: u64) -> Result<(), String> {
     }
 }
 
+// ── Secure storage（Windows DPAPI，对标 BlueTidy 密钥方案）────────────────────
+// AI 的 apiKey 不再明文落 localStorage：前端经 secure_set 送达，这里用 DPAPI
+// （CryptProtectData，密文绑定当前 Windows 用户）加密后 base64 存进 %APPDATA%
+// 存储目录的 secure.json。纪律：明文与密钥材料绝不进日志——错误信息只带
+// key 名与 OS 错误，不带任何数据内容。
+
+#[tauri::command]
+fn secure_set(state: State<'_, AppState>, key: String, plain: String) -> Result<(), String> {
+    if key.is_empty() {
+        return Err("secure_set: key 不能为空".into());
+    }
+    let blob = secure::protect(plain.as_bytes())?;
+    let _guard = state.secure_io_lock.lock().unwrap();
+    let mut map = read_secure_map(&state.data_dir)?;
+    map.insert(key, blob);
+    write_secure_map(&state.data_dir, &map)
+}
+
+/// 条目缺失 / 解密失败（secure.json 被拷到别的用户或机器）一律返回 None——
+/// 调用方把 None 当"没配密钥"处理，引导用户回 Settings 重新保存即可。
+#[tauri::command]
+fn secure_get(state: State<'_, AppState>, key: String) -> Option<String> {
+    let _guard = state.secure_io_lock.lock().unwrap();
+    let map = read_secure_map(&state.data_dir).ok()?;
+    let b64 = map.get(&key)?;
+    String::from_utf8(secure::unprotect(b64)?).ok()
+}
+
+fn secure_file_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("secure.json")
+}
+
+fn read_secure_map(data_dir: &Path) -> Result<HashMap<String, String>, String> {
+    match std::fs::read_to_string(secure_file_path(data_dir)) {
+        Ok(text) => serde_json::from_str(&text).map_err(|e| format!("secure.json 解析失败: {e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
+        Err(e) => Err(format!("secure.json 读取失败: {e}")),
+    }
+}
+
+/// temp + rename：写一半崩溃不会留下被截断的 secure.json（密钥丢了用户就得重填）。
+fn write_secure_map(data_dir: &Path, map: &HashMap<String, String>) -> Result<(), String> {
+    std::fs::create_dir_all(data_dir).map_err(|e| format!("secure 目录创建失败: {e}"))?;
+    let text = serde_json::to_string(map).map_err(|e| format!("secure.json 序列化失败: {e}"))?;
+    let tmp = data_dir.join("secure.json.tmp");
+    std::fs::write(&tmp, text).map_err(|e| format!("secure.json 写入失败: {e}"))?;
+    std::fs::rename(&tmp, secure_file_path(data_dir))
+        .map_err(|e| format!("secure.json 替换失败: {e}"))
+}
+
+/// DPAPI + base64。密文用 CryptProtectData 的当前用户作用域——拷走 secure.json
+/// 的攻击者在另一台机器/用户下解不开（unprotect 返回 None）。
+#[cfg(windows)]
+mod secure {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Cryptography::{
+        CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+    };
+
+    const B64_ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    pub fn base64_encode(data: &[u8]) -> String {
+        let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+        for chunk in data.chunks(3) {
+            let n = (chunk[0] as u32) << 16
+                | (*chunk.get(1).unwrap_or(&0) as u32) << 8
+                | *chunk.get(2).unwrap_or(&0) as u32;
+            out.push(B64_ALPHABET[(n >> 18) as usize & 63] as char);
+            out.push(B64_ALPHABET[(n >> 12) as usize & 63] as char);
+            out.push(if chunk.len() > 1 {
+                B64_ALPHABET[(n >> 6) as usize & 63] as char
+            } else {
+                '='
+            });
+            out.push(if chunk.len() > 2 {
+                B64_ALPHABET[n as usize & 63] as char
+            } else {
+                '='
+            });
+        }
+        out
+    }
+
+    pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
+        fn val(c: u8) -> Option<u32> {
+            match c {
+                b'A'..=b'Z' => Some((c - b'A') as u32),
+                b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+                b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+                b'+' => Some(62),
+                b'/' => Some(63),
+                _ => None,
+            }
+        }
+        let bytes: Vec<u8> = s.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+        let pad = bytes.iter().rev().take_while(|&&b| b == b'=').count();
+        let body = &bytes[..bytes.len() - pad];
+        let mut out = Vec::with_capacity(body.len() * 3 / 4);
+        for chunk in body.chunks(4) {
+            match chunk.len() {
+                4 => {
+                    let n = (val(chunk[0])? << 18)
+                        | (val(chunk[1])? << 12)
+                        | (val(chunk[2])? << 6)
+                        | val(chunk[3])?;
+                    out.extend_from_slice(&[(n >> 16) as u8, (n >> 8) as u8, n as u8]);
+                }
+                3 => {
+                    let n = (val(chunk[0])? << 18) | (val(chunk[1])? << 12) | (val(chunk[2])? << 6);
+                    out.extend_from_slice(&[(n >> 16) as u8, (n >> 8) as u8]);
+                }
+                2 => {
+                    let n = (val(chunk[0])? << 18) | (val(chunk[1])? << 12);
+                    out.push((n >> 16) as u8);
+                }
+                // 剩 1 个字符不是合法 base64。
+                _ => return None,
+            }
+        }
+        Some(out)
+    }
+
+    /// 加密并 base64。错误只带 OS 错误码，绝不含明文。
+    pub fn protect(plain: &[u8]) -> Result<String, String> {
+        // SAFETY: 输入指针指向调用方持有的有效缓冲；输出缓冲由 DPAPI 分配，
+        // 成功后必须 LocalFree（下面所有 return 路径都先拷贝再释放）。
+        unsafe {
+            let input = CRYPT_INTEGER_BLOB {
+                cbData: plain.len() as u32,
+                pbData: plain.as_ptr() as *mut u8,
+            };
+            let mut output = CRYPT_INTEGER_BLOB {
+                cbData: 0,
+                pbData: std::ptr::null_mut(),
+            };
+            let ok = CryptProtectData(
+                &input,
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut output,
+            );
+            if ok == 0 {
+                return Err(format!(
+                    "CryptProtectData 失败: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            let b64 = base64_encode(std::slice::from_raw_parts(
+                output.pbData,
+                output.cbData as usize,
+            ));
+            LocalFree(output.pbData as _);
+            Ok(b64)
+        }
+    }
+
+    /// 解 base64 并解密。格式错误 / 篡改 / 跨用户一律 None，不给部分输出。
+    pub fn unprotect(b64: &str) -> Option<Vec<u8>> {
+        let blob = base64_decode(b64)?;
+        // SAFETY: 同 protect；额外释放 CryptUnprotectData 返回的描述串。
+        unsafe {
+            let input = CRYPT_INTEGER_BLOB {
+                cbData: blob.len() as u32,
+                pbData: blob.as_ptr() as *mut u8,
+            };
+            let mut output = CRYPT_INTEGER_BLOB {
+                cbData: 0,
+                pbData: std::ptr::null_mut(),
+            };
+            let mut descr: windows_sys::core::PWSTR = std::ptr::null_mut();
+            let ok = CryptUnprotectData(
+                &input,
+                &mut descr,
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut output,
+            );
+            if ok == 0 {
+                return None;
+            }
+            let out = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
+            if !descr.is_null() {
+                LocalFree(descr as _);
+            }
+            LocalFree(output.pbData as _);
+            Some(out)
+        }
+    }
+}
+
+/// 非 Windows 桌面构建不是发布目标：与其给一个假安全的替代实现，不如直接
+/// 失败（secure_set 报错、secure_get 返回 None），前端保留旧行为。
+#[cfg(not(windows))]
+mod secure {
+    pub fn protect(_plain: &[u8]) -> Result<String, String> {
+        Err("secure storage 仅支持 Windows（DPAPI）".into())
+    }
+
+    pub fn unprotect(_b64: &str) -> Option<Vec<u8>> {
+        None
+    }
+}
+
 #[tauri::command]
 fn set_advisor(
     state: State<'_, AppState>,
@@ -1320,6 +1678,8 @@ pub fn run() {
                 advisor: Mutex::new(None),
                 quarantine_root,
                 undo_log,
+                data_dir,
+                secure_io_lock: Mutex::new(()),
             });
             Ok(())
         })
@@ -1335,7 +1695,12 @@ pub fn run() {
             inspect_path,
             reveal_in_explorer,
             execute_plan,
+            list_undo,
+            restore_quarantine,
+            open_recycle_bin,
             set_advisor,
+            secure_set,
+            secure_get,
             volume_info,
             list_steam_games,
             list_steam_workshop_items,
@@ -1471,5 +1836,89 @@ mod tests {
             !leaked,
             "lowercase $recycle.bin variant must also be pruned"
         );
+    }
+
+    /// BlueTidy 项目纪律回归：符号链接目录项必须在读目录时被剪掉，让
+    /// `**` glob（literal_separator=false）无法越过联接匹配到联接指向的
+    /// 真实数据。Windows 上创建符号链接目录需要管理员或开发者模式；无权限
+    /// 的环境直接跳过（不判失败）。junction 与符号链接目录在 std 的
+    /// readdir file_type 上均报 is_symlink()=true 且 is_symlink_dir()=true
+    /// （rustc 1.97.1 实测），共用 is_symlink_dir_entry 这条剪枝路径——
+    /// 本测试覆盖的是符号链接目录形态。
+    #[cfg(windows)]
+    #[test]
+    fn pinkbin_walker_skips_symlinked_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        let real = root.join("real_target");
+        fs::create_dir_all(&real).unwrap();
+        fs::write(real.join("precious.txt"), b"x").unwrap();
+
+        if std::os::windows::fs::symlink_dir(&real, root.join("link_probe")).is_err() {
+            return; // 无 SeCreateSymbolicLinkPrivilege / 开发者模式：跳过
+        }
+
+        let paths: Vec<String> = pinkbin_walker(root)
+            .into_iter()
+            .flatten()
+            .map(|e| e.path().to_string_lossy().replace('\\', "/"))
+            .collect();
+
+        assert!(
+            paths
+                .iter()
+                .any(|p| p.ends_with("/real_target/precious.txt")),
+            "联接外的真实数据必须仍然可见: {paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|p| p.contains("link_probe")),
+            "符号链接目录项（本体与其内容）必须被剪掉: {paths:?}"
+        );
+    }
+
+    /// base64 是 DPAPI 密文的唯一存盘编码，错一位密钥就再也解不回来。
+    /// 已知向量锁 RFC 4648，roundtrip 锁三种余数长度。
+    #[cfg(windows)]
+    #[test]
+    fn base64_known_vectors_and_roundtrip() {
+        for (input, want) in [
+            (&b""[..], ""),
+            (b"f", "Zg=="),
+            (b"fo", "Zm8="),
+            (b"foo", "Zm9v"),
+            (b"foob", "Zm9vYg=="),
+            (b"fooba", "Zm9vYmE="),
+            (b"foobar", "Zm9vYmFy"),
+        ] {
+            assert_eq!(secure::base64_encode(input), want);
+            assert_eq!(secure::base64_decode(want).as_deref(), Some(input));
+        }
+        for len in [0usize, 1, 2, 3, 57, 255, 4096] {
+            let data: Vec<u8> = (0..=255u8).cycle().take(len).collect();
+            let back = secure::base64_decode(&secure::base64_encode(&data)).unwrap();
+            assert_eq!(back, data, "roundtrip failed at len={len}");
+        }
+        // 非法字符 / 悬空单字符必须拒绝而不是吐出错误字节。
+        assert_eq!(secure::base64_decode("Zm9*"), None);
+        assert_eq!(secure::base64_decode("Z"), None);
+    }
+
+    /// secure.json 读-改-写与 NotFound → 空表语义。
+    #[test]
+    fn secure_map_file_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        assert!(read_secure_map(dir).unwrap().is_empty(), "缺文件应得空表");
+        let mut map = read_secure_map(dir).unwrap();
+        map.insert("advisor.apiKey".into(), "Zm9vYmFy".into());
+        write_secure_map(dir, &map).unwrap();
+        let map2 = read_secure_map(dir).unwrap();
+        assert_eq!(
+            map2.get("advisor.apiKey").map(String::as_str),
+            Some("Zm9vYmFy")
+        );
+        // temp 文件不残留。
+        assert!(!dir.join("secure.json.tmp").exists());
     }
 }

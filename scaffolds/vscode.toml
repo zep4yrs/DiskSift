@@ -1,0 +1,123 @@
+# VS Code 清理 scaffold —— 设计依据 docs/research/python-dev-cleanup-landscape.md §2.2，
+# 并按 CLAUDE.md 实测回环纪律做过本机勘测（2026-09-27，Windows 11，%APPDATA%/Code
+# 真实目录，只列目录名）。
+#
+# apps/desktop/src/mocks.ts 里的 legacy 定义（**/logs/**、**/CachedData/** 无锚定裸
+# glob，detect 只有 **/Code/User）只当路径参考，没有拷贝：裸 **/logs/** 会命中全机
+# 任意应用的日志目录。本文件所有 scope 都锚定 **/{Code,Code - Insiders}/<桶> 两级。
+#
+# 实测修正（相对调研文档 §2.2.2）：
+# - 本机 GPU 着色器缓存是 DawnGraphiteCache + DawnWebGPUCache，没有 DawnCache
+#   （老版 Electron 才有）——三者都放进 alternation 兼容新旧版本。
+# - 多出调研文档没列的 CachedConfigurations（配置快照缓存），并入 cached-extensions。
+# - %LOCALAPPDATA%/Code 在本机不存在（文档说的"镜像"未落盘）——detect 保留该条目，
+#   scope 用 ** 锚定，旧版本若真有该目录也会被覆盖。
+# - 实测存在但拿不准 / 含登录态的目录全部划红线：DIPS、clp、SharedStorage(-wal)、
+#   Shared Dictionary、machineid、Network（cookie）、Local/Session Storage、
+#   Preferences、Local State、Dictionaries、WebStorage、Backups（工作区备份）、
+#   languagepacks.json。
+#
+# lint:  cargo run -p pinkbin-scaffold-lint -- scaffolds/vscode.toml
+# test:  cargo test -p pinkbin-scaffold --test vscode_safety
+
+id          = "vscode"
+name        = "VS Code"
+homepage    = "https://code.visualstudio.com/"
+risk        = "low"
+disclaimer  = """\
+只清可重生的缓存与日志（界面缓存 / CachedData / 扩展下载缓存 / Service Worker / \
+blob_storage / Crashpad / 会话日志）。删掉后 VS Code 下次启动会自动重建或重新下载，\
+首次启动会略慢。绝不删 User/ 整棵用户数据：settings.json、keybindings.json、snippets、\
+globalStorage/state.vscdb（扩展状态总库，Copilot 等扩展登录 token 都在里面）、\
+storage.json、workspaceStorage（各工作区状态）、History（本地编辑历史）、\
+chatLanguageModels.json、Backups（工作区备份）。绝不删 ~/.vscode/extensions/ 扩展本体、\
+argv.json、cli/。绝不删 machineid、Network（含登录 cookie）、Local Storage、\
+Session Storage、Preferences、Local State、Dictionaries、DIPS、clp、SharedStorage、\
+Shared Dictionary（Chromium 压缩字典缓存）。\
+所有删除走系统回收站，可随时还原。清理前请先退出 VS Code，否则运行中被占用的文件会跳过。\
+"""
+
+# ---------------------------------------------------------------------------
+# detect：Windows 默认路径 + env 展开 + ** 通配兜底（兼容改盘符 / 重定位 / Insiders）。
+# ⚠ `**/Code` 是后缀语义（globset 的 ** 可跨段），任何以 "Code" 结尾的目录
+# （例如克隆的 microsoft/vscode 源码仓库）都会被标出来——仅影响 UI 显示，
+# 不影响清理：scope 全部要求 <实例>/<桶> 两级同时出现才会命中。
+# ---------------------------------------------------------------------------
+
+detect = [
+  "%APPDATA%/Code",
+  "%APPDATA%/Code - Insiders",
+  "%LOCALAPPDATA%/Code",
+  "%LOCALAPPDATA%/Code - Insiders",
+  "%USERPROFILE%/.vscode",
+  "${HOME}/.vscode",
+  "**/Code",
+  "**/Code - Insiders",
+]
+
+# name_contains 只放 "code" 这个短片段——VS Code 数据根目录名就叫 Code / Code - Insiders，
+# 没有更长的不歧义片段可选。误报靠 must_have_child 兜住：真实数据根同时有 User/
+# （用户数据树）和 logs/（会话日志）两个子目录；随机叫 *code* 的目录两者都有的概率极低。
+[match]
+name_contains   = ["code"]
+must_have_child = ["User", "logs"]
+
+# ---------------------------------------------------------------------------
+# scope 全部锚定 **/{Code,Code - Insiders}/<桶>，一个 alternation 同时覆盖
+# 正式版 + Insiders（多实例）。几千小文件的桶（Chromium 壳层缓存）用
+# directory 粒度整桶回收（1 条回收站记录代替几千条，理由同 conda.toml）；
+# 文件数少、按会话/版本累积的桶（logs、CachedData、扩展下载缓存）用
+# file 粒度 + 时间保留。globalStorage / workspaceStorage / User/History
+# 一律不在 scope 内（用户数据，红线，见 vscode_safety.rs 断言）。
+# ---------------------------------------------------------------------------
+
+[[scope]]
+id                  = "shell-cache"
+label               = "界面缓存（Cache / Code Cache / GPUCache / Dawn GPU 缓存）"
+glob                = "**/{Code,Code - Insiders}/{Cache,Code Cache,GPUCache,DawnCache,DawnGraphiteCache,DawnWebGPUCache}"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id       = "cached-data"
+label    = "V8 字节码缓存（CachedData，按版本累积）"
+glob     = "**/{Code,Code - Insiders}/CachedData/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
+
+[[scope]]
+id       = "cached-extensions"
+label    = "扩展下载缓存（VSIX / 元数据 / Profile / 配置快照）"
+glob     = "**/{Code,Code - Insiders}/{CachedExtensions,CachedExtensionVSIXs,CachedProfilesData,CachedConfigurations}/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
+
+[[scope]]
+id                  = "service-worker"
+label               = "Service Worker 缓存"
+glob                = "**/{Code,Code - Insiders}/Service Worker"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id                  = "electron-extras"
+label               = "blob 存储与崩溃转储（blob_storage / Crashpad）"
+glob                = "**/{Code,Code - Insiders}/{blob_storage,Crashpad}"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id       = "logs"
+label    = "会话日志（logs/<时间戳>/）"
+glob     = "**/{Code,Code - Insiders}/logs/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "none" }

@@ -56,13 +56,16 @@ fn expand(s: &str) -> String {
     out
 }
 
-fn matching_scopes<'a>(
-    scopes: &'a [(String, globset::GlobSet)],
-    path: &str,
-) -> Vec<&'a str> {
+fn matching_scopes<'a>(scopes: &'a [(String, globset::GlobSet)], path: &str) -> Vec<&'a str> {
     scopes
         .iter()
-        .filter_map(|(id, gs)| if gs.is_match(path) { Some(id.as_str()) } else { None })
+        .filter_map(|(id, gs)| {
+            if gs.is_match(path) {
+                Some(id.as_str())
+            } else {
+                None
+            }
+        })
         .collect()
 }
 

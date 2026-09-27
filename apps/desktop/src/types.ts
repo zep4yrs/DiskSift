@@ -79,6 +79,8 @@ export interface UndoEntry {
   source: string;
   destination?: string | null;
   reason: string;
+  /** 受影响字节数。26.1.0 之前的历史行无此字段（undefined）；前端按 0 计。 */
+  bytes?: number | null;
 }
 
 /// Mirror of Rust's CondaEnv (apps/desktop/src-tauri/src/lib.rs). Returned

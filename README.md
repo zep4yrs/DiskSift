@@ -2,9 +2,11 @@
 
 <img src="apps/desktop/src-tauri/icons/128x128.png" alt="Pinkbin" width="96" height="96">
 
-# Pinkbin
+# DiskSift
 
-**扫盘 · 看懂 · 一条一条删干净。**
+**筛出你盘里能清的。** 秒扫 · AI 看懂 · 红线保护 · 一条一条放心删。
+
+> **DiskSift 是 [Pinkbin](https://github.com/cccyd2003-qwq/pinkbin)（MIT）的重构发行版**：保留其全部安全架构（scaffold 红线断言 / 两步确认 / 默认回收站 / undo 台账），前端工作台与视觉完全重塑（IDE 式工作台 · 浏览器式多标签页 · AI 侧板）。感谢原作者 cccyd2003-qwq 与贡献者 jtlyu。
 
 开源磁盘清理工具。秒扫整盘看空间分配，把不认识的文件夹拖给 AI 让它告诉你这是什么、能不能删、删了会丢什么，再按 scope 逐项放心删——默认进回收站，永远不读你的文件内容。
 

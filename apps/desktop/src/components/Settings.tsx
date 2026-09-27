@@ -6,6 +6,7 @@ import {
   loadSettings,
   saveSettings,
   clearSettings,
+  ensureApiKey,
   detectProvider,
   type Provider,
 } from '../advisorClient';
@@ -43,10 +44,14 @@ export function Settings({ onClose }: Props) {
     const existing = loadSettings();
     if (existing) {
       setModel(existing.model);
-      setApiKey(existing.apiKey);
       setBaseUrl(existing.baseUrl);
       setProviderOverride(existing.providerOverride);
       setSaved(true);
+      // 新格式下 localStorage 无明文（hasKey 标记）：异步从 DPAPI secure
+      // storage 取回明文回填输入框，让用户能看/改 key，而不是留一个假输入框。
+      ensureApiKey(existing).then((key) => {
+        if (key) setApiKey(key);
+      });
     }
   }, []);
 
@@ -59,11 +64,13 @@ export function Settings({ onClose }: Props) {
     if (!model.trim())   { setErr('请填 Model 名'); return; }
     if (needsKey && !apiKey.trim()) { setErr('请填 API Key'); return; }
     try {
-      saveSettings({ provider, model, apiKey, baseUrl, providerOverride });
+      // saveSettings 内部完成分流：Tauri 下明文进 DPAPI 加密存储，localStorage
+      // 只落 hasKey 标记；浏览器预览模式没有后端，保持旧的全量 localStorage。
+      await saveSettings({ provider, model, apiKey, baseUrl, providerOverride });
       if (isTauri) {
         await api.setAdvisor(provider, model, needsKey ? apiKey : undefined, baseUrl);
       }
-      setMsg('已保存 · key 只存在你本机 localStorage');
+      setMsg(isTauri ? '已保存 · key 已用 Windows DPAPI 加密存本机' : '已保存 · key 只存在你本机 localStorage');
       setSaved(true);
     } catch (e) {
       setErr(String(e));
@@ -180,7 +187,7 @@ export function Settings({ onClose }: Props) {
         </div>
 
         <p className="muted small" style={{ marginTop: 4 }}>
-          Pinkbin 只把目录元数据发给 AI（路径、大小、文件数、扩展名分布、抽样路径），<strong>不会</strong>读取或上传文件内容。
+          DiskSift 只把目录元数据发给 AI（路径、大小、文件数、扩展名分布、抽样路径），<strong>不会</strong>读取或上传文件内容。
         </p>
       </div>
     </div>

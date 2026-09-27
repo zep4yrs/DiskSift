@@ -1,18 +1,132 @@
-import { useState } from 'react';
-import { ChevronRight, ChevronDown, FolderOpen, Copy } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronRight, ChevronDown, FolderOpen, Copy, Trash2, Recycle } from 'lucide-react';
 import type { Node } from '../types';
 import { formatBytes, formatCount } from '../format';
 import { api } from '../api';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
+import { Icon } from './Icon';
 
 type Props = {
   root: Node;
   selectedPath: string | null;
   onSelect: (p: string) => void;
+  /** 双向同步导航（sync-nav）：外部聚焦路径（空间图下钻/面包屑返回）。
+   *  变化时祖先链全部自动展开 + scrollIntoView；不在扫描根子树内则不动。 */
+  focusPath?: string | null;
 };
 
-export function TreeView({ root, selectedPath, onSelect }: Props) {
+// DFS 找 root → 目标 的节点链（含两端）；目标不在子树内返回 null。
+// 用真实节点链而非字符串拼路径：路径分隔符/盘符写法由扫描端决定，这里不猜。
+function chainTo(n: Node, p: string): Node[] | null {
+  if (n.path === p) return [n];
+  for (const c of n.children) {
+    const sub = chainTo(c, p);
+    if (sub) return [n, ...sub];
+  }
+  return null;
+}
+
+export function TreeView({ root, selectedPath, onSelect, focusPath }: Props) {
   const [ctx, setCtx] = useState<ContextMenuState | null>(null);
+
+  // ── 受控展开（sync-nav：Row 的 open 状态提升到这里）──────────────────
+  // key=目录 path。初值 = 仅根展开（等价旧 initialOpen）。新扫描（root 变化）
+  // 在渲染期重置（React「props 变化时调整状态」范式，避免旧键残留/首帧塌缩）。
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => ({ [root.path]: true }));
+  const [prevRoot, setPrevRoot] = useState(root);
+  // 行元素注册表：path → DOM，供 focusPath 滚动定位用
+  const rowEls = useRef<Map<string, HTMLDivElement>>(new Map());
+  if (prevRoot !== root) {
+    setPrevRoot(root);
+    setExpanded({ [root.path]: true });
+    rowEls.current.clear();
+  }
+
+  // focusPath 的祖先链（root → … → 父目录），渲染期派生：行可见性直接吃它，
+  // 展开在本次 commit 就生效，滚动 effect 拿到的 DOM 一定是最新布局。
+  const focusAncestors = useMemo<string[] | null>(() => {
+    if (!focusPath) return null;
+    const chain = chainTo(root, focusPath);
+    if (!chain) return null; // 不在扫描根子树内（跨盘等）：不动
+    return chain.slice(0, -1).map((a) => a.path);
+  }, [focusPath, root]);
+
+  // 滚动定位：focusPath/祖先链变化后的那次 commit 里执行（行已渲染，元素可查）
+  useEffect(() => {
+    if (!focusPath) return;
+    rowEls.current.get(focusPath)?.scrollIntoView({ block: 'nearest' });
+  }, [focusPath, focusAncestors]);
+
+  const toggleOpen = (p: string) => setExpanded((m) => ({ ...m, [p]: !m[p] }));
+  const registerEl = (p: string, el: HTMLDivElement | null) => {
+    if (el) rowEls.current.set(p, el);
+    else rowEls.current.delete(p);
+  };
+  // 行可见性 = 手动展开 ∪ focusPath 祖先链（渲染期派生，外部聚焦无需 effect 抢跑）
+  const isOpen = (p: string) => !!expanded[p] || (focusAncestors?.includes(p) ?? false);
+
+  // ── 右键「进回收站（可还原）」（上游 #22①）──────────────────────────
+  // 两步确认纪律与 TriageView 一键清扫同款：首点进入预备态，5 秒内再点才执行，
+  // 超时自动复位。禁 window.confirm（Tauri webview 里行为不稳定）。
+  const [recycleTarget, setRecycleTarget] = useState<Node | null>(null);
+  const [recycleArmed, setRecycleArmed] = useState(false);
+  const [recycleBusy, setRecycleBusy] = useState(false);
+  const [recycleErr, setRecycleErr] = useState<string | null>(null);
+  const [recycleDone, setRecycleDone] = useState(false);
+  const recycleArmTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (recycleArmTimer.current !== null) window.clearTimeout(recycleArmTimer.current);
+  }, []);
+
+  const openRecycleConfirm = (node: Node) => {
+    setRecycleTarget(node);
+    setRecycleArmed(false);
+    setRecycleBusy(false);
+    setRecycleErr(null);
+    setRecycleDone(false);
+  };
+
+  const closeRecycleConfirm = () => {
+    if (recycleBusy) return;
+    if (recycleArmTimer.current !== null) {
+      window.clearTimeout(recycleArmTimer.current);
+      recycleArmTimer.current = null;
+    }
+    setRecycleTarget(null);
+    setRecycleArmed(false);
+  };
+
+  const confirmRecycle = async () => {
+    if (!recycleTarget) return;
+    if (!recycleArmed) {
+      setRecycleErr(null);
+      setRecycleArmed(true);
+      if (recycleArmTimer.current !== null) window.clearTimeout(recycleArmTimer.current);
+      recycleArmTimer.current = window.setTimeout(() => {
+        recycleArmTimer.current = null;
+        setRecycleArmed(false);
+      }, 5000);
+      return;
+    }
+    if (recycleArmTimer.current !== null) {
+      window.clearTimeout(recycleArmTimer.current);
+      recycleArmTimer.current = null;
+    }
+    setRecycleArmed(false);
+    setRecycleBusy(true);
+    setRecycleErr(null);
+    try {
+      await api.execute(
+        { action: 'recycle', paths: [recycleTarget.path], reason: '树视图右键：移入回收站（可还原）' },
+        false,
+      );
+      setRecycleDone(true);
+    } catch (e) {
+      setRecycleErr(String(e));
+    } finally {
+      setRecycleBusy(false);
+    }
+  };
 
   const openCtx = (e: React.MouseEvent, node: Node) => {
     e.preventDefault();
@@ -30,6 +144,12 @@ export function TreeView({ root, selectedPath, onSelect }: Props) {
           icon: <Copy size={12} />,
           onClick: () => { navigator.clipboard?.writeText(node.path).catch(() => { /* ignore */ }); },
         },
+        {
+          label: '进回收站（可还原）',
+          icon: <Recycle size={12} />,
+          danger: true,
+          onClick: () => openRecycleConfirm(node),
+        },
       ],
     });
   };
@@ -40,7 +160,7 @@ export function TreeView({ root, selectedPath, onSelect }: Props) {
         <div className="col-name">文件夹</div>
         <div className="col-pct">父级 %</div>
         <div className="col-size">大小</div>
-        <div className="col-count">项目</div>
+        <div className="col-count">文件数</div>
       </div>
       <div className="tree-body">
         <Row
@@ -50,57 +170,77 @@ export function TreeView({ root, selectedPath, onSelect }: Props) {
           selectedPath={selectedPath}
           onSelect={onSelect}
           onCtx={openCtx}
-          initialOpen
+          isOpen={isOpen}
+          onToggle={toggleOpen}
+          registerEl={registerEl}
         />
       </div>
       <ContextMenu state={ctx} onClose={() => setCtx(null)} />
+
+      {/* 两步确认小卡（armed 纪律，禁 window.confirm） */}
+      {recycleTarget && (
+        <div className="modal-bg" onClick={closeRecycleConfirm}>
+          <div className="card recycle-confirm" onClick={(e) => e.stopPropagation()}>
+            <span className="sec-title">进回收站（可还原）</span>
+            <div className="cell">
+              <span className="cell-label">目标</span>
+              <span className="cell-value path-clip" title={recycleTarget.path}>{recycleTarget.path}</span>
+            </div>
+            <div className="cell">
+              <span className="cell-label">大小</span>
+              <span className="cell-value">{formatBytes(recycleTarget.size)}</span>
+            </div>
+            <p className="muted">
+              移入系统回收站，随时可还原。两步确认：第一次点击进入预备态，5 秒内再点才执行。
+              树里的条目要等下次扫描后才会消失。
+            </p>
+            {recycleErr && <div className="error">{recycleErr}</div>}
+            {recycleDone ? (
+              <button className="btn" onClick={() => setRecycleTarget(null)}>已移入回收站 · 关闭</button>
+            ) : (
+              <div className="overview-actions">
+                <button className="btn" disabled={recycleBusy} onClick={closeRecycleConfirm}>取消</button>
+                <button
+                  className={'btn danger' + (recycleArmed ? ' armed' : '')}
+                  disabled={recycleBusy}
+                  title={recycleArmed ? '5 秒内再点一次执行' : '点一次进入预备状态，再点一次才执行'}
+                  onClick={confirmRecycle}
+                >
+                  <Trash2 size={13} /> {recycleArmed ? '再点一次确认移入回收站' : '进回收站（可还原）'}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function FolderGlyph({ open }: { open: boolean }) {
-  // Windows-style yellow folder (closed/open variants).
-  if (open) {
-    return (
-      <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>
-        <path d="M1.5 4.5 A1 1 0 0 1 2.5 3.5 H6 L7.5 5 H13.5 A1 1 0 0 1 14.5 6 V6.8 H3.6 L1.5 12.5 Z" fill="#f5c75e" stroke="#9c7c2a" strokeWidth="0.7" />
-        <path d="M3.6 6.8 H15.2 L13.2 12.5 H1.5 Z" fill="#ffd97a" stroke="#9c7c2a" strokeWidth="0.7" strokeLinejoin="round" />
-      </svg>
-    );
-  }
+// 图标纪律（redesign-spec 硬约束：一律 Lucide 提取路径，禁手绘 SVG）：
+// 原 FolderGlyph/FileGlyph 为手绘 Windows 风格 SVG（#f5c75e/#9c7c2a/#ffd97a/#5b4d57
+// 等硬编码色 + 按扩展名着色的装饰性 tint，均未登记 spec §7 豁免清单），已整段移除，
+// 改用 docs/_icons.json 的 Lucide 提取路径（folder / folder-open / file），
+// 颜色走 currentColor → .tree-row .glyph 的 --fg-muted（spec §1：次级图标色）。
+
+// 占用环：替代旧长条 pct-bar（用户 2026-09-27 拍板）。环 = 进度语义（spec §1 允许清单），
+// 永远可见——旧长条填充色 --pink 别名桥在 IDE 色板下解析为白色系，导致只有选中行显形。
+function PctRing({ pct }: { pct: number }) {
+  const r = 6;
+  const c = 2 * Math.PI * r;
+  const clamped = Math.max(0, Math.min(100, pct));
   return (
-    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>
-      <path d="M1.5 4.5 A1 1 0 0 1 2.5 3.5 H6 L7.5 5 H13.5 A1 1 0 0 1 14.5 6 V12.5 A1 1 0 0 1 13.5 13.5 H2.5 A1 1 0 0 1 1.5 12.5 Z" fill="#f5c75e" stroke="#9c7c2a" strokeWidth="0.8" strokeLinejoin="round" />
-      <path d="M1.5 6 H14.5" stroke="#9c7c2a" strokeWidth="0.5" opacity="0.5" />
+    <svg className="pct-ring" width="15" height="15" viewBox="0 0 16 16" aria-hidden>
+      <circle cx="8" cy="8" r={r} fill="none" stroke="var(--border)" strokeWidth="2.5" />
+      {clamped > 0 && (
+        <circle
+          cx="8" cy="8" r={r} fill="none" stroke="var(--accent)" strokeWidth="2.5"
+          strokeDasharray={`${(clamped / 100) * c} ${c}`} strokeLinecap="round"
+          transform="rotate(-90 8 8)"
+        />
+      )}
     </svg>
   );
-}
-
-function FileGlyph({ ext }: { ext: string }) {
-  // Pick a tint by file family — keeps the tree visually grep-able like Explorer.
-  const fill =
-    /^(exe|msi|cmd|bat|com)$/i.test(ext) ? '#cfe6ff' :
-    /^(dll|sys|drv|ocx)$/i.test(ext) ? '#dfd6f7' :
-    /^(zip|rar|7z|tar|gz|xz)$/i.test(ext) ? '#ffd6c0' :
-    /^(png|jpg|jpeg|gif|bmp|webp|svg|ico)$/i.test(ext) ? '#ffd0e6' :
-    /^(mp3|wav|flac|m4a|ogg)$/i.test(ext) ? '#d0f0d8' :
-    /^(mp4|mov|mkv|avi|webm)$/i.test(ext) ? '#c8eaef' :
-    /^(txt|md|log)$/i.test(ext) ? '#fff1bd' :
-    /^(json|toml|yaml|yml|xml|ini|conf)$/i.test(ext) ? '#e6f0ff' :
-    /^(pdf)$/i.test(ext) ? '#ffc5c5' :
-    '#ffffff';
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>
-      <path d="M3.5 2 H10 L13 5 V13.5 A0.5 0.5 0 0 1 12.5 14 H3.5 A0.5 0.5 0 0 1 3 13.5 V2.5 A0.5 0.5 0 0 1 3.5 2 Z"
-        fill={fill} stroke="#5b4d57" strokeWidth="0.7" strokeLinejoin="round" />
-      <path d="M10 2 V5 H13" fill="none" stroke="#5b4d57" strokeWidth="0.7" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function extOf(name: string): string {
-  const i = name.lastIndexOf('.');
-  return i > 0 ? name.slice(i + 1).toLowerCase() : '';
 }
 
 function Row({
@@ -110,7 +250,9 @@ function Row({
   selectedPath,
   onSelect,
   onCtx,
-  initialOpen = false,
+  isOpen,
+  onToggle,
+  registerEl,
 }: {
   node: Node;
   parentSize: number;
@@ -118,9 +260,12 @@ function Row({
   selectedPath: string | null;
   onSelect: (p: string) => void;
   onCtx: (e: React.MouseEvent, node: Node) => void;
-  initialOpen?: boolean;
+  /** open 状态由 TreeView 受控（sync-nav：支持外部 focusPath 展开祖先链） */
+  isOpen: (p: string) => boolean;
+  onToggle: (p: string) => void;
+  registerEl: (p: string, el: HTMLDivElement | null) => void;
 }) {
-  const [open, setOpen] = useState(initialOpen);
+  const open = isOpen(node.path);
   const hasKids = (node.children?.length ?? 0) > 0;
   const sel = node.path === selectedPath;
   const pct = parentSize > 0 ? (node.size / parentSize) * 100 : 0;
@@ -128,6 +273,7 @@ function Row({
   return (
     <>
       <div
+        ref={(el) => registerEl(node.path, el)}
         className={'tree-row' + (sel ? ' selected' : '') + (node.is_dir ? '' : ' is-file')}
         onClick={() => onSelect(node.path)}
         onContextMenu={(e) => onCtx(e, node)}
@@ -139,23 +285,23 @@ function Row({
         }}
         title={node.path + '  ·  右键查看选项'}
       >
-        <div className="col-name" style={{ paddingLeft: 4 + depth * 14 }}>
+        <div className="col-name" style={{ paddingLeft: 20 + depth * 14 }}>
           <span
             className="caret"
-            onClick={(e) => { e.stopPropagation(); if (hasKids) setOpen((v) => !v); }}
+            onClick={(e) => { e.stopPropagation(); if (hasKids) onToggle(node.path); }}
           >
             {hasKids
               ? (open ? <ChevronDown size={11} /> : <ChevronRight size={11} />)
               : <span className="caret-stub" />}
           </span>
           <span className="glyph">
-            {node.is_dir ? <FolderGlyph open={open} /> : <FileGlyph ext={extOf(node.name)} />}
+            <Icon name={node.is_dir ? (open ? 'folder-open' : 'folder') : 'file'} size={14} />
           </span>
           <span className="name">{node.name || node.path}</span>
           {node.scaffold_id && <span className="badge">{node.scaffold_id}</span>}
         </div>
         <div className="col-pct">
-          <span className="pct-bar"><span style={{ width: `${Math.min(100, pct)}%` }} /></span>
+          <PctRing pct={pct} />
           <span className="pct-num">{pct.toFixed(1)}%</span>
         </div>
         <div className="col-size">{formatBytes(node.size)}</div>
@@ -170,6 +316,9 @@ function Row({
           selectedPath={selectedPath}
           onSelect={onSelect}
           onCtx={onCtx}
+          isOpen={isOpen}
+          onToggle={onToggle}
+          registerEl={registerEl}
         />
       ))}
     </>

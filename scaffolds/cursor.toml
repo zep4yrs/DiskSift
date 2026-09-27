@@ -1,0 +1,133 @@
+# Cursor 清理 scaffold —— 设计依据 docs/research/python-dev-cleanup-landscape.md §2.2
+# （VSCode-fork 布局矩阵 / globalStorage 陷阱 / §2.2.6 Cursor AI 历史专项）。
+#
+# apps/desktop/src/mocks.ts 里的 legacy 定义（detect 只有 **/Cursor/User，scope 只有一个
+# **/CachedData/** 裸 glob）只当路径参考，没有拷贝：裸 **/CachedData/** 会命中全机任意
+# 应用（含 VS Code 本体）的 CachedData。本文件所有 scope 都锚定 **/Cursor/<桶> 两级，
+# <实例>/<桶> 同时出现才命中——同名误判目录（如名叫 cursor 的项目目录）不会被清理。
+#
+# 勘测状态（诚实标注）：本机（Windows 11，2026-09-27）未安装 Cursor——%APPDATA%、
+# %LOCALAPPDATA%、%LOCALAPPDATA%/Programs、%USERPROFILE%、PATH 均无 cursor 条目
+# （只用 ls 列目录名）。布局按调研文档 §2.2 编写，未在本机实测真实 Cursor 目录。
+# 壳层缓存桶名用 alternation 兼容新旧版本：DawnGraphiteCache / DawnWebGPUCache /
+# CachedConfigurations 来自同日对 %APPDATA%/Code（VS Code，同款 Electron/VSCode-fork
+# 壳）的本机勘测结论（见 vscode.toml 头注释与实测修正节）；DawnCache 是调研文档
+# §2.2.2 记录的老版 Electron 桶名，一并保留。
+#
+# lint:  cargo run -p pinkbin-scaffold-lint -- scaffolds/cursor.toml
+# test:  cargo test -p pinkbin-scaffold --test cursor_safety
+
+id          = "cursor"
+name        = "Cursor"
+homepage    = "https://cursor.com/"
+risk        = "low"
+disclaimer  = """\
+只清可重生的缓存与日志（界面缓存 / Code Cache / GPUCache / Dawn GPU 缓存 / CachedData / \
+扩展下载缓存 / Service Worker / blob_storage / Crashpad / 会话日志）。删掉后 Cursor 下次启动\
+会自动重建或重新下载，首次启动会略慢。绝不删 User/globalStorage/state.vscdb（AI 聊天历史\
+主库，删了已有项目的对话会永久 infinite loading）、state.vscdb.backup、storage.json、\
+globalStorage 下任何扩展目录（anysphere.* / cursor.cursor-*，含登录态与对话指针）、\
+User/settings.json、User/keybindings.json、User/snippets/、User/workspaceStorage/（工作区\
+状态与 per-workspace 库）、User/History/（本地编辑历史）。绝不删 ~/.cursor/extensions/ \
+扩展本体。绝不删 machineid、Network（含登录 cookie）、Local Storage、Session Storage、\
+Preferences、Local State。pinkbin 永远不动 state.vscdb；你手动清 globalStorage 时也务必\
+跳过它。清理前请先退出 Cursor，否则运行中被占用的文件会跳过。所有删除走系统回收站，\
+可随时还原。\
+"""
+
+# ---------------------------------------------------------------------------
+# detect：Windows 默认路径（env 展开）+ Linux/macOS 数据根 + ** 通配兜底。
+# ⚠ 通配锚 **/Cursor/User 而非裸 **/Cursor——后者是后缀语义（globset 的 ** 可跨段），
+# 任何名叫 cursor 的目录（克隆的仓库、项目目录）都会被标出来；带 User 子目录是
+# VSCode-fork config root 的强特征。**/.cursor 同理锚的是 Cursor 自己的 dotfolder 名。
+# ---------------------------------------------------------------------------
+detect = [
+  "%APPDATA%/Cursor",
+  "%LOCALAPPDATA%/Cursor",
+  "%USERPROFILE%/.cursor",
+  "${HOME}/.cursor",
+  "${HOME}/.config/Cursor",
+  "${HOME}/Library/Application Support/Cursor",
+  "**/Cursor/User",
+  "**/.cursor",
+]
+
+# name_contains 只放 "cursor" 短片段（数据根就叫 Cursor，没有更长的不歧义片段）。
+# 误报靠 must_have_child 兜住：真实 config root 同时有 User/（用户数据树）和 logs/
+# （会话日志）；%LOCALAPPDATA% 镜像根与 ~/.cursor 没有 User/，不会走这条兜底——
+# 它们由上面的显式 detect 条目直接命中。
+[match]
+name_contains   = ["cursor"]
+must_have_child = ["User", "logs"]
+
+# ---------------------------------------------------------------------------
+# scope 全部锚定 **/Cursor/<桶>，一个 ** 前缀同时覆盖 config root（%APPDATA%）、
+# %LOCALAPPDATA% 镜像根与 macOS/Linux 布局（多实例多平台）。几千小文件的桶
+# （Chromium 壳层缓存）用 directory 粒度整桶回收（1 条回收站记录代替几千条，
+# 理由同 conda.toml）；文件数少、按版本/会话累积的桶（CachedData、扩展下载缓存）
+# 用 file 粒度 + 30 天保留（per-file mtime 过滤才有意义）。globalStorage /
+# workspaceStorage / User/History 一律不在 scope 内（用户数据，红线，见
+# cursor_safety.rs 断言）。
+# ---------------------------------------------------------------------------
+
+[[scope]]
+id                  = "shell-cache"
+label               = "界面缓存（Cache / Code Cache / GPUCache / Dawn GPU 缓存）"
+glob                = "**/Cursor/{Cache,Code Cache,GPUCache,DawnCache,DawnGraphiteCache,DawnWebGPUCache}"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id       = "cached-data"
+label    = "V8 字节码缓存（CachedData，按版本累积）"
+glob     = "**/Cursor/CachedData/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
+
+[[scope]]
+id       = "cached-extensions"
+label    = "扩展下载缓存（VSIX / 元数据 / Profile / 配置快照）"
+glob     = "**/Cursor/{CachedExtensions,CachedExtensionVSIXs,CachedProfilesData,CachedConfigurations}/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
+
+[[scope]]
+id                  = "service-worker"
+label               = "Service Worker 缓存"
+glob                = "**/Cursor/Service Worker"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id                  = "electron-extras"
+label               = "blob 存储与崩溃转储（blob_storage / Crashpad）"
+glob                = "**/Cursor/{blob_storage,Crashpad}"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id       = "logs"
+label    = "会话日志（logs/<时间戳>/，AI 调用频繁时 exthost 日志增长快）"
+glob     = "**/Cursor/logs/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "none" }
+
+# globalStorage 唯一可碰的东西：Cursor 出错时把库 rename 成 .corrupted 的弃置残片
+# （调研文档 §2.2.6：只能删 state.vscdb.corrupted*）。正库 state.vscdb / .backup /
+# -wal / -shm / storage.json 是红线（见 cursor_safety.rs 断言），扩展目录也不在 scope 内。
+[[scope]]
+id       = "corrupted-state"
+label    = "损坏的 state.vscdb 残片（.corrupted）"
+glob     = "**/Cursor/User/globalStorage/state.vscdb.corrupted*"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "none" }

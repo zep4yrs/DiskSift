@@ -10,7 +10,7 @@
 
 use anyhow::{anyhow, Context};
 use ntfs::structured_values::{NtfsFileName, NtfsFileNamespace};
-use ntfs::{KnownNtfsFileRecordNumber, Ntfs, NtfsAttributeType};
+use ntfs::{KnownNtfsFileRecordNumber, Ntfs, NtfsAttributeType, NtfsReadSeek};
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::BufReader;
@@ -24,6 +24,14 @@ const FILE_SHARE_WRITE: u32 = 0x0000_0002;
 const FILE_FLAG_SEQUENTIAL_SCAN: u32 = 0x0800_0000;
 const GENERIC_READ: u32 = 0x8000_0000;
 
+// Reparse tags (win32/fileio/reparse-point-tags) that behave like the
+// junction/symlink entries the walker chain prunes. Deliberately narrow:
+// OneDrive placeholders (0x9000_0001, cloud) and deduped files (0x8000_0013)
+// are reparse points too — pruning those would silently drop real user data
+// from the tree.
+const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003; // directory junction
+const IO_REPARSE_TAG_SYMLINK: u32 = 0xA000_000C; // file or dir symlink
+
 #[derive(Debug, Clone)]
 struct Entry {
     name: String,
@@ -31,6 +39,57 @@ struct Entry {
     own_size: u64, // file size from $DATA, or 0 for dirs
     is_dir: bool,
     children: Vec<u64>, // FRNs of direct children (filled in second pass)
+    /// Reparse point with a junction/symlink tag (mount point / symlink).
+    /// Such entries must never surface as child nodes: the walker chain cuts
+    /// them in `process_read_dir` (BlueTidy discipline, lib.rs §2.4), while the
+    /// MFT chain used to emit them as 0-byte empty dir nodes that could be
+    /// selected and streamed out. Still reachable via `find_frn_for_path`, so
+    /// scanning *through* a junction (subroot inside one) keeps working — same
+    /// as the walker, which always scans its root.
+    is_reparse_link: bool,
+}
+
+/// #26 MFT 兼容修复：进快路径前的卷类型预检。一次 GetVolumeInformationW
+/// 内核调用拿文件系统名，判定交给 lib.rs 的纯函数 volume_fs_decision
+/// （与 Win32 取数分离才能脱离物理卷做单元测试）。
+pub(super) fn volume_fs_check(volume_letter: char) -> super::VolumeFsDecision {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetVolumeInformationW;
+
+    let root: Vec<u16> =
+        std::ffi::OsStr::new(&format!(r"{}:\", volume_letter.to_ascii_uppercase()))
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+    let mut fs_name = [0u16; 256];
+    let ok = unsafe {
+        // SAFETY: 两个缓冲都是本函数栈上的有效内存，wide 字符串带 NUL 终止。
+        GetVolumeInformationW(
+            root.as_ptr(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            fs_name.as_mut_ptr(),
+            fs_name.len() as u32,
+        )
+    };
+    if ok == 0 {
+        // 卷锁着（BitLocker）/未就绪等：失败时名字缓冲不可信，只把 Win32
+        // 错误码交给决策函数——ACCESS_DENIED 是 BitLocker 的指纹。
+        let code = std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32;
+        tracing::debug!(
+            "volume_fs_check: 卷 {}: GetVolumeInformationW failed win32_error={code}",
+            volume_letter.to_ascii_uppercase()
+        );
+        return super::volume_fs_decision(None, Some(code));
+    }
+    let len = fs_name
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(fs_name.len());
+    super::volume_fs_decision(Some(&String::from_utf16_lossy(&fs_name[..len])), None)
 }
 
 /// Scan an entire NTFS volume by reading $MFT directly.
@@ -55,7 +114,24 @@ where
         .with_context(|| format!("opening volume {} (admin required)", path))?;
 
     let mut reader = BufReader::with_capacity(1 << 20, file);
-    let mut ntfs = Ntfs::new(&mut reader).context("parsing NTFS boot sector")?;
+    // #26：ntfs crate 对非标准卷会在 BootSector/bpb 解析上抛 binrw 意外错误
+    // （用户实测 os error 87），甚至直接 unreachable panic（后者由 lib.rs 的
+    // catch_unwind 兜住）。Err 形态在这里显式归类——降级必须带得上「为什么」，
+    // 卷字母进 warn，别让用户看到一句干巴巴的 parsing failed。
+    let mut ntfs = match Ntfs::new(&mut reader) {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(
+                "MFT: 卷 {}:\\ boot sector 解析失败（{e}）——卷类型非标准 NTFS（如 ReFS/exFAT 伪装或 BitLocker 未解锁），降级 walkdir",
+                volume_letter.to_ascii_uppercase()
+            );
+            return Err(anyhow!(
+                "volume {} boot sector is not standard NTFS \
+                 (ReFS/exFAT masquerade or locked BitLocker?): {e}",
+                volume_letter.to_ascii_uppercase()
+            ));
+        }
+    };
     ntfs.read_upcase_table(&mut reader).ok();
 
     // Read $MFT itself (record 0). Its $DATA attribute lists all clusters
@@ -102,6 +178,7 @@ where
         let mut best_namespace_rank: u8 = 0;
         let mut size: u64 = 0;
         let is_dir = f.is_directory();
+        let mut is_reparse_link = false;
 
         let mut attrs_iter = f.attributes();
         while let Some(item) = attrs_iter.next(&mut reader) {
@@ -140,6 +217,24 @@ where
                         size = value.len();
                     }
                 }
+                Ok(NtfsAttributeType::ReparsePoint) => {
+                    // ReparseTag is the first DWORD of the reparse data.
+                    // Only mount-point (junction) and symlink tags mark a link
+                    // entry; cloud/dedup tags keep their entries visible. If
+                    // the tag can't be read, keep the entry (fail open for
+                    // visibility rather than hiding a real record).
+                    if let Ok(mut value) = attr.value(&mut reader) {
+                        let mut tag = [0u8; 4];
+                        // NtfsReadSeek 要求每次读取都显式传入文件系统 reader（trait 设计如此，
+                        // 返回的 NtfsAttributeValue 不持有 reader 借用）。
+                        if value.read_exact(&mut reader, &mut tag).is_ok() {
+                            let tag = u32::from_le_bytes(tag);
+                            if tag == IO_REPARSE_TAG_MOUNT_POINT || tag == IO_REPARSE_TAG_SYMLINK {
+                                is_reparse_link = true;
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -157,6 +252,7 @@ where
                     own_size,
                     is_dir,
                     children: Vec::new(),
+                    is_reparse_link,
                 },
             );
         }
@@ -205,8 +301,11 @@ where
                         continue;
                     }
                     if let Some(centry) = entries.get(&c) {
-                        if centry.is_dir
-                            && super::is_pruned_system_dir(std::ffi::OsStr::new(&centry.name))
+                        // Same prune set as build_node below, so rolled-up
+                        // totals always match what the visible tree shows.
+                        if centry.is_reparse_link
+                            || (centry.is_dir
+                                && super::is_pruned_system_dir(std::ffi::OsStr::new(&centry.name)))
                         {
                             continue;
                         }
@@ -308,7 +407,14 @@ fn build_node(
                 Some(c) => c,
                 None => continue,
             };
-            if centry.is_dir && super::is_pruned_system_dir(std::ffi::OsStr::new(&centry.name)) {
+            // Junction/symlink entries (reparse-tag based) are never emitted as
+            // child nodes — they must not surface as 0-byte empty dirs that the
+            // frontend could select and act on. Mirrors the walker chain's
+            // `file_type.is_symlink()` prune in scan_with_stats.
+            if centry.is_reparse_link
+                || (centry.is_dir
+                    && super::is_pruned_system_dir(std::ffi::OsStr::new(&centry.name)))
+            {
                 continue;
             }
             let cpath = path.join(&centry.name);

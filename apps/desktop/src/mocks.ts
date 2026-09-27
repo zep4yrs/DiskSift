@@ -1,5 +1,5 @@
 import type { Node, Scaffold, AdvisorRequest, AdvisorResponse, UndoEntry, Plan, SteamInventory, WorkshopItem } from './types';
-import { callAdvisor, isConfigured, loadSettings } from './advisorClient';
+import { callAdvisor, isConfigured, loadSettings, ensureApiKey } from './advisorClient';
 
 const GB = 1024 ** 3;
 
@@ -285,11 +285,16 @@ export async function advise(req: AdvisorRequest): Promise<AdvisorResponse> {
   // Try the real API first if the user has configured one in Settings.
   const settings = loadSettings();
   if (isConfigured(settings)) {
-    try {
-      return await callAdvisor(settings, req);
-    } catch (e) {
-      console.warn('[pinkbin] real advisor failed, falling back to canned response:', e);
-      // fall through to canned mock
+    // key 现在从 DPAPI 加密存储异步取（isConfigured 的 hasKey 只是标记），
+    // 拿不到明文（解密失败等）就走罐头回答，不往请求里塞空 key。
+    const apiKey = await ensureApiKey(settings);
+    if (apiKey || settings.provider === 'ollama') {
+      try {
+        return await callAdvisor({ ...settings, apiKey: apiKey ?? '' }, req);
+      } catch (e) {
+        console.warn('[pinkbin] real advisor failed, falling back to canned response:', e);
+        // fall through to canned mock
+      }
     }
   }
   return cannedAdvice(req);

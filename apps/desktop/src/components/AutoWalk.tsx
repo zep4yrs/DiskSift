@@ -20,9 +20,11 @@ export function AutoWalk() {
   const scaffold = item?.scaffoldId ? scaffolds.find((s) => s.id === item.scaffoldId) ?? null : null;
 
   useEffect(() => {
-    if (!item || scaffold || item.advice || item.status === 'advising' || item.status === 'done') return;
+    if (!item || scaffold || item.advice || item.status === 'done') return;
     let cancelled = false;
-    patch(i, { status: 'advising' });
+    // 为什么不在请求前 patch status = 'advising'：那会改掉 walkQueue[i] 的对象
+    // 身份，触发本 effect 重跑并把在途请求 cleanup 掉（cancelled = true），
+    // 结果永远无法落地，卡片停在「AI 思考中…」。
     (async () => {
       try {
         const totalBytes = item.node.size || 1;

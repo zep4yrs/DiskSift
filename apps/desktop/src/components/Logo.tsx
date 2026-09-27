@@ -1,55 +1,16 @@
-// Same 24×24 pixel design as the .ico, rendered inline so it stays crisp
-// and doesn't pull in a build asset.
+import logoUrl from '../assets/logo.png';
 
-const ROWS = [
-  '........................',
-  '........................',
-  '..........IIIIII........',
-  '.........I......I.......',
-  '.......IIIIIIIIIIII.....',
-  '......ILLLLLLLLLLLLI....',
-  '......IPPPPPWPPPPPPI....',
-  '......IDDDDDDDDDDDDI....',
-  '........................',
-  '.....IIIIIIIIIIIIIIII...',
-  '....ILLLLLLLLLLLLLLLLI..',
-  '....IPPPIIPPPPPIIPPPPI..',
-  '....IPPPIIPPPPPIIPPPPI..',
-  '....IPPPPPPPPPPPPPPPPI..',
-  '....IPPPPPIIIIIIPPPPPI..',
-  '....IPPPPPPIIIIPPPPPPI..',
-  '....IPPPPPPPPPPPPPPPPI..',
-  '....IPPPPPPPPPPPPPPPPI..',
-  '....IPPPPPPPPPPPPPPPPI..',
-  '....IDDDDDDDDDDDDDDDDI..',
-  '.....IIIIIIIIIIIIIIII...',
-  '........................',
-  '........................',
-  '........................',
-];
-
-const COLOR: Record<string, string> = {
-  I: '#150818',
-  L: '#ffd0e0',
-  P: '#ff6fa8',
-  D: '#e23f86',
-  W: '#ffffff',
-};
-
-export function Logo({ size = 22 }: { size?: number }) {
-  const cells: { x: number; y: number; c: string }[] = [];
-  for (let y = 0; y < ROWS.length; y++) {
-    const row = ROWS[y];
-    for (let x = 0; x < row.length; x++) {
-      const ch = row[x];
-      if (COLOR[ch]) cells.push({ x, y, c: COLOR[ch] });
-    }
-  }
+// DiskSift 品牌标记：渲染 AI 生成的品牌图（磁盘+漏斗，logo-source.png 全套图标的同源）。
+// 图标纪律说明：品牌 logo 是定制图形（Lucide-only 规则约束的是 UI 功能图标，不含品牌标）。
+export function Logo({ size = 18 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" shapeRendering="crispEdges" aria-hidden>
-      {cells.map((p, i) => (
-        <rect key={i} x={p.x} y={p.y} width={1} height={1} fill={p.c} />
-      ))}
-    </svg>
+    <img
+      src={logoUrl}
+      width={size}
+      height={size}
+      alt=""
+      aria-hidden
+      style={{ borderRadius: 3, display: 'block', flexShrink: 0 }}
+    />
   );
 }
