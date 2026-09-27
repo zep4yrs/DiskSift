@@ -151,4 +151,16 @@ export const api = {
   /** 取回并解密 `key` 条目；缺失或解不开（跨用户/被篡改）返回 null。 */
   secureGet: (key: string) =>
     isTauri ? invoke<string | null>('secure_get', { key }) : Promise.resolve(null),
+
+  // ── 分诊判定缓存（triage-overlay-spec §7 决策 1：缓存放文件）──
+  // triage-cache.json 与 secure.json 同目录、同 tmp+rename 原子写。浏览器预览
+  // 模式没有 %APPDATA% 语义：cacheGetAll 返回 "{}"（空缓存），cacheSetAll
+  // 静默 no-op（与 secureSet 同策略）。
+
+  /** 读整个分诊判定缓存（JSON 文本）；文件不存在返回 "{}"。 */
+  cacheGetAll: () => (isTauri ? invoke<string>('cache_get_all') : Promise.resolve('{}')),
+
+  /** 整体覆写分诊判定缓存；`json` 须为合法 JSON 文本（后端写前校验）。 */
+  cacheSetAll: (json: string) =>
+    isTauri ? invoke<void>('cache_set_all', { json }) : Promise.resolve(),
 };

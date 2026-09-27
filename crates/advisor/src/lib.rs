@@ -19,6 +19,12 @@ pub struct AdvisorRequest {
     pub sample_paths: Vec<String>,
     pub neighbors: Vec<String>,
     pub scaffold_hint: Option<String>,
+    /// 分诊图层 O2 反馈通道（triage-overlay-spec §5.3）：如「用户曾忽略此目录的
+    /// 判定」。user_prompt 就是整个请求的 JSON，此字段有值即随 prompt 到达模型；
+    /// default 保证旧调用方照常反序列化，skip_serializing_if 保证缺省时
+    /// 序列化结果与旧格式逐字节一致。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

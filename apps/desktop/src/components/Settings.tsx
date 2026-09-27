@@ -11,7 +11,12 @@ import {
   type Provider,
 } from '../advisorClient';
 
-type Props = { onClose: () => void };
+type Props = {
+  onClose: () => void;
+  /** 免费接入引导（triage-overlay-spec §7 决策 4）预填：给 Base URL/Model，
+   *  让「去设置」一键直达可保存状态。提供时覆盖已存配置的对应字段。 */
+  prefill?: { baseUrl: string; model: string } | null;
+};
 
 const PROVIDER_LABEL: Record<Provider, string> = {
   openai: 'OpenAI 兼容',
@@ -28,7 +33,7 @@ const PROVIDER_LABEL_SHORT: Record<Provider, string> = {
   ollama: 'Ollama',
 };
 
-export function Settings({ onClose }: Props) {
+export function Settings({ onClose, prefill }: Props) {
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
@@ -53,6 +58,12 @@ export function Settings({ onClose }: Props) {
         if (key) setApiKey(key);
       });
     }
+    // 免费接入引导预填（spec §7 决策 4）：覆盖已存值，让「去设置」直达可保存状态
+    if (prefill) {
+      setBaseUrl(prefill.baseUrl);
+      setModel(prefill.model);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const provider = providerOverride ?? detectProvider(baseUrl);

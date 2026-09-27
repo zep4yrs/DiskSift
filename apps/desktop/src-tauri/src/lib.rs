@@ -35,6 +35,9 @@ struct AppState {
     data_dir: PathBuf,
     /// secure.json 是 read-modify-write，用它把并发命令串行化，避免丢条目。
     secure_io_lock: Mutex<()>,
+    /// triage-cache.json 是整文件覆写，并发 set_all 会争用同一个 tmp 路径，
+    /// 用它把缓存读写串行化（与 secure_io_lock 分开：两个文件互不阻塞）。
+    cache_io_lock: Mutex<()>,
 }
 
 #[tauri::command]
@@ -1612,6 +1615,52 @@ mod secure {
     }
 }
 
+// ── 分诊判定缓存（triage-overlay-spec §7 决策 1：缓存放文件）─────────────────
+// 判定条目可达数千，localStorage 有 5-10MB 上限且是同步 IO；落到 %APPDATA%
+// 存储目录的 triage-cache.json，可随数据目录整体迁移。与 secure.json 同目录、
+// 同 tmp+rename 原子写；整文件一次读 / 一次写，无 read-modify-write，但并发
+// set_all 会争用同一个 tmp 路径，仍用 cache_io_lock 串行化。
+
+/// 文件缺失（首次使用）返回 "{}" 而不是错误——前端把空对象当空缓存。
+#[tauri::command]
+fn cache_get_all(state: State<'_, AppState>) -> Result<String, String> {
+    let _guard = state.cache_io_lock.lock().unwrap();
+    read_cache_raw(&state.data_dir)
+}
+
+#[tauri::command]
+fn cache_set_all(state: State<'_, AppState>, json: String) -> Result<(), String> {
+    // 写前校验：坏 JSON 一旦落盘，前端每次启动读回的都是垃圾。校验在拿锁前做，
+    // 错误只带位置不带内容（缓存体可能很大）。
+    serde_json::from_str::<serde_json::Value>(&json)
+        .map_err(|e| format!("cache_set_all: 不是合法 JSON: {e}"))?;
+    let _guard = state.cache_io_lock.lock().unwrap();
+    write_cache_raw(&state.data_dir, &json)
+}
+
+fn cache_file_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("triage-cache.json")
+}
+
+fn read_cache_raw(data_dir: &Path) -> Result<String, String> {
+    match std::fs::read_to_string(cache_file_path(data_dir)) {
+        Ok(text) => Ok(text),
+        // NotFound 是首次使用的正常形态，不当错误上抛。
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("{}".to_string()),
+        Err(e) => Err(format!("triage-cache.json 读取失败: {e}")),
+    }
+}
+
+/// temp + rename：与 secure.json 同款原子替换，写一半崩溃不会留下截断的缓存
+/// （数千条判定丢了就得整轮 AI 请求重来）。
+fn write_cache_raw(data_dir: &Path, text: &str) -> Result<(), String> {
+    std::fs::create_dir_all(data_dir).map_err(|e| format!("cache 目录创建失败: {e}"))?;
+    let tmp = data_dir.join("triage-cache.json.tmp");
+    std::fs::write(&tmp, text).map_err(|e| format!("triage-cache.json 写入失败: {e}"))?;
+    std::fs::rename(&tmp, cache_file_path(data_dir))
+        .map_err(|e| format!("triage-cache.json 替换失败: {e}"))
+}
+
 #[tauri::command]
 fn set_advisor(
     state: State<'_, AppState>,
@@ -1680,6 +1729,7 @@ pub fn run() {
                 undo_log,
                 data_dir,
                 secure_io_lock: Mutex::new(()),
+                cache_io_lock: Mutex::new(()),
             });
             Ok(())
         })
@@ -1701,6 +1751,8 @@ pub fn run() {
             set_advisor,
             secure_set,
             secure_get,
+            cache_get_all,
+            cache_set_all,
             volume_info,
             list_steam_games,
             list_steam_workshop_items,
@@ -1920,5 +1972,24 @@ mod tests {
         );
         // temp 文件不残留。
         assert!(!dir.join("secure.json.tmp").exists());
+    }
+
+    /// triage-cache.json 读写 roundtrip（triage-overlay-spec §7 决策 1）：
+    /// 缺文件得 "{}"、写入后原样读回、覆写生效、tmp 文件不残留。
+    /// 载荷含嵌套结构与中文，顺带锁住非 ASCII 的原样字节存储。
+    #[test]
+    fn triage_cache_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        // 首次使用：文件不存在 → "{}"，不是错误。
+        assert_eq!(read_cache_raw(dir).unwrap(), "{}");
+        let payload =
+            r#"{"v":1,"entries":{"C:/Users/x/cache":{"verdict":"clean","score":3}},"中文":"值"}"#;
+        write_cache_raw(dir, payload).unwrap();
+        assert_eq!(read_cache_raw(dir).unwrap(), payload);
+        // 覆写生效 + 原子替换完成后 tmp 不残留。
+        write_cache_raw(dir, "{}").unwrap();
+        assert_eq!(read_cache_raw(dir).unwrap(), "{}");
+        assert!(!dir.join("triage-cache.json.tmp").exists());
     }
 }

@@ -60,6 +60,14 @@
   --danger: #dc2626;
   --info: #2563eb;
 
+  /* 分诊图层五判定色（triage-overlay-spec §3；绿=可清理 蓝=需决策 紫=迁移(v2 预留)
+     灰=系统 白虚线=不确定。语义色映射既有 --ok/--info，灰随 .dark 中性色自适应。 */
+  --verdict-safe: var(--ok);
+  --verdict-decide: var(--info);
+  --verdict-migrate: #9333ea;
+  --verdict-system: var(--fg-muted);
+  --verdict-uncertain: var(--fg-inactive);
+
   /* 4.0 补齐的刻度（§4/§5/§6 词汇层继续消费） */
   --radius: .35rem;
   --radius-sm: 6px;
@@ -154,6 +162,8 @@
   --shadow-1: 0 2px 4px rgba(0, 0, 0, .4);
   --shadow-2: 0 4px 14px rgba(0, 0, 0, .5);
   --shadow-3: 0 8px 28px rgba(0, 0, 0, .6);
+  /* 紫 600 在暗色卡片上偏暗，提到 400 级保证色条/徽标可读 */
+  --verdict-migrate: #c084fc;
   color-scheme: dark;
 }
 
@@ -3672,6 +3682,246 @@ input:focus, select:focus {
   position: relative;
 }
 .treemap text { user-select: none; pointer-events: none; }
+
+/* ── 分诊图层 O1（triage-overlay-spec §2/§3/§4；判定色令牌在 §1 令牌层）── */
+
+/* 树视图：有判定的行左缘 3px 同色条。inset box-shadow 不参与布局，
+   与 sync-nav 的 .selected 背景（focus 高亮）叠加互不干扰。 */
+.tree-row.verdict-safe     { box-shadow: inset 3px 0 0 var(--verdict-safe); }
+.tree-row.verdict-decide   { box-shadow: inset 3px 0 0 var(--verdict-decide); }
+.tree-row.verdict-migrate  { box-shadow: inset 3px 0 0 var(--verdict-migrate); }
+.tree-row.verdict-system   { box-shadow: inset 3px 0 0 var(--verdict-system); }
+.tree-row.verdict-uncertain{ box-shadow: inset 3px 0 0 var(--verdict-uncertain); }
+
+/* 祖先聚合徽标「● X GB」（SVG 子元素；.treemap text 已禁 pointer-events） */
+.tm-pill-bg {
+  fill: color-mix(in srgb, var(--verdict-safe) 15%, var(--card));
+  stroke: color-mix(in srgb, var(--verdict-safe) 45%, transparent);
+}
+.tm-pill-dot { fill: var(--verdict-safe); }
+.tm-pill-text {
+  fill: var(--verdict-safe);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+/* 图例条：常驻 tab 工具行（面包屑行右端） */
+.triage-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+  user-select: none;
+}
+.triage-legend .lg-item { display: inline-flex; align-items: center; gap: 4px; }
+.triage-legend .lg-sw { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.triage-legend .lg-sw.safe { background: var(--verdict-safe); }
+.triage-legend .lg-sw.decide { background: var(--verdict-decide); }
+.triage-legend .lg-sw.migrate { background: var(--verdict-migrate); }
+.triage-legend .lg-sw.system { background: var(--verdict-system); }
+.triage-legend .lg-sw.uncertain { background: var(--card); border: 1.5px dashed var(--fg-muted); }
+.triage-legend .lg-sup { font-size: 8.5px; line-height: 1; color: var(--verdict-migrate); }
+.triage-legend .lg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--fg-muted);
+  border-radius: var(--radius-pill);
+  padding: 1px 9px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.triage-legend .lg-btn:disabled { opacity: .55; cursor: default; }
+
+/* 详情卡：浮于地图右上角，不遮挡（spec §2.0） */
+.block-detail-card {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 272px;
+  max-width: calc(100% - 20px);
+  background: var(--editor);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  padding: 10px 12px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+}
+.block-detail-card .bdc-head { display: flex; align-items: center; gap: 6px; }
+.block-detail-card .bdc-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: var(--fw-strong);
+}
+.block-detail-card .bdc-close {
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  padding: 0;
+}
+.block-detail-card .bdc-close:hover { background: var(--hover); color: var(--fg); }
+.block-detail-card .bdc-name {
+  font-weight: var(--fw-strong);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.block-detail-card .bdc-path { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-muted); max-width: 100%; }
+.block-detail-card .bdc-stats {
+  display: flex;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.block-detail-card .bdc-reason { color: var(--fg-muted); font-size: 11.5px; }
+.block-detail-card .bdc-cleanable {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--verdict-safe);
+  font-size: 11.5px;
+  font-weight: var(--fw-strong);
+}
+.block-detail-card .bdc-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--verdict-safe); }
+.block-detail-card .bdc-enter { align-self: flex-start; margin-top: 2px; }
+
+/* ── 分诊图层 O2（triage-overlay-spec §2/§5/§6/§7）── */
+
+/* 工具行「AI 分诊」按钮 + 确认/进度条 */
+.ai-triage-btn { flex-shrink: 0; }
+.ai-triage-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 1px 4px;
+}
+.ai-triage-progress {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--info);
+  font-weight: var(--fw-strong);
+}
+
+/* 详情卡：AI 来源标签 / 操作行 / 忽略按钮 / 迁移建议文案 */
+.block-detail-card .bdc-src {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--info) 12%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--info) 35%, transparent);
+  color: var(--info);
+}
+.block-detail-card .bdc-actions { display: flex; gap: 6px; margin-top: 2px; flex-wrap: wrap; }
+.block-detail-card .bdc-ignore { font-size: 11.5px; }
+.block-detail-card .bdc-migrate {
+  font-size: 11.5px;
+  color: var(--verdict-migrate);
+  background: color-mix(in srgb, var(--verdict-migrate) 8%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--verdict-migrate) 30%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+}
+
+/* 免费接入引导卡（§7 决策 4） */
+.ai-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 430px;
+  width: min(430px, calc(100vw - 48px));
+}
+.ai-guide .ai-guide-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+}
+.ai-guide .ai-guide-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ai-guide .ai-guide-ep { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-muted); }
+
+/* ── 起草脚本弹窗（spec §5.1：起草 + 红线门禁）── */
+.draft-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 520px;
+  width: min(520px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+}
+.draft-modal .draft-head { display: flex; align-items: center; gap: 8px; }
+.draft-modal .draft-head .sec-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.draft-modal .draft-passed {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ok);
+  font-weight: var(--fw-strong);
+  font-size: 12px;
+}
+.draft-modal .draft-refused {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--danger);
+  font-weight: var(--fw-strong);
+  font-size: 12px;
+}
+.draft-modal .draft-violations {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--fg);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.draft-modal .draft-pre {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  background: color-mix(in srgb, var(--fg) 4%, var(--card));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.draft-modal code { font-family: var(--font-mono); font-size: 11px; }
+
+/* 详情卡：回收完成态 */
+.block-detail-card .bdc-recycled {
+  color: var(--ok);
+  font-size: 11.5px;
+  font-weight: var(--fw-strong);
+}
 
 /* ── 概览视图（本阶段：扫描入口 + 卷信息摘要格；下一阶段精修） ── */
 .overview {

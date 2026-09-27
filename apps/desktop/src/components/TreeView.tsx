@@ -5,6 +5,7 @@ import { formatBytes, formatCount } from '../format';
 import { api } from '../api';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
 import { Icon } from './Icon';
+import type { VerdictEntry } from '../triage-cache';
 
 type Props = {
   root: Node;
@@ -13,6 +14,8 @@ type Props = {
   /** 双向同步导航（sync-nav）：外部聚焦路径（空间图下钻/面包屑返回）。
    *  变化时祖先链全部自动展开 + scrollIntoView；不在扫描根子树内则不动。 */
   focusPath?: string | null;
+  /** 分诊图层 O1（triage-overlay-spec §4）：有判定的行加左缘 3px 同色条 */
+  verdicts?: Map<string, VerdictEntry>;
 };
 
 // DFS 找 root → 目标 的节点链（含两端）；目标不在子树内返回 null。
@@ -26,7 +29,7 @@ function chainTo(n: Node, p: string): Node[] | null {
   return null;
 }
 
-export function TreeView({ root, selectedPath, onSelect, focusPath }: Props) {
+export function TreeView({ root, selectedPath, onSelect, focusPath, verdicts }: Props) {
   const [ctx, setCtx] = useState<ContextMenuState | null>(null);
 
   // ── 受控展开（sync-nav：Row 的 open 状态提升到这里）──────────────────
@@ -173,6 +176,7 @@ export function TreeView({ root, selectedPath, onSelect, focusPath }: Props) {
           isOpen={isOpen}
           onToggle={toggleOpen}
           registerEl={registerEl}
+          verdicts={verdicts}
         />
       </div>
       <ContextMenu state={ctx} onClose={() => setCtx(null)} />
@@ -253,6 +257,7 @@ function Row({
   isOpen,
   onToggle,
   registerEl,
+  verdicts,
 }: {
   node: Node;
   parentSize: number;
@@ -264,17 +269,22 @@ function Row({
   isOpen: (p: string) => boolean;
   onToggle: (p: string) => void;
   registerEl: (p: string, el: HTMLDivElement | null) => void;
+  verdicts?: Map<string, VerdictEntry>;
 }) {
   const open = isOpen(node.path);
   const hasKids = (node.children?.length ?? 0) > 0;
   const sel = node.path === selectedPath;
   const pct = parentSize > 0 ? (node.size / parentSize) * 100 : 0;
+  const entry = verdicts?.get(node.path) ?? null;
 
   return (
     <>
       <div
         ref={(el) => registerEl(node.path, el)}
-        className={'tree-row' + (sel ? ' selected' : '') + (node.is_dir ? '' : ' is-file')}
+        className={
+          'tree-row' + (sel ? ' selected' : '') + (node.is_dir ? '' : ' is-file') +
+          (entry ? ` verdict-${entry.verdict}` : '')
+        }
         onClick={() => onSelect(node.path)}
         onContextMenu={(e) => onCtx(e, node)}
         draggable
@@ -319,6 +329,7 @@ function Row({
           isOpen={isOpen}
           onToggle={onToggle}
           registerEl={registerEl}
+          verdicts={verdicts}
         />
       ))}
     </>
