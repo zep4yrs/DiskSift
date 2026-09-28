@@ -5,7 +5,7 @@
 > 交互模型铁律：**活动栏只切侧栏；编辑器是独立的 tab 床；两者零重复。**
 > 旧版规格（SiteLens 4.0 令牌 + wave-3 workbench）归档于 docs/redesign-spec-v1-archive.md。
 
-## 1. 色板（IDE light_modern / dark_modern 实测值，本机 theme-defaults 提取）
+## 1. 色板（IDE light 主题 / dark_modern 实测值，本机 theme-defaults 提取）
 
 | Token | Light | Dark | 用途 |
 | --- | --- | --- | --- |

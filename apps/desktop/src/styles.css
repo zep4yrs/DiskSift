@@ -13,7 +13,7 @@
    6. §4 组件词汇层与 §5 遗留层经由 §1 别名桥消费 IDE 色板，保证不塌。
 
    分层目录：
-   §1 令牌层      — spec §1 IDE light_modern/dark_modern 精确值 + 4.0 刻度
+   §1 令牌层      — spec §1 IDE light 主题/dark_modern 精确值 + 4.0 刻度
                     + 系统字体 + 旧令牌别名桥（两级）
    §2 基础层      — reset / body / 代码与工具类 / 选区 / 滚动条
    §2.5 workbench-v2 外壳 — spec §2 五区：titlebar 35 / activitybar 48 /
@@ -30,7 +30,7 @@
 
 
 /* ───────────────────────────────────────────────────────────────
-   §1 令牌层 —— spec §1 IDE light_modern / dark_modern 精确值
+   §1 令牌层 —— spec §1 IDE light 主题 / dark_modern 精确值
    （本机 theme-defaults 实测值；旧 SiteLens 4.0 令牌经别名桥指向新值）
    ─────────────────────────────────────────────────────────────── */
 
@@ -130,7 +130,7 @@
 
   color-scheme: light;
 
-  /* ── 遗留别名桥（第二级，旧手绘类名字）：全部桥到 IDE 令牌。
+  /* ── 遗留别名桥（第二级，旧手绘类名字）：全部桥到 参考 IDE 令牌。
         六视图迁移逐类替换后整段删除。禁止新代码使用这些名字。 ── */
   --ink: var(--fg);
   --ink-2: var(--fg-muted);
@@ -250,7 +250,7 @@ code, .mono {
    §2.5 workbench-v2 外壳 —— spec §2 五区（v5 预览对齐，全部 .app-v2 作用域）：
    titlebar 35 / activitybar 48 / sidebar 240 / tabbar 35 / editorarea /
    bottompanel 150 / aipanel 300 / statusbar 22；侧栏/底面板/右 AI 面板
-   三开关任意组合（IDE 五态全部可达）。
+   三开关任意组合（参考 IDE 五态全部可达）。
    旧 §3/§7 外壳类（.app/.header/.left/.right 等）不再被新 App 引用，按纪律保留。
    ─────────────────────────────────────────────────────────────── */
 
@@ -1553,7 +1553,7 @@ input:focus, select:focus {
   box-shadow: var(--shadow-1);
 }
 
-/* ── Triage 分诊（IDE 克制风：无彩框、hairline、单层表面） ── */
+/* ── Triage 分诊（参考 IDE 克制风：无彩框、hairline、单层表面） ── */
 .triage { padding: var(--space-4); display: grid; gap: var(--space-3); max-width: 1100px; margin: 0 auto; }
 .triage-header { padding-bottom: 2px; }
 .triage-title { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; color: var(--fg); }
@@ -4361,7 +4361,7 @@ section.center > .tabs { padding: 0 10px; border-bottom: 1px solid var(--border)
 
 /* ── §12 观感升级 pass（2026-09-27）：统一排版节奏 / 微交互 / 溢出防护 ── */
 
-/* 12.1 Studio 卡片对齐 IDE（去 1px 墨框+投影 → hairline 浮起式） */
+/* 12.1 Studio 卡片对齐 参考 IDE（去 1px 墨框+投影 → hairline 浮起式） */
 .app-v2 .studio-card {
   border: 1px solid var(--border);
   border-radius: 8px;

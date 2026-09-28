@@ -278,7 +278,7 @@ scaffold 草案：
 | scaffold | LOC | scope 数 | 主要问题 |
 |---|---|---|---|
 | `vscode.toml` | 52 | 6 | 只清电子壳层 cache（`Code Cache` `GPUCache` `Service Worker` 等），**完全没碰 `User/globalStorage/<extension>/`**——这里常驻数 GB 的 Pylance / Copilot / TS server 索引 |
-| `cursor.toml` | 46 | 5 | 同 vscode；额外漏掉 Cursor 的 AI 历史路径（`User/History/`、conversation SQLite），且没枚举 Windsurf / IDE / Kiro 等其他 VSCode fork |
+| `cursor.toml` | 46 | 5 | 同 vscode；额外漏掉 Cursor 的 AI 历史路径（`User/History/`、conversation SQLite），且没枚举 Windsurf / 参考 IDE / Kiro 等其他 VSCode fork |
 | `jetbrains.toml` | 33 | 3 | **三粗暴 glob 一刀切**：`**/caches/**` `**/log/**` `**/system/**`。问题：(a) 不区分 product，(b) 不区分 version——一个用户有 IntelliJIdea2023.1 + IntelliJIdea2024.3 + PyCharm2024.1 同时残留时无法选择性清理；(c) `system/` 内部有 LocalHistory（用户历史，应 L2）和 plugins/ 共享路径风险 |
 
 下文按三个子领域分别给出对照表与改动建议。
@@ -422,7 +422,7 @@ pycharm 的 python_stubs / python_packages / cpython-cache 在所有 JetBrains p
 
 ---
 
-### 2.2 VSCode / Cursor / IDE / Windsurf / Kiro / VSCodium 等 VSCode 系
+### 2.2 VSCode / Cursor / 参考 IDE / Windsurf / Kiro / VSCodium 等 VSCode 系
 
 #### 2.2.1 VSCode-fork 矩阵（DevCleaner 整理 + 补充）
 
@@ -432,7 +432,7 @@ pycharm 的 python_stubs / python_packages / cpython-cache 在所有 JetBrains p
 | Visual Studio Code Insiders | `Code - Insiders` | `.vscode-insiders` | nightly |
 | Cursor | `Cursor` | `.cursor` | Anysphere AI fork |
 | Windsurf | `Windsurf` | `.windsurf` | Codeium AI fork |
-| IDE / IDE CN | `IDE` / `IDE CN` | `.trae` / `.trae-cn` | 字节 AI fork |
+| 参考 IDE / 参考 IDE | `参考 IDE` / `参考 IDE` | `.trae` / `.trae-cn` | 字节 AI fork |
 | Kiro | `Kiro` | `.kiro` | AWS AI fork |
 | Antigravity | `Antigravity` | `.antigravity` | Google AI fork |
 | PearAI | `PearAI` | `.pearai` | 开源 AI fork |
@@ -442,7 +442,7 @@ pycharm 的 python_stubs / python_packages / cpython-cache 在所有 JetBrains p
 | Void | `Void` | `.void` | 开源 fork |
 | Qoder | `Qoder` | `.qoder` | AI fork |
 
-**pinkbin 当前只有 vscode + cursor 两个**，至少漏了 Windsurf / IDE / Kiro 三个有明显用户基数的（中国用户尤其常见 IDE）。
+**pinkbin 当前只有 vscode + cursor 两个**，至少漏了 Windsurf / 参考 IDE / Kiro 三个有明显用户基数的（中国用户尤其常见 参考 IDE）。
 
 #### 2.2.2 VSCode 文件系统分布（每个 fork 都一致）
 
@@ -465,7 +465,7 @@ pycharm 的 python_stubs / python_packages / cpython-cache 在所有 JetBrains p
 │   │   └── <hash>/
 │   │       ├── workspace.json    ← 含工作区路径（用来判断是否 orphan）
 │   │       └── state.vscdb       ← per-workspace SQLite
-│   └── History/                  ← Cursor / IDE 等会大；纯 VSCode 也会有
+│   └── History/                  ← Cursor / 参考 IDE 等会大；纯 VSCode 也会有
 ├── Cache/                        ← L1 已覆盖
 ├── CachedData/                   ← L1 已覆盖
 ├── CachedExtensions/             ← L1 未覆盖（可加）
@@ -600,7 +600,7 @@ Cursor 在标准 VSCode 路径之外多了：
 按 DevCleaner 矩阵补：
 
 - `windsurf.toml`（Codeium AI fork，国外用户多）
-- `trae.toml`（字节 AI fork，**中国用户基数大，pinkbin 重点**；含 IDE CN 的额外路径）
+- `trae.toml`（字节 AI fork，**中国用户基数大，pinkbin 重点**；含 参考 IDE 的额外路径）
 - `kiro.toml`（AWS）
 - `vscodium.toml`（隐私意识强的开发者）
 
@@ -608,9 +608,9 @@ Cursor 在标准 VSCode 路径之外多了：
 
 如果嫌 scaffold 数量爆炸，可以做**模板复用机制**：让一个 `vscode-base.toml` 描述所有共有 scope，子文件只声明 `id` `appdata_folder` `home_dot_folder`——但这需要 schema 增加 import/extends 语法，工作量比直接复制 11 个 toml 还大。**先按 DevCleaner 模式平铺。**
 
-##### IDE 专项需要研究
+##### 参考 IDE 专项需要研究
 
-字节 IDE 是国内重要 AI IDE，但有 [HN 报告](https://news.ycombinator.com/item?id=44703164) / [Neowin 报道](https://www.neowin.net/news/report-bytedances-vs-code-fork-trae-is-a-resource-hog-that-spies-on-you/) 指出它**即使关闭 telemetry 也持续上传遥测**。pinkbin 在 trae.toml 里可以考虑加一个 L2 scope 清遥测 buffer 目录（如果能找到的话），并在 disclaimer 里说明"IDE 的遥测特性"——这是**差异化产品价值点**，但需要先实测确认 IDE 的遥测落盘路径（可能在 `%APPDATA%/IDE/Network/` 或 `%APPDATA%/IDE/Cache/Cache_Data/`）。
+字节 参考 IDE 是国内重要 AI IDE，但有 [HN 报告](https://news.ycombinator.com/item?id=44703164) / [Neowin 报道](https://www.neowin.net/news/report-bytedances-vs-code-fork-trae-is-a-resource-hog-that-spies-on-you/) 指出它**即使关闭 telemetry 也持续上传遥测**。pinkbin 在 trae.toml 里可以考虑加一个 L2 scope 清遥测 buffer 目录（如果能找到的话），并在 disclaimer 里说明"参考 IDE 的遥测特性"——这是**差异化产品价值点**，但需要先实测确认 参考 IDE 的遥测落盘路径（可能在 `%APPDATA%/参考 IDE/Network/` 或 `%APPDATA%/参考 IDE/Cache/Cache_Data/`）。
 
 ---
 
@@ -696,7 +696,7 @@ Cursor 在标准 VSCode 路径之外多了：
 
 按用户基数和 pinkbin 受众，建议按这个顺序加：
 
-- **[P0] `scaffolds/trae.toml`**：字节 IDE（中国用户基数最大），含 `IDE` 和 `IDE CN` 两个 detect 路径
+- **[P0] `scaffolds/trae.toml`**：字节 参考 IDE（中国用户基数最大），含 `参考 IDE` 和 `参考 IDE` 两个 detect 路径
 - **[P1] `scaffolds/windsurf.toml`**：Codeium Windsurf（国外 AI IDE 强势）
 - **[P1] `scaffolds/vscodium.toml`**：去 telemetry 的 VSCode（隐私用户群）
 - **[P2] `scaffolds/kiro.toml`** `scaffolds/positron.toml` `scaffolds/pearai.toml` 等：用户基数较小，按需
@@ -720,7 +720,7 @@ Cursor 在标准 VSCode 路径之外多了：
 
 ### 2.5 一句话结论
 
-> pinkbin 当前的 `jetbrains.toml` 是**最差的 scaffold**——三个粗 glob 既漏（不区分版本看不出旧版残留）又险（LocalHistory 和 system/caches 同 scope 一起清是有用户数据风险）。`vscode.toml` / `cursor.toml` 是**好基础但不够 deep**——只清 Electron 壳层 cache，没碰 globalStorage 这个真正的大头。短期 P0 只要做 jetbrains.toml 拆 scope + IDE 红线 safety test 补全 + IDE scaffold 新增三件事，就能把 pinkbin IDE 覆盖率从"对照 DevCleaner 的 30%"提到"接近持平"。
+> pinkbin 当前的 `jetbrains.toml` 是**最差的 scaffold**——三个粗 glob 既漏（不区分版本看不出旧版残留）又险（LocalHistory 和 system/caches 同 scope 一起清是有用户数据风险）。`vscode.toml` / `cursor.toml` 是**好基础但不够 deep**——只清 Electron 壳层 cache，没碰 globalStorage 这个真正的大头。短期 P0 只要做 jetbrains.toml 拆 scope + IDE 红线 safety test 补全 + 参考 IDE scaffold 新增三件事，就能把 pinkbin IDE 覆盖率从"对照 DevCleaner 的 30%"提到"接近持平"。
 
 ---
 
@@ -743,10 +743,10 @@ Pinkbin 是**给普通用户简单解决 80% 最常规磁盘占用问题**的产
 
 | 建议 | 在原报告位置 | 为什么砍 |
 |---|---|---|
-| 13 个 VSCode fork 各做独立 scaffold（IDE / Windsurf / Kiro / Antigravity / Aide / Positron / PearAI / Void / Qoder / VSCodium 等） | §2.2 + §2.4 P0/P1/P2 | 80% fork 用户已被 `vscode.toml` + `cursor.toml` 覆盖；剩余 fork 是长尾 |
+| 13 个 VSCode fork 各做独立 scaffold（参考 IDE / Windsurf / Kiro / Antigravity / Aide / Positron / PearAI / Void / Qoder / VSCodium 等） | §2.2 + §2.4 P0/P1/P2 | 80% fork 用户已被 `vscode.toml` + `cursor.toml` 覆盖；剩余 fork 是长尾 |
 | JetBrains 按 product 拆 11 份 scaffold（`pycharm.toml` / `idea.toml` / `webstorm.toml` / ...） | §2.4 P2 | 用户视角是"清 JetBrains"，不是"分别清 PyCharm 和 IDEA"；一份 `jetbrains.toml` 把 scope 切对就够 |
 | 孤儿 venv 检测扩 schema（找 `pyvenv.cfg` 反推父目录） | §1.3 + §1.5 P1 | 受益群体是 5% 装了几十个 Python 项目的老炮，工程量大、误伤风险高 |
-| pyenv / vscode-server / IDE 遥测 buffer / jetbrains-toolbox 单独 scaffold | §1.5 P2 + §2.4 P2 | 长尾 |
+| pyenv / vscode-server / 参考 IDE 遥测 buffer / jetbrains-toolbox 单独 scaffold | §1.5 P2 + §2.4 P2 | 长尾 |
 | Studio.tsx "按 extension 子目录 / 按 product+version 子目录可视化勾选"（DevCleaner 模式） | §2.4 P1 | 看似强大，实质是把 authoring 期的复杂度推给用户，违反 §3.4 |
 
 **评估调研产出的真指标**：建议条数是负面指标，被砍掉的比例才是产品判断力。

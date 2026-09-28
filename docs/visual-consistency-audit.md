@@ -2,7 +2,7 @@
 
 > 状态：审计完成，**未修复**。行号以 v26.1.3.0 工作区为准，修复时以符号搜索定位为准。
 > 方法：四轮——① 空态（IAB 截图亮/暗 1600×900 + 源码静态扫描：硬编码色值 / emoji / 字体回退 / 旧 CSS 残留）；② 数据态（:1420 mock 补丁 prompt 选盘 → 扫描 187GB → 六视图带数据截图 + DOM rect 取证，见 §2b）；③ 点击测试（下钻/面包屑回退/右键菜单/两步确认/聊天发送/引导弹窗全交互，见 §2c）；④ 同步导航专项（用户实报两条复现定性，见 §2d）。
-> 判据：docs/redesign-spec.md v2（IDE 工作行为模型 + IDE 色板 + Lucide + 系统栈零 CDN）。
+> 判据：docs/redesign-spec.md v2（参考 IDE 工作行为模型 + IDE 色板 + Lucide + 系统栈零 CDN）。
 > 纪律：**只修不改功能**——补全式二开，所有列条目均为视觉/语义统一，不删任何能力。
 
 ## 0. 根因总览（五刀）
@@ -21,7 +21,7 @@
 
 ### A. 弹窗一族仍是旧"新粗野"风（最重）
 
-工作台壳已是 IDE 1px 细线扁平，弹窗还是老设计粗墨边：
+工作台壳已是 参考 IDE 1px 细线扁平，弹窗还是老设计粗墨边：
 
 - `styles.css:1849` `.modal` — `border: 3px solid var(--ink)` + 14px 圆角 + 重阴影
 - `styles.css:1905` 附近 `.hint` — `border: 2px solid var(--ink)` + 粉底提示框
@@ -81,7 +81,7 @@
 
 ### 3. `.seg` 同名两套皮
 
-- 记录页顶部筛选（App.tsx:711,721）走新写 `.app-v2 .seg`（styles.css:711，IDE 细线）
+- 记录页顶部筛选（App.tsx:711,721）走新写 `.app-v2 .seg`（styles.css:711，参考 IDE 细线）
 - 设置弹窗 `seg-opt` 走旧 `.seg`（styles.css:1868，粉 hover + 墨色边）
 - 同名控件两副面孔；统一到 `.app-v2` 版
 
@@ -99,7 +99,7 @@
 ### 6. 品牌 wordmark 用等宽字体（待拍板）
 
 - `.app-v2 .brand`（styles.css:264）"DiskSift" 用 Consolas + 呼吸点
-- IDE/VS Code 的 wordmark 均为 Sans；换 `--font-sans` 600 字重更精
+- 参考 IDE/VS Code 的 wordmark 均为 Sans；换 `--font-sans` 600 字重更精
 - **此条与 redesign-spec.md §2 "品牌（mono 粗体+呼吸点）" 冲突，改哪边需用户拍板**
 
 ---
@@ -150,7 +150,7 @@
 
 ### 13. 【P0·布局 bug】面包屑与 AI 分诊工具条同行挤压/遮挡（用户实报，已复现 + 结构坐实）
 
-- 现象：空间图顶部一行同时塞 `面包屑 + .grow + AI分诊按钮 + 五判定图例 + 体积统计`（App.tsx:560-600 一带）。钻到 `C:›Users›demo-user›AppData›Local` 四层时面包屑右缘 x=577、AI 分诊按钮左缘 ~614，**间隙只剩 37px**——真实路径（`D:\localuser\项目经历\…` 中文段更宽）必然撞上，用户实机已见"挡住顶部的 D:\localuser"
+- 现象：空间图顶部一行同时塞 `面包屑 + .grow + AI分诊按钮 + 五判定图例 + 体积统计`（App.tsx:560-600 一带）。钻到 `C:›Users›demo-user›AppData›Local` 四层时面包屑右缘 x=577、AI 分诊按钮左缘 ~614，**间隙只剩 37px**——真实路径（`D:\<本地用户>\项目经历\…` 中文段更宽）必然撞上，用户实机已见"挡住顶部的 D:\<本地用户>"
 - 结构根因：`.app-v2 .crumb`（styles.css:507）`white-space: nowrap`、无 `min-width:0`/省略号；行内除 `.grow` 外全部 `flex-shrink:0`（`.ai-triage-btn`、`.triage-legend`、`.sz` 都是），grow 被吃光后面包屑直接顶穿
 - 修法：容器 `flex-wrap` 不动（保持单行），`.crumb` 加 `flex:1; min-width:0; overflow:hidden` + 内层 `text-overflow: ellipsis`（深路径截中段保留首尾盘符与当前层）；或图例在 <1100px 时折到第二行。二选一，推荐前者+图例整条 `flex-shrink:0` 保持现状
 
@@ -211,7 +211,7 @@
 - [x] **树视图名字列塌陷修复（§2b-7，数据态 P0 布局 bug）**：`.tree-row` 网格定宽列压缩/自适应，侧栏 280px 最小宽时名字列 ≥120px
 - [x] `--font-mono` 栈尾补 `"Microsoft YaHei"`（styles.css:55；同步 redesign-spec §1；治愈 §1-C / §2-1 / §2b-8 / §2b-9 / §2c-14 全部宋体受害者）
 - [x] 弹窗族去粗野：`.modal` 3px→1px `var(--border)`、radius 14→8、`.hint` 粉底→`var(--chrome-2)` + 1px 边、旧 `.seg` 统一到 `.app-v2` 版（styles.css:1849/1905/1868 一带，39 处 2-3px solid 逐个过；含 §2b-10 CleanupModal 与 §2-4 DraftScaffoldModal）
-- [x] AutoWalk 巡查流 1px 化（§2b-11 + §2c-15）：walk-bar 墨边、GB 黑药丸、按钮黑边、AI 回答框 2px 框归 IDE 中性/语义
+- [x] AutoWalk 巡查流 1px 化（§2b-11 + §2c-15）：walk-bar 墨边、GB 黑药丸、按钮黑边、AI 回答框 2px 框归 参考 IDE 中性/语义
 - [x] 风险/分桶色收敛：新增 `--risk-low/--risk-med/--risk-high`（或复用 `--ok/--warn/--danger` + `--verdict-*`），AdvisorCard/ScaffoldPanel/ChatPanel/TriageView/triage.ts 五处全部改引 token
 - [x] "Studio" 页头 → "脚本库"，换标准页头样式（Studio.tsx:134,225）
 - [x] ☀/☾ → Lucide sun/moon（App.tsx:933）；ChatPanel.tsx:216 文案去 ⚙ 并改指路（§2c-16：设置在活动栏底部，最好给可点链接）
@@ -235,7 +235,7 @@
 
 ## 5. 交互探 bug 轮（2026-09-28 第四波工作流产物；21 条全部独立重放确认，0 虚报）
 
-> 全文见工作流产物《交互探 bug 报告》（探针与截图：D:/localuser/promo-video/probes/）。此处登记编号与一句话，修复进度勾选在此。**2026-09-28 回写：§5 全部 19 行（21 条 id）已修并勾选**；§4 P0 全部 11 项已逐项 grep/代码核实并勾选（入口页按钮归一 App.tsx:859 .btn + §2b-9 后补勾），P1 两项与需人工/截图的验收行未完成保持未勾，hex grep 验收已机器复检通过并勾选（09-28 二次复检通过，仅注释一处）。截图双轮/字体抽查/DOM rect 断言三项【未执行】——本环境无浏览器验收，保持未勾并在原行标注状态，待人工 DevTools/截图验收。入口页按钮归一经代码核实（App.tsx:859 .btn + §2b-9）后补勾。
+> 全文见工作流产物《交互探 bug 报告》（探针与截图：D:/<探针目录>/probes/）。此处登记编号与一句话，修复进度勾选在此。**2026-09-28 回写：§5 全部 19 行（21 条 id）已修并勾选**；§4 P0 全部 11 项已逐项 grep/代码核实并勾选（入口页按钮归一 App.tsx:859 .btn + §2b-9 后补勾），P1 两项与需人工/截图的验收行未完成保持未勾，hex grep 验收已机器复检通过并勾选（09-28 二次复检通过，仅注释一处）。截图双轮/字体抽查/DOM rect 断言三项【未执行】——本环境无浏览器验收，保持未勾并在原行标注状态，待人工 DevTools/截图验收。入口页按钮归一经代码核实（App.tsx:859 .btn + §2b-9）后补勾。
 
 **高危**
 - [x] f0-0/f1-1/f2-0（同根因）NEVER_TOUCH 片段表尾分隔符：`'\Windows\'` 匹配不到根级 `C:\Windows` → 父判需决策/子判系统自相矛盾；巡查流对 C:\Windows「进回收站」实测执行成功（已释放+36.2GB），真实后端 execute_plan（src-tauri/src/lib.rs:960-977）同样无兜底——安全防线双层失效；C:\Recovery 不在清单

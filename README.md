@@ -8,7 +8,7 @@
 
 秒扫整盘 · AI 分诊上色 · 已知应用脚本清 · 红线双层兜底 —— 默认进回收站，永远不读你的文件内容。
 
-[![License](https://img.shields.io/badge/License-MIT-24C8DB.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB.svg)](https://tauri.app)
 [![Platform](https://img.shields.io/badge/Windows%2010%2F11-lightgrey.svg)](#快速开始)
 [![Release](https://img.shields.io/badge/Release-v26.1.3.1-005FB8.svg)](#快速开始)
@@ -137,7 +137,7 @@ pnpm -C apps/desktop test # 前端引擎测试（分诊/树/清理规则）
 
 DiskSift 站在 [Pinkbin](https://github.com/cccyd2003-qwq/pinkbin) 的肩膀上——安全架构与最初实现全部继承自它。
 
-灵感：[WizTree](https://diskanalyzer.com)（MFT 直读标杆）· [SpaceSniffer](http://www.uderzo.it/main_products/space_sniffer/)（treemap 先驱）· [CleanMyWechat](https://github.com/blackboxo/CleanMyWechat)（微信清理范本）· [SquirrelDisk](https://github.com/adileo/squirreldisk)（Tauri 参考）· [IDE](https://trae.ai)（工作台设计语言）
+灵感：[WizTree](https://diskanalyzer.com)（MFT 直读标杆）· [SpaceSniffer](http://www.uderzo.it/main_products/space_sniffer/)（treemap 先驱）· [CleanMyWechat](https://github.com/blackboxo/CleanMyWechat)（微信清理范本）· [SquirrelDisk](https://github.com/adileo/squirreldisk)（Tauri 参考）· 现代 IDE（工作台设计语言）
 
 肩膀：[Tauri](https://tauri.app) · [d3-hierarchy](https://github.com/d3/d3-hierarchy) · [jwalk](https://github.com/jessegrosjean/jwalk) · [ntfs](https://github.com/ColinFinck/ntfs) · [globset](https://github.com/BurntSushi/ripgrep/tree/master/crates/globset) · [trash-rs](https://github.com/Byron/trash-rs) · [react-markdown](https://github.com/remarkjs/react-markdown) · [Lucide](https://lucide.dev)
 
@@ -159,4 +159,6 @@ DiskSift 站在 [Pinkbin](https://github.com/cccyd2003-qwq/pinkbin) 的肩膀上
 
 ## License
 
-[MIT](LICENSE) · 欢迎 fork、商用、闭源衍生。改 scaffold 时记得同步改它的 safety test——红线断言是防止误删用户数据的最后一道闸。
+**GPL-3.0-or-later** —— 你可以自由使用、学习、修改、再分发，商业使用的前提是**衍生作品同样以 GPL-3.0 开源**；不允许闭源衍生。
+
+本发行版包含并修改了源自 [Pinkbin](https://github.com/cccyd2003-qwq/pinkbin)（MIT）的代码，上游版权与 MIT 许可声明在 [LICENSE](LICENSE) 中原文保留。改 scaffold 时记得同步改它的 safety test——红线断言是防止误删用户数据的最后一道闸。
