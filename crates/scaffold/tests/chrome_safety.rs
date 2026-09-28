@@ -127,12 +127,21 @@ fn chrome_globs_are_safe() {
         ("js-bytecode-cache", format!("{ud}/Profile 1/Code Cache")),
         // gpu-shader-cache：DawnGraphiteCache / DawnWebGPUCache 为 2026-09-28 实测名。
         ("gpu-shader-cache", format!("{ud}/Default/GPUCache")),
-        ("gpu-shader-cache", format!("{ud}/Default/DawnGraphiteCache")),
+        (
+            "gpu-shader-cache",
+            format!("{ud}/Default/DawnGraphiteCache"),
+        ),
         ("gpu-shader-cache", format!("{ud}/Default/DawnWebGPUCache")),
         ("gpu-shader-cache", format!("{ud}/Profile 1/GPUCache")),
         // service-worker-cache：整桶；桶内 Database/ + ScriptCache/ 为 2026-09-28 实测名。
-        ("service-worker-cache", format!("{ud}/Default/Service Worker")),
-        ("service-worker-cache", format!("{ud}/Profile 1/Service Worker")),
+        (
+            "service-worker-cache",
+            format!("{ud}/Default/Service Worker"),
+        ),
+        (
+            "service-worker-cache",
+            format!("{ud}/Profile 1/Service Worker"),
+        ),
         // blob-storage：整桶。
         ("blob-storage", format!("{ud}/Default/blob_storage")),
         ("blob-storage", format!("{ud}/Profile 2/blob_storage")),
@@ -142,7 +151,10 @@ fn chrome_globs_are_safe() {
         ("shader-cache", format!("{ud}/GraphiteDawnCache")),
         ("shader-cache", format!("{ud}/ShaderCache")),
         // component-crx-cache：file 粒度 + days 30，路径是桶内文件（fixture 名）。
-        ("component-crx-cache", format!("{ud}/component_crx_cache/0a1b2c3d.crx")),
+        (
+            "component-crx-cache",
+            format!("{ud}/component_crx_cache/0a1b2c3d.crx"),
+        ),
         (
             "component-crx-cache",
             format!("{ud}/extensions_crx_cache/nkbihfbeogaeaoehlefnkodbefgpgknn/1.2.3.crx"),
@@ -191,46 +203,46 @@ fn chrome_globs_are_safe() {
         // All Users
         format!("{ud}/All Users/x"),
         // ---- Chrome 特有红线：User Data 顶层状态 ----
-        format!("{ud}/Local State"),                      // 实测
-        format!("{ud}/First Run"),                        // 实测
-        format!("{ud}/Last Browser"),                     // 实测
-        format!("{ud}/Last Version"),                     // 实测
-        format!("{ud}/BrowserMetrics-spare.pma"),         // 实测
-        format!("{ud}/Safe Browsing/Cert Chains.bin"),    // 实测（Safe Browsing）
-        format!("{ud}/WidevineCdm/1.0.0/manifest.json"),  // 实测（WidevineCdm）
-        format!("{ud}/Variations/seed.json"),             // 实测（Variations）
+        format!("{ud}/Local State"),                     // 实测
+        format!("{ud}/First Run"),                       // 实测
+        format!("{ud}/Last Browser"),                    // 实测
+        format!("{ud}/Last Version"),                    // 实测
+        format!("{ud}/BrowserMetrics-spare.pma"),        // 实测
+        format!("{ud}/Safe Browsing/Cert Chains.bin"),   // 实测（Safe Browsing）
+        format!("{ud}/WidevineCdm/1.0.0/manifest.json"), // 实测（WidevineCdm）
+        format!("{ud}/Variations/seed.json"),            // 实测（Variations）
         // ---- Chrome 特有红线：profile 用户数据 ----
-        format!("{ud}/Default/Bookmarks"),                // 实测
-        format!("{ud}/Default/Bookmarks.bak"),            // 实测
-        format!("{ud}/Default/History"),                  // 实测
-        format!("{ud}/Default/History-journal"),          // 实测
-        format!("{ud}/Default/Login Data"),               // 实测
-        format!("{ud}/Default/Login Data-journal"),       // 实测
-        format!("{ud}/Default/Login Data For Account"),   // 实测
-        format!("{ud}/Default/Web Data"),                 // 实测
-        format!("{ud}/Default/Web Data-journal"),         // 实测
-        format!("{ud}/Default/Favicons"),                 // 实测
-        format!("{ud}/Default/Favicons-journal"),         // 实测
-        format!("{ud}/Default/Preferences"),              // 实测
-        format!("{ud}/Default/Secure Preferences"),       // 实测
-        format!("{ud}/Default/Shortcuts"),                // 实测
-        format!("{ud}/Default/Top Sites"),                // 实测
-        format!("{ud}/Default/Sessions/1a2b3c"),          // 实测（Sessions）
+        format!("{ud}/Default/Bookmarks"),                 // 实测
+        format!("{ud}/Default/Bookmarks.bak"),             // 实测
+        format!("{ud}/Default/History"),                   // 实测
+        format!("{ud}/Default/History-journal"),           // 实测
+        format!("{ud}/Default/Login Data"),                // 实测
+        format!("{ud}/Default/Login Data-journal"),        // 实测
+        format!("{ud}/Default/Login Data For Account"),    // 实测
+        format!("{ud}/Default/Web Data"),                  // 实测
+        format!("{ud}/Default/Web Data-journal"),          // 实测
+        format!("{ud}/Default/Favicons"),                  // 实测
+        format!("{ud}/Default/Favicons-journal"),          // 实测
+        format!("{ud}/Default/Preferences"),               // 实测
+        format!("{ud}/Default/Secure Preferences"),        // 实测
+        format!("{ud}/Default/Shortcuts"),                 // 实测
+        format!("{ud}/Default/Top Sites"),                 // 实测
+        format!("{ud}/Default/Sessions/1a2b3c"),           // 实测（Sessions）
         format!("{ud}/Default/Sync Data/SyncData.sqlite"), // 实测（Sync Data）
-        format!("{ud}/Default/Account Web Data/x"),       // 实测
-        format!("{ud}/Default/Affiliation Database/x"),   // 实测
+        format!("{ud}/Default/Account Web Data/x"),        // 实测
+        format!("{ud}/Default/Affiliation Database/x"),    // 实测
         // ---- Chrome 特有红线：登录态 / 网站数据 ----
-        format!("{ud}/Default/Network/Cookies"),          // 实测（Network）
+        format!("{ud}/Default/Network/Cookies"), // 实测（Network）
         format!("{ud}/Default/Local Storage/leveldb/000003.log"), // 实测
         format!("{ud}/Default/Session Storage/000003.log"), // 实测
         format!("{ud}/Default/IndexedDB/https_example/x"), // 实测
-        format!("{ud}/Default/WebStorage/x"),             // 实测
+        format!("{ud}/Default/WebStorage/x"),    // 实测
         // ---- Chrome 特有红线：扩展状态（扩展登录 token 所在）----
-        format!("{ud}/Default/Extension State/x"),          // 实测
+        format!("{ud}/Default/Extension State/x"), // 实测
         format!("{ud}/Default/Local Extension Settings/x"), // 实测
-        format!("{ud}/Default/Extension Rules/x"),          // 实测
-        format!("{ud}/Default/Extension Scripts/x"),        // 实测
-        format!("{ud}/Default/GCM Store/x"),                // 实测
+        format!("{ud}/Default/Extension Rules/x"), // 实测
+        format!("{ud}/Default/Extension Scripts/x"), // 实测
+        format!("{ud}/Default/GCM Store/x"),       // 实测
         // ---- Chrome 特有红线：隐私沙箱 / 拿不准 → 红线 ----
         format!("{ud}/Default/DIPS/x"),                     // 实测
         format!("{ud}/Default/DIPS-wal"),                   // 实测
@@ -246,11 +258,11 @@ fn chrome_globs_are_safe() {
         format!("{ud}/Default/parcel_tracking_db/x"),       // 实测
         format!("{ud}/Default/optimization_guide_hint_cache_store/x"), // 实测
         // ---- Chrome 特有红线：证书 / 加密物料 ----
-        format!("{ud}/Default/ClientCertificates/x"),     // 实测
-        format!("{ud}/Default/MediaDeviceSalts"),         // 实测
+        format!("{ud}/Default/ClientCertificates/x"), // 实测
+        format!("{ud}/Default/MediaDeviceSalts"),     // 实测
         format!("{ud}/Default/MediaDeviceSalts-journal"), // 实测
-        format!("{ud}/Default/passkey_enclave_state/x"),  // 实测
-        format!("{ud}/Default/trusted_vault.pb"),         // 实测
+        format!("{ud}/Default/passkey_enclave_state/x"), // 实测
+        format!("{ud}/Default/trusted_vault.pb"),     // 实测
         // ---- Chrome 特有红线：Profile 1 同款抽查 ----
         format!("{ud}/Profile 1/Bookmarks"),
         format!("{ud}/Profile 1/History"),

@@ -363,11 +363,19 @@ mod tests {
         // 与保护语义说明，用户可见。
         let plan = Plan {
             action: Action::Recycle,
-            paths: vec![PathBuf::from(r"C:\Windows"), PathBuf::from(r"C:\safe-cache")],
+            paths: vec![
+                PathBuf::from(r"C:\Windows"),
+                PathBuf::from(r"C:\safe-cache"),
+            ],
             reason: "test".into(),
         };
-        let err = execute(&plan, true, Path::new("unused.jsonl"), Path::new("unused-q"))
-            .expect_err("never-touch plan must be refused");
+        let err = execute(
+            &plan,
+            true,
+            Path::new("unused.jsonl"),
+            Path::new("unused-q"),
+        )
+        .expect_err("never-touch plan must be refused");
         let msg = format!("{err}");
         assert!(msg.contains(r"C:\Windows"), "错误需点名命中路径：{msg}");
         assert!(msg.contains("NEVER_TOUCH"), "错误需说明保护语义：{msg}");
@@ -379,7 +387,13 @@ mod tests {
                 reason: "test".into(),
             };
             assert!(
-                execute(&plan, false, Path::new("unused.jsonl"), Path::new("unused-q")).is_err(),
+                execute(
+                    &plan,
+                    false,
+                    Path::new("unused.jsonl"),
+                    Path::new("unused-q")
+                )
+                .is_err(),
                 "{action:?} 也必须被拒"
             );
         }
@@ -392,7 +406,13 @@ mod tests {
             paths: vec![PathBuf::from(r"C:\safe-cache")],
             reason: "test".into(),
         };
-        let out = execute(&plan, true, Path::new("unused.jsonl"), Path::new("unused-q")).unwrap();
+        let out = execute(
+            &plan,
+            true,
+            Path::new("unused.jsonl"),
+            Path::new("unused-q"),
+        )
+        .unwrap();
         assert_eq!(out.len(), 1);
     }
 }

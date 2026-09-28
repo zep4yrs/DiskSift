@@ -211,10 +211,7 @@ fn huggingface_globs_are_safe() {
             "hub-cache",
             "D:/models/huggingface/hub/models--Qwen--Qwen2.5-7B",
         ),
-        (
-            "arrow-datasets",
-            "D:/models/huggingface/datasets/downloads",
-        ),
+        ("arrow-datasets", "D:/models/huggingface/datasets/downloads"),
     ];
     for (expected_id, p) in fallback_positives {
         let hits = matching_scopes(&scopes, p);

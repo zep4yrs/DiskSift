@@ -203,46 +203,46 @@ fn brave_globs_are_safe() {
         // All Users
         format!("{ud}/All Users/x"),
         // ---- Chromium 通用红线：User Data 顶层状态 ----
-        format!("{ud}/Local State"),                      // 实测
-        format!("{ud}/First Run"),                        // 实测
-        format!("{ud}/Last Browser"),                     // 实测
-        format!("{ud}/Last Version"),                     // 实测
-        format!("{ud}/BrowserMetrics-spare.pma"),         // 实测
-        format!("{ud}/Safe Browsing/Cert Chains.bin"),    // 实测（Safe Browsing）
-        format!("{ud}/WidevineCdm/1.0.0/manifest.json"),  // 实测（WidevineCdm）
-        format!("{ud}/Variations/seed.json"),             // 实测（Variations）
+        format!("{ud}/Local State"),                     // 实测
+        format!("{ud}/First Run"),                       // 实测
+        format!("{ud}/Last Browser"),                    // 实测
+        format!("{ud}/Last Version"),                    // 实测
+        format!("{ud}/BrowserMetrics-spare.pma"),        // 实测
+        format!("{ud}/Safe Browsing/Cert Chains.bin"),   // 实测（Safe Browsing）
+        format!("{ud}/WidevineCdm/1.0.0/manifest.json"), // 实测（WidevineCdm）
+        format!("{ud}/Variations/seed.json"),            // 实测（Variations）
         // ---- Chromium 通用红线：profile 用户数据 ----
-        format!("{ud}/Default/Bookmarks"),                // 实测
-        format!("{ud}/Default/Bookmarks.bak"),            // 实测
-        format!("{ud}/Default/History"),                  // 实测
-        format!("{ud}/Default/History-journal"),          // 实测
-        format!("{ud}/Default/Login Data"),               // 实测
-        format!("{ud}/Default/Login Data-journal"),       // 实测
-        format!("{ud}/Default/Login Data For Account"),   // 实测
-        format!("{ud}/Default/Web Data"),                 // 实测
-        format!("{ud}/Default/Web Data-journal"),         // 实测
-        format!("{ud}/Default/Favicons"),                 // 实测
-        format!("{ud}/Default/Favicons-journal"),         // 实测
-        format!("{ud}/Default/Preferences"),              // 实测
-        format!("{ud}/Default/Secure Preferences"),       // 实测
-        format!("{ud}/Default/Shortcuts"),                // 实测
-        format!("{ud}/Default/Top Sites"),                // 实测
-        format!("{ud}/Default/Sessions/1a2b3c"),          // 实测（Sessions）
+        format!("{ud}/Default/Bookmarks"),                 // 实测
+        format!("{ud}/Default/Bookmarks.bak"),             // 实测
+        format!("{ud}/Default/History"),                   // 实测
+        format!("{ud}/Default/History-journal"),           // 实测
+        format!("{ud}/Default/Login Data"),                // 实测
+        format!("{ud}/Default/Login Data-journal"),        // 实测
+        format!("{ud}/Default/Login Data For Account"),    // 实测
+        format!("{ud}/Default/Web Data"),                  // 实测
+        format!("{ud}/Default/Web Data-journal"),          // 实测
+        format!("{ud}/Default/Favicons"),                  // 实测
+        format!("{ud}/Default/Favicons-journal"),          // 实测
+        format!("{ud}/Default/Preferences"),               // 实测
+        format!("{ud}/Default/Secure Preferences"),        // 实测
+        format!("{ud}/Default/Shortcuts"),                 // 实测
+        format!("{ud}/Default/Top Sites"),                 // 实测
+        format!("{ud}/Default/Sessions/1a2b3c"),           // 实测（Sessions）
         format!("{ud}/Default/Sync Data/SyncData.sqlite"), // 实测（Sync Data）
-        format!("{ud}/Default/Account Web Data/x"),       // 实测
-        format!("{ud}/Default/Affiliation Database/x"),   // 实测
+        format!("{ud}/Default/Account Web Data/x"),        // 实测
+        format!("{ud}/Default/Affiliation Database/x"),    // 实测
         // ---- Chromium 通用红线：登录态 / 网站数据 ----
-        format!("{ud}/Default/Network/Cookies"),          // 实测（Network）
+        format!("{ud}/Default/Network/Cookies"), // 实测（Network）
         format!("{ud}/Default/Local Storage/leveldb/000003.log"), // 实测
         format!("{ud}/Default/Session Storage/000003.log"), // 实测
         format!("{ud}/Default/IndexedDB/https_example/x"), // 实测
-        format!("{ud}/Default/WebStorage/x"),             // 实测
+        format!("{ud}/Default/WebStorage/x"),    // 实测
         // ---- Chromium 通用红线：扩展状态（扩展登录 token 所在）----
-        format!("{ud}/Default/Extension State/x"),          // 实测
+        format!("{ud}/Default/Extension State/x"), // 实测
         format!("{ud}/Default/Local Extension Settings/x"), // 实测
-        format!("{ud}/Default/Extension Rules/x"),          // 实测
-        format!("{ud}/Default/Extension Scripts/x"),        // 实测
-        format!("{ud}/Default/GCM Store/x"),                // 实测
+        format!("{ud}/Default/Extension Rules/x"), // 实测
+        format!("{ud}/Default/Extension Scripts/x"), // 实测
+        format!("{ud}/Default/GCM Store/x"),       // 实测
         // ---- Chromium 通用红线：隐私沙箱 / 拿不准 → 红线 ----
         format!("{ud}/Default/DIPS/x"),                     // 实测
         format!("{ud}/Default/DIPS-wal"),                   // 实测
@@ -258,13 +258,13 @@ fn brave_globs_are_safe() {
         format!("{ud}/Default/parcel_tracking_db/x"),       // 实测
         format!("{ud}/Default/optimization_guide_hint_cache_store/x"), // 实测
         // ---- Chromium 通用红线：证书 / 加密物料 ----
-        format!("{ud}/Default/ClientCertificates/x"),     // 实测
-        format!("{ud}/Default/MediaDeviceSalts"),         // 实测
+        format!("{ud}/Default/ClientCertificates/x"), // 实测
+        format!("{ud}/Default/MediaDeviceSalts"),     // 实测
         format!("{ud}/Default/MediaDeviceSalts-journal"), // 实测
-        format!("{ud}/Default/passkey_enclave_state/x"),  // 实测
-        format!("{ud}/Default/trusted_vault.pb"),         // 实测
+        format!("{ud}/Default/passkey_enclave_state/x"), // 实测
+        format!("{ud}/Default/trusted_vault.pb"),     // 实测
         // ---- Brave 专属红线（上游知名目录，本机未安装无法勘测；断言防 glob 放宽）----
-        format!("{ud}/Default/BraveWallet/x"),  // 钱包助记词 / 私钥
+        format!("{ud}/Default/BraveWallet/x"), // 钱包助记词 / 私钥
         format!("{ud}/Profile 1/BraveWallet/x"),
         format!("{ud}/Default/Rewards/rewards.db"), // BAT 账本
         format!("{ud}/Default/Rewards/x"),

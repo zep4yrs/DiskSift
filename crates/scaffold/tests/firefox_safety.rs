@@ -191,28 +191,28 @@ fn firefox_globs_are_safe() {
     let red_lines: Vec<String> = vec![
         // ---- 通用红线（CLAUDE.md），置于 Firefox 树内 ----
         // *.db / *.sqlite 家族（Firefox 的用户库全是 .sqlite，一律不碰）
-        format!("{rp}/places.sqlite"),        // 实测
-        format!("{rp}/places.sqlite-wal"),    // 实测
-        format!("{rp}/places.sqlite-shm"),    // 实测
-        format!("{rp}/cookies.sqlite"),       // 实测
-        format!("{rp}/cookies.sqlite-wal"),   // 实测
-        format!("{rp}/cookies.sqlite-shm"),   // 实测
-        format!("{rp}/formhistory.sqlite"),   // 实测
-        format!("{rp}/favicons.sqlite"),      // 实测
-        format!("{rp}/webappsstore.sqlite"),  // 实测
-        format!("{rp}/storage.sqlite"),       // 实测
-        format!("{rp}/storage-sync-v2.sqlite"), // 实测
-        format!("{rp}/synced-tabs.db"),       // 实测
-        format!("{rp}/tabnotes.sqlite"),      // 实测
-        format!("{rp}/content-prefs.sqlite"), // 实测
-        format!("{rp}/permissions.sqlite"),   // 实测
-        format!("{rp}/protections.sqlite"),   // 实测
-        format!("{rp}/breach-alerts.db"),     // 实测
-        format!("{rp}/chat-store.sqlite"),    // 实测
+        format!("{rp}/places.sqlite"),                     // 实测
+        format!("{rp}/places.sqlite-wal"),                 // 实测
+        format!("{rp}/places.sqlite-shm"),                 // 实测
+        format!("{rp}/cookies.sqlite"),                    // 实测
+        format!("{rp}/cookies.sqlite-wal"),                // 实测
+        format!("{rp}/cookies.sqlite-shm"),                // 实测
+        format!("{rp}/formhistory.sqlite"),                // 实测
+        format!("{rp}/favicons.sqlite"),                   // 实测
+        format!("{rp}/webappsstore.sqlite"),               // 实测
+        format!("{rp}/storage.sqlite"),                    // 实测
+        format!("{rp}/storage-sync-v2.sqlite"),            // 实测
+        format!("{rp}/synced-tabs.db"),                    // 实测
+        format!("{rp}/tabnotes.sqlite"),                   // 实测
+        format!("{rp}/content-prefs.sqlite"),              // 实测
+        format!("{rp}/permissions.sqlite"),                // 实测
+        format!("{rp}/protections.sqlite"),                // 实测
+        format!("{rp}/breach-alerts.db"),                  // 实测
+        format!("{rp}/chat-store.sqlite"),                 // 实测
         format!("{rp}/bounce-tracking-protection.sqlite"), // 实测
         format!("{rp}/domain_to_categories.sqlite"),       // 实测
-        format!("{rp}/key4.db"),              // 实测（密码密钥库）
-        format!("{rp}/logins.db"),            // 实测
+        format!("{rp}/key4.db"),                           // 实测（密码密钥库）
+        format!("{rp}/logins.db"),                         // 实测
         // db_storage / Msg / Accounts / login / config / Favorite / Fav / key / crypto / All Users
         format!("{rp}/db_storage/MMKV/data.db"),
         format!("{rp}/Msg/MultiMsg/msg.db"),
@@ -226,48 +226,48 @@ fn firefox_globs_are_safe() {
         format!("{rp}/All Users/x"),
         // ---- Firefox 特有红线：历史 / 书签 / 会话（用户原始数据及其备份）----
         format!("{rp}/bookmarkbackups/bookmarks-2026-09-28.jsonlz4"), // 实测（bookmarkbackups）
-        format!("{rp}/sessionstore-backups/recovery.jsonlz4"),        // 实测（sessionstore-backups）
-        format!("{rp}/sessionCheckpoints.json"),                      // 实测
+        format!("{rp}/sessionstore-backups/recovery.jsonlz4"), // 实测（sessionstore-backups）
+        format!("{rp}/sessionCheckpoints.json"),               // 实测
         // ---- Firefox 特有红线：密码 / 证书 / 同步 ----
-        format!("{rp}/logins.json"),          // 实测
-        format!("{rp}/logins-backup.json"),   // 实测
-        format!("{rp}/cert9.db"),             // 实测
-        format!("{rp}/cert_override.txt"),    // 实测
-        format!("{rp}/pkcs11.txt"),           // 实测
-        format!("{rp}/weave/x"),              // 实测（weave = 同步）
-        format!("{rp}/signedInUser.json"),    // 实测
+        format!("{rp}/logins.json"),        // 实测
+        format!("{rp}/logins-backup.json"), // 实测
+        format!("{rp}/cert9.db"),           // 实测
+        format!("{rp}/cert_override.txt"),  // 实测
+        format!("{rp}/pkcs11.txt"),         // 实测
+        format!("{rp}/weave/x"),            // 实测（weave = 同步）
+        format!("{rp}/signedInUser.json"),  // 实测
         // ---- Firefox 特有红线：网站数据 / 扩展 / 设置 ----
         format!("{rp}/storage/default/https+++example.com/idb/x"), // 实测（storage）
-        format!("{rp}/containers.json"),             // 实测
-        format!("{rp}/handlers.json"),               // 实测
-        format!("{rp}/search.json.mozlz4"),          // 实测
-        format!("{rp}/prefs.js"),                    // 实测
-        format!("{rp}/xulstore.json"),               // 实测
-        format!("{rp}/downloads.json"),              // 实测
-        format!("{rp}/extensions/SomeExt.xpi"),      // 实测（extensions）
-        format!("{rp}/extensions.json"),             // 实测
-        format!("{rp}/extension-preferences.json"),  // 实测
-        format!("{rp}/extension-store/x"),           // 实测
-        format!("{rp}/extension-store-menus/x"),     // 实测
-        format!("{rp}/addons.json"),                 // 实测
-        format!("{rp}/gmp-widevinecdm/1.0/x"),       // 实测（DRM 插件）
-        format!("{rp}/gmp-gmpopenh264/1.0/x"),       // 实测（编解码插件）
-        format!("{rp}/datareporting/x"),             // 实测
-        format!("{rp}/settings/x"),                  // 实测
-        format!("{lp}/settings/x"),                  // 实测（本地根也有 settings）
-        format!("{rp}/features/x"),                  // 实测
-        format!("{rp}/taskbartabs/x"),               // 实测
-        format!("{rp}/crashes/Event-1.json"),        // 实测（crashes，与 minidumps 不同桶）
-        format!("{lp}/safebrowsing/x"),              // 实测（本地根 safebrowsing）
+        format!("{rp}/containers.json"),                           // 实测
+        format!("{rp}/handlers.json"),                             // 实测
+        format!("{rp}/search.json.mozlz4"),                        // 实测
+        format!("{rp}/prefs.js"),                                  // 实测
+        format!("{rp}/xulstore.json"),                             // 实测
+        format!("{rp}/downloads.json"),                            // 实测
+        format!("{rp}/extensions/SomeExt.xpi"),                    // 实测（extensions）
+        format!("{rp}/extensions.json"),                           // 实测
+        format!("{rp}/extension-preferences.json"),                // 实测
+        format!("{rp}/extension-store/x"),                         // 实测
+        format!("{rp}/extension-store-menus/x"),                   // 实测
+        format!("{rp}/addons.json"),                               // 实测
+        format!("{rp}/gmp-widevinecdm/1.0/x"),                     // 实测（DRM 插件）
+        format!("{rp}/gmp-gmpopenh264/1.0/x"),                     // 实测（编解码插件）
+        format!("{rp}/datareporting/x"),                           // 实测
+        format!("{rp}/settings/x"),                                // 实测
+        format!("{lp}/settings/x"),                                // 实测（本地根也有 settings）
+        format!("{rp}/features/x"),                                // 实测
+        format!("{rp}/taskbartabs/x"),                             // 实测
+        format!("{rp}/crashes/Event-1.json"), // 实测（crashes，与 minidumps 不同桶）
+        format!("{lp}/safebrowsing/x"),       // 实测（本地根 safebrowsing）
         // ---- Firefox 特有红线：Firefox 根元数据（2026-09-28 实测）----
         format!("{roaming}/profiles.ini"),
         format!("{roaming}/installs.ini"),
         format!("{roaming}/Profile Groups/x"),
         format!("{roaming}/Background Tasks Profiles/x"),
-        format!("{roaming}/Crash Reports/events/x"),              // 实测（events）
-        format!("{roaming}/Crash Reports/glean/x"),               // 实测（glean）
+        format!("{roaming}/Crash Reports/events/x"), // 实测（events）
+        format!("{roaming}/Crash Reports/glean/x"),  // 实测（glean）
         format!("{roaming}/Crash Reports/crashreporter_settings.json"), // 实测
-        format!("{roaming}/Crash Reports/submit.log"),            // 实测
+        format!("{roaming}/Crash Reports/submit.log"), // 实测
         // ---- 其它应用的树（不得外溢）----
         "C:/Users/anyone/AppData/Roaming/Thunderbird/Profiles/abc123.default/cache2".to_string(),
         "C:/Users/anyone/AppData/Roaming/Mozilla/SeaMonkey/Profiles/abc123.default/cache2"
@@ -357,7 +357,11 @@ fn firefox_detect_anchors_mozilla_firefox_roots_only() {
 
     assert_match(&pos_roaming, Some("firefox"), "** wildcard roaming root");
     assert_match(&pos_local, Some("firefox"), "** wildcard local root");
-    assert_match(&pos_relocated, Some("firefox"), "** wildcard relocated root");
+    assert_match(
+        &pos_relocated,
+        Some("firefox"),
+        "** wildcard relocated root",
+    );
     assert_match(&neg_thunderbird, None, "Thunderbird must not match");
     assert_match(&neg_seamonkey, None, "SeaMonkey must not match");
     assert_match(&neg_chrome, None, "Chrome User Data must not match");

@@ -307,8 +307,14 @@ mod tests {
             500,
             r#"{"error":{"message":"response_format is not supported by this model"}}"#
         ));
-        assert!(is_response_format_rejection(502, "upstream: json_object unsupported"));
-        assert!(is_response_format_rejection(500, "Json Mode is not enabled"));
+        assert!(is_response_format_rejection(
+            502,
+            "upstream: json_object unsupported"
+        ));
+        assert!(is_response_format_rejection(
+            500,
+            "Json Mode is not enabled"
+        ));
         assert!(is_response_format_rejection(500, "JSON_MODE disabled"));
         assert!(!is_response_format_rejection(500, "internal server error"));
         assert!(!is_response_format_rejection(200, ""));
