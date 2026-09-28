@@ -1,174 +1,152 @@
 <div align="center">
 
-<img src="apps/desktop/src-tauri/icons/128x128.png" alt="Pinkbin" width="96" height="96">
+<img src="apps/desktop/src-tauri/icons/128x128.png" alt="DiskSift" width="96" height="96">
 
-# Pinkbin
+# DiskSift
 
-**Scan. Understand. Clean — one folder at a time.**
+**Sift the cleanable out of your drive.**
 
-Open-source disk cleaner. Scan a whole drive in seconds to see where the bytes went, drag any unfamiliar folder into the AI to learn what it is and whether it's safe to delete, then clean by scope — defaults to the Recycle Bin, never reads your file contents.
+Whole-drive scan in seconds · AI triage with color coding · script-based cleaning for known apps · double-layer red-line protection — everything lands in the Recycle Bin, and your file contents are never read.
 
-[![License](https://img.shields.io/badge/License-GPL--3.0-ff69b4.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB.svg)](https://tauri.app)
-[![Platform](https://img.shields.io/badge/Windows-lightgrey.svg)](#download)
+[![Platform](https://img.shields.io/badge/Windows%2010%2F11-lightgrey.svg)](#quick-start)
+[![Release](https://img.shields.io/badge/Release-v26.1.3.1-005FB8.svg)](#quick-start)
 
-[Download](#download) · [Demo](#demo) · [Three things](#three-things) · [Usage](#usage) · [Architecture](#architecture) · [Roadmap](#roadmap) · [Contributing](#contributing) · [Acknowledgments](#acknowledgments)
+**Download** · [Screenshots](#screenshots) · [Relation to Pinkbin](#relation-to-pinkbin) · [Four things](#four-things) · [Security model](#security-model) · [Building from source](#building-from-source)
 
-**[简体中文](README.md) | English**
+[简体中文](README.md) | English
 
 </div>
 
 ---
 
-## Download
+## Screenshots
 
 <p align="center">
-  <a href="https://github.com/zep4yrs/DiskSift/releases/latest"><img src="https://img.shields.io/badge/⬇_Download_Latest_(Windows)-ff69b4?style=for-the-badge&logo=windows&logoColor=white" height="42"></a>
+  <img src="docs/screenshots/hero.png" alt="IDE-style workbench: space treemap + verdict coloring + tree view + AI sidebar" width="100%">
 </p>
 
-| Platform | File | Notes |
+First look after scanning C:: a space treemap in the middle (blue bars = AI/rule verdicts, green pills = cleanable aggregates), the explorer tree on the left with a usage ring per row — **double-click to drill down on the map and the tree follows; pick a folder in the tree and the map re-roots**. The AI sidebar on the right answers "what is this, can I delete it" anytime.
+
+<p align="center">
+  <img src="docs/screenshots/triage.png" alt="AI triage: five-bucket report + one-click recycle" width="100%">
+</p>
+
+The scan diagnosis report sorts directories into five buckets: *safe / needs-decision / migrate / system / uncertain*. The "100% safe" bucket supports **one-click recycle** — two-step confirm, everything into the Recycle Bin, restorable.
+
+<p align="center">
+  <img src="docs/screenshots/dark.png" alt="Dark theme" width="100%">
+</p>
+
+---
+
+## Relation to Pinkbin
+
+Straight up: **DiskSift is a re-distribution of [Pinkbin](https://github.com/cccyd2003-qwq/pinkbin) (MIT)**. Pinkbin laid the perfect foundation — NTFS MFT fast scan, scaffold red-line tests, undo ledger, Recycle-Bin-by-default — all inherited untouched. Thanks to the original author cccyd2003-qwq.
+
+DiskSift does three things on top: **the frontend is rebuilt from scratch, AI evolved from Q&A into a triage system, and safety guards pushed down into the execution layer**. Side by side:
+
+| | Pinkbin | DiskSift |
 |---|---|---|
-| **Windows 10 / 11 (x64)** | [`Pinkbin_x.x.x_x64-setup.exe`](https://github.com/zep4yrs/DiskSift/releases/latest) (NSIS)<br>[`Pinkbin_x.x.x_x64_en-US.msi`](https://github.com/zep4yrs/DiskSift/releases/latest) (MSI) | First launch: SmartScreen will block — click "More info" → "Run anyway". NTFS MFT direct read needs admin; the installer ships a manifest that auto-elevates via UAC. |
+| **Workbench** | Three-pane layout | Modern IDE five-zone workbench · browser-style multi-tab · independently collapsible regions |
+| **Space awareness** | Treemap / tree, independent | **Two-way synced navigation** · usage rings · breadcrumb drill-down |
+| **AI** | Drag-and-drop Q&A | **Five-verdict triage layer**: batch triage · full-map coloring · focus-on-cleanable · aggregate badges · AI-drafted scripts (red-line gated) |
+| **Cleaning scripts** | 2 (WeChat/Conda) | **36** + script center (enable/disable · TOML import/export with red-line checks) |
+| **Automation** | — | Scheduled auto-patrol (Windows Task Scheduler, headless, safe-only) |
+| **Anti-misdelete** | UI-layer protected list | **Frontend + Rust executor double-layer fail-closed** |
+| **Undo** | undo.jsonl | + day-grouped undo center · visual restore |
+| **Keys** | Plain-text localStorage | Windows **DPAPI encryption** |
 
-> No prebuilt macOS / Linux binaries yet (no signing cert for macOS, and we haven't validated the Linux build on real hardware). You can build them yourself with `pnpm tauri build`. The release matrix will be expanded once we have signing + real-hardware validation — PRs welcome.
-
----
-
-## Demo
-
-<p align="center">
-  <img src="docs/screenshots/hero.png" alt="In use · drag a folder into the AI after scanning + expand Studio's conda card" width="100%">
-</p>
-
-<p align="center"><sub>In use · Left: <code>D:\</code> tree view (each row shows a usage % bar) · Center: drag <code>D:\steam\steamapps</code> into the AI, it answers in markdown — what this is and whether it's safe to delete · Right: Studio card expanded for Conda packages cache (5.12 GB · 150,867 files)</sub></p>
-
-<p align="center">
-  <img src="docs/screenshots/empty.png" alt="Empty state · the three-pane layout before scanning" width="100%">
-</p>
-
-<p align="center"><sub>Empty state · Top "Pick a disk or folder" → click Scan to populate; the right-hand Studio already recognizes WeChat / Conda (showing "not detected" because the scaffold's default paths haven't been scanned yet)</sub></p>
+Versioning is its own lineage: `YY.breaking+1.feature+1.patch+1`, currently **v26.1.3.1** ([VERSIONING.md](VERSIONING.md)).
 
 ---
 
-## Three things
+## Four things
 
-Pinkbin only does three things:
+### 1. Fast scan, linked map and tree
 
-### 1. Show how the disk is allocated
+Direct NTFS Master File Table reads (the `ntfs` crate), a full C: drive in **2–5 seconds**; jwalk fallback elsewhere. Treemap click for the detail card, double-click to drill down, breadcrumb to go back — the tree is fully keyboard accessible.
 
-Direct read of the Windows NTFS Master File Table (jwalk fallback on other platforms). Full C: drive in **2–5 seconds**. Renders a colored treemap and a single-line 22px-row tree view — at a glance you can see `D:\xwechat_files` taking 80GB, `C:\Users\<you>\AppData\Local\Docker` taking 50GB.
+### 2. AI triage
 
-### 2. Drag any folder into the AI to ask "what is this"
+Batch-triage a whole drive or drag a single folder to ask. The AI only receives **directory metadata** (paths, sizes, file counts, extension shares, ≤20 sample paths) — **file contents are never read**. BYOK across Anthropic / OpenAI / Gemini / Ollama, with a free onboarding guide: local Ollama · GLM-4-Flash · SiliconFlow free tier. Endpoints that reject `response_format` get an automatic fallback retry.
 
-See an unfamiliar folder? Drag it from the left tree (or the path on the right) into the **central chat panel**, and the AI explains what it is, whether it's safe to delete, and what you'd lose. BYOK — bring your own Anthropic / OpenAI / Gemini key, or run Ollama locally for free.
+### 3. Script center
 
-**Pinkbin only sends directory metadata** to the AI (path names, size, file count, extension distribution, up to 20 sample paths). **It never reads file contents.**
+36 built-in scripts covering browsers, dev toolchains, IM apps, cloud drives and game platforms. Each script = a TOML manifest + **red-line integration tests** (chat DBs, accounts, favorites never enter the cleaning surface). For cleanable folders without a script, the AI drafts one through a trimmed 14-phase flow and the red-line check must pass before it can be saved.
 
-### 3. Known apps get a dedicated cleanup scaffold
+### 4. Scheduled auto-patrol
 
-Some apps are mainstream, eat real disk, and have a clear cleanup boundary — for those we ship a **cleanup scaffold** (one TOML + one Rust integration test). Users can clean each scope individually right from the Studio card. **Currently shipping two**:
-
-- **WeChat for PC** (3.x + 4.x dual support) — 22 scopes covering caches, received media, chat backups. Never touches chat DBs, favorites, Moments, or `CustomEmotion`.
-- **Conda environments** — recycles stale envs as a single directory (when `conda-meta/history` mtime is older than 90 days). Base env is permanently grayed out.
-
-**What's coming**: Steam shadercache · Chrome cache · Docker buildx · HuggingFace models · npm/pnpm/pip cache · OBS recordings · IDE indices — mainstream apps with significant disk usage and clear cleanup boundaries, added one by one through the 14-phase workflow with red-line integration tests guarding every glob. **Why we cut the previous 36 legacy scaffolds**: nobody had verified their glob boundaries, creating a real risk of deleting user data (e.g. the old `node-modules` scaffold matched Cursor / VSCode / game-bundled `node_modules` directories).
-
-All deletes go to the **system Recycle Bin** by default — recoverable. Every action writes `~/.pinkbin/undo.jsonl`; optional 7-day quarantine.
+A Windows Task Scheduler job runs headless: touches only the "safe" bucket, moves things into the Recycle Bin, writes the ledger, exits. Hourly / daily / weekly / monthly.
 
 ---
 
-## Usage
+## Security model
 
-1. **Download the installer** [(above)](#download), install, the Pinkbin icon shows up on your desktop
-2. **Open → top-right ⚙ to configure AI** — paste your API key
-3. **Top "Pick a disk or folder" → click Scan** — 2–5 seconds later you see the treemap + tree view
-4. **Hit an unfamiliar large folder?** Drag it into the chat panel and ask the AI; or look at the right-side Studio for any already-detected scaffolds (WeChat, conda)
-5. **Before deleting**: defaults to Recycle Bin; high-risk operations (chat-backups etc.) require two-step confirmation; tick dry-run to preview what would be deleted
+Trust lives in the guardrails. Five layers:
 
----
-
-## Architecture
-
-> Want a plain-language walkthrough (no jargon, written for non-technical readers — Chinese for now): 📖 **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
-
-```
-┌────────────────────┐     ┌─────────────────────┐
-│   React + Tauri    │────>│  Rust workspace     │
-│   (frontend UI)    │<────│  (4 crates)         │
-└────────────────────┘     └──────────┬──────────┘
-                                      │
-        ┌─────────────────┬───────────┼──────────────┬──────────────┐
-        │                 │           │              │              │
-   ┌────▼────┐    ┌──────▼─────┐  ┌──▼──────┐  ┌────▼────┐  ┌──────▼──────┐
-   │ scanner │    │  scaffold  │  │executor │  │advisor  │  │scaffold-lint│
-   │ NTFS MFT│    │ TOML +     │  │Recycle/ │  │AI 4     │  │ CI checker  │
-   │ + jwalk │    │ globset    │  │Quarant. │  │protocols│  │              │
-   └─────────┘    └────────────┘  └─────────┘  └─────────┘  └─────────────┘
-```
-
-| Layer | Stack |
+| Layer | Mechanism |
 |---|---|
-| Frontend | React 18 + TypeScript + Tauri 2 + react-markdown |
-| Backend | Rust workspace (4 crates) + Tauri IPC |
-| Scanner | Windows: NTFS MFT direct read (`ntfs` crate) / Cross-platform: `jwalk` |
-| AI | BYOK · Anthropic · OpenAI · Gemini · Ollama (4 protocols) |
-| Data | Local `~/.pinkbin/` (undo.jsonl + quarantine/) · never uploaded |
+| **Manifest** | Every script ships two assertions: positive (targets are hit) + red-line (chat DBs / accounts / favorites are never hit), CI-enforced |
+| **Engine** | NEVER_TOUCH protected list (Windows / Program Files / Recovery / user documents…) matched on segment boundaries — `C:\Windows` hits, `C:\WindowsExcl` does not |
+| **Executor** | The Rust executor re-runs the protected check per plan and rejects the **whole plan fail-closed** — even a buggy UI cannot execute it |
+| **Action** | System Recycle Bin by default (restorable); two-step confirm for bulk actions; optional quarantine retention |
+| **Ledger** | Every action lands in `undo.jsonl`; the undo center groups by day and restores in one click |
+
+Account scoping is fail-closed too: unchecking every account in the cleaning dialog **rejects the whole run**. API keys are DPAPI-encrypted on-device.
+
+---
+
+## Quick start
+
+1. Grab `DiskSift_x.x.x_x64-setup.exe` (or MSI) from [Releases](https://github.com/zep4yrs/DiskSift/releases/latest). SmartScreen: "More info → Run anyway". The manifest auto-elevates for MFT reads
+2. **⚙ at the bottom of the activity bar** to configure AI — or follow the free-model guide (rule-based triage works without a key)
+3. Pick a drive on the home page → **Scan**
+4. Explore the map; run "AI triage" for batch coloring; clean by bucket in the patrol page; restore mistakes from the records page
+
+> Mirror for mainland China: [CNB repository](https://cnb.cool/feng-qiao/DiskSift).
+
+---
+
+## Building from source
+
+```bash
+git clone https://github.com/zep4yrs/DiskSift.git && cd DiskSift
+pnpm install
+pnpm tauri dev            # desktop app (first Rust build takes 5-15 min)
+pnpm -C apps/desktop dev  # frontend only, browser debugging, mocked backend
+cargo test --workspace        # Rust workspace tests
+pnpm -C apps/desktop test # frontend engine tests
+```
+
+Requires **Node 20+ · pnpm 9+ · Rust stable · Tauri prerequisites** (VS Build Tools 2022 + WebView2 on Windows).
 
 ---
 
 ## Roadmap
 
-- [x] Whole-disk scan in seconds — see how much every folder takes
-- [x] Drag any folder into the AI to ask "what is this, can I delete it?"
-- [x] One-click cleanup for WeChat and Conda
-- [ ] An "undo" button so you can recover anything you deleted by mistake
-- [ ] Support more common apps: Steam, Chrome, Docker, npm/pip, HuggingFace, OBS, IDE caches…
-- [ ] Ship prebuilt macOS / Linux binaries (need signing cert + real-hardware validation first)
-- [ ] Let users write and share their own cleanup scripts
-
----
-
-## Contributing
-
-The most valuable contribution is **writing a new cleanup scaffold**. Each app is one PR:
-
-1. Write the requirements doc under [`docs/scaffold-requirements/`](docs/scaffold-requirements/) (red lines: chat DBs? account keys? user favorites?)
-2. Actually run the app on your machine, use `Glob` to enumerate the real directory tree, find the cache-vs-user-data boundary
-3. Copy [`scaffolds/_templates/scaffold.toml`](scaffolds/_templates/scaffold.toml) and write the TOML
-4. Copy [`crates/scaffold/tests/_templates/scaffold_safety.rs`](crates/scaffold/tests/_templates/scaffold_safety.rs) and write the safety test (**positive + red-line assertions**, CI runs this — no test, no merge)
-5. `pnpm tauri dev` to verify the card renders
-6. Open the PR — the template walks you through 14 checklist items
-
-[Claude Code](https://claude.com/claude-code) users: just type `/add-scaffold <id>` from the repo root and the 14-phase workflow kicks in.
-
-Full workflow: [`.claude/commands/add-scaffold.md`](.claude/commands/add-scaffold.md).
-
-### Development
-
-```bash
-git clone https://github.com/zep4yrs/DiskSift.git && cd DiskSift
-pnpm install
-pnpm tauri dev            # desktop app (first build compiles Rust deps, 5-15 min)
-pnpm -C apps/desktop dev  # frontend only, browser-based debugging, mock backend
-cargo test --workspace    # workspace tests
-```
-
-Requires **Node 20+ · pnpm 9+ · Rust stable · Tauri prerequisites** (on Windows: VS Build Tools 2022 + WebView2).
+- [ ] **v26.1.4.0** Real-time monitoring via USN Journal
+- [ ] **v26.1.5.0** Cross-platform installer matrix (after signing + real-machine verification)
+- [ ] One-click "migrate" to another drive
+- [ ] macOS signing certificate
 
 ---
 
 ## Acknowledgments
 
-- **Inspiration**
-  - [WizTree](https://diskanalyzer.com) — NTFS MFT direct-read approach and the speed bar
-  - [SpaceSniffer](http://www.uderzo.it/main_products/space_sniffer/) — treemap visualization pioneer
-  - [CleanMyWechat](https://github.com/blackboxo/CleanMyWechat) — the WeChat cleanup script lineage; the messaging requirements doc draws on it
-  - [SquirrelDisk](https://github.com/adileo/squirreldisk) — Tauri + Rust reference implementation
-- **Standing on giants' shoulders**: [Tauri](https://tauri.app) · [`d3-hierarchy`](https://github.com/d3/d3-hierarchy) · [`jwalk`](https://github.com/jessegrosjean/jwalk) · [`ntfs`](https://github.com/ColinFinck/ntfs) · [`globset`](https://github.com/BurntSushi/ripgrep/tree/master/crates/globset) · [`trash-rs`](https://github.com/Byron/trash-rs) · [react-markdown](https://github.com/remarkjs/react-markdown)
-- **Collaboration**: [Claude Code](https://claude.com/claude-code) · [@jtlyu](https://github.com/jtlyu) (perf optimization + WeChat 4.x rewrite + scaffold harness workflow plumbing)
+DiskSift stands on the shoulders of [Pinkbin](https://github.com/cccyd2003-qwq/pinkbin) — the security architecture and the original implementation are entirely inherited from it.
+
+Inspiration: [WizTree](https://diskanalyzer.com) · [SpaceSniffer](http://www.uderzo.it/main_products/space_sniffer/) · [CleanMyWechat](https://github.com/blackboxo/CleanMyWechat) · [SquirrelDisk](https://github.com/adileo/squirreldisk)
+
+Shoulders: [Tauri](https://tauri.app) · [d3-hierarchy](https://github.com/d3/d3-hierarchy) · [jwalk](https://github.com/jessegrosjean/jwalk) · [ntfs](https://github.com/ColinFinck/ntfs) · [globset](https://github.com/BurntSushi/ripgrep/tree/master/crates/globset) · [trash-rs](https://github.com/Byron/trash-rs) · [react-markdown](https://github.com/remarkjs/react-markdown) · [Lucide](https://lucide.dev)
+
+Collaboration: [@jtlyu](https://github.com/jtlyu) (upstream performance work + WeChat 4.x rewrite + scaffold harness infrastructure)
 
 ---
 
 ## License
 
-[MIT](LICENSE) · fork it, sell it, fork it closed-source — go ahead. If you modify a scaffold, please keep its safety test in sync — the red-line assertions are the last line of defense against accidentally deleting user data.
+**GPL-3.0-or-later** — free to use, study, modify and redistribute; commercial use requires derivatives to be **licensed under GPL-3.0 as well**. Closed-source derivatives are not permitted.
+
+This distribution includes code from [Pinkbin](https://github.com/cccyd2003-qwq/pinkbin) (MIT); the upstream copyright and MIT notice are preserved verbatim in [LICENSE](LICENSE). If you modify a scaffold, keep its safety test in sync — the red-line assertions are the last line of defense against accidentally deleting user data.
