@@ -13,7 +13,7 @@
 //! .nupkg / .nuspec、v3-cache 的 <40hex>$source 缓存文件不作为红线候选
 //! （它们不单独成为目标，而是随整桶一起走）。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn workspace_root() -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -102,8 +102,14 @@ fn nuget_globs_are_safe() {
         ("http-cache", "C:/Users/test/AppData/Local/NuGet/v3-cache"),
         ("http-cache", "/home/test/.local/share/NuGet/v3-cache"),
         // plugins-cache — 凭据插件按需创建（本机无，官方布局保留）
-        ("plugins-cache", "C:/Users/test/AppData/Local/NuGet/plugins-cache"),
-        ("plugins-cache", "/home/test/.local/share/NuGet/plugins-cache"),
+        (
+            "plugins-cache",
+            "C:/Users/test/AppData/Local/NuGet/plugins-cache",
+        ),
+        (
+            "plugins-cache",
+            "/home/test/.local/share/NuGet/plugins-cache",
+        ),
     ];
 
     for (expected_id, p) in positives {
@@ -185,4 +191,88 @@ fn nuget_globs_are_safe() {
         "nuget.toml glob hit red lines:\n  {}",
         violations.join("\n  ")
     );
+}
+
+/// detect 层回归（docker_detect_and_match 同款结构）：detect 正负路径 + 每个
+/// scope 至少一条正向 glob 命中。[match] 刻意留空（文件头"设计取舍"：nuget
+/// 片段会命中本地源目录与克隆的客户端仓库），匹配器不参与，无落盘断言可做。
+#[test]
+fn nuget_detect_and_match() {
+    // 与 nuget_globs_are_safe 同一套 env fixture。
+    std::env::set_var("USERPROFILE", "C:/Users/test");
+    std::env::set_var("APPDATA", "C:/Users/test/AppData/Roaming");
+    std::env::set_var("LOCALAPPDATA", "C:/Users/test/AppData/Local");
+    std::env::set_var("HOME", "/home/test");
+
+    let scaffold = load_nuget();
+    let scopes: Vec<(String, globset::GlobSet)> = scaffold
+        .scopes
+        .iter()
+        .map(|s| (s.id.clone(), build_set(&expand(&s.glob))))
+        .collect();
+    let scaffolds = vec![scaffold];
+
+    // ========================================================================
+    // detect 正向：三大平台默认路径 + **/.nuget 通配兜底（缓存根换盘仍叫
+    // .nuget）。%LOCALAPPDATA%/NuGet 与 POSIX XDG 两处 http-cache 根都算。
+    // ========================================================================
+    for p in [
+        "C:/Users/test/.nuget",
+        "/home/test/.nuget",
+        "C:/Users/test/AppData/Local/NuGet",
+        "/home/test/.local/share/NuGet",
+        "D:/dotnet-home/.nuget",
+    ] {
+        assert_eq!(
+            pinkbin_scaffold::detect_for(&scaffolds, Path::new(p)).as_deref(),
+            Some("nuget"),
+            "detect missed `{p}`",
+        );
+    }
+
+    // ========================================================================
+    // detect 负向：解决方案本地源目录 nuget/（disclaimer 点名，nuget ≠ .nuget，
+    // segment 精确性）、NUGET_PACKAGES 改名的缓存根（检测不到，disclaimer 已
+    // 说明）、packages 子目录不是 detect 根（detect 标的是 .nuget 自身）。
+    // ========================================================================
+    for p in [
+        "C:/Users/test/Projects/nuget",
+        "C:/Users/test/nuget-packages",
+        "C:/Users/test/.nuget/packages",
+    ] {
+        assert_eq!(
+            pinkbin_scaffold::detect_for(&scaffolds, Path::new(p)).as_deref(),
+            None,
+            "unrelated dir `{p}` must not be tagged as nuget",
+        );
+    }
+
+    // ========================================================================
+    // scope 覆盖：三个官方桶各至少一条正向 glob 命中（glob 精确锚定桶目录
+    // 自身；http-cache 用小写 nuget 段验证 case_insensitive 编译——nuget.toml
+    // 文头声明的实测大小写变体）。
+    // ========================================================================
+    let positives: &[(&str, &str)] = &[
+        ("global-packages", "C:/Users/test/.nuget/packages"),
+        ("http-cache", "C:/Users/test/AppData/Local/nuget/v3-cache"),
+        (
+            "plugins-cache",
+            "C:/Users/test/AppData/Local/NuGet/plugins-cache",
+        ),
+    ];
+    for (expected_id, p) in positives {
+        let hits = matching_scopes(&scopes, p);
+        assert!(
+            hits.contains(expected_id),
+            "expected scope `{expected_id}` to match `{p}`, got {hits:?}",
+        );
+    }
+    let covered: std::collections::HashSet<&str> = positives.iter().map(|(id, _)| *id).collect();
+    let all_ids: Vec<&str> = scaffolds[0].scopes.iter().map(|s| s.id.as_str()).collect();
+    for id in &all_ids {
+        assert!(
+            covered.contains(id),
+            "scope `{id}` has no positive path in the test",
+        );
+    }
 }

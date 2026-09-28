@@ -15,7 +15,7 @@
 //! 相反：glob 尾部 * / /** 在 literal_separator(false) 下会命中深层路径，运行时
 //! 由 find_matching_dirs（sumdb）与 file 粒度扫描（build-cache）处理。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn workspace_root() -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -204,4 +204,99 @@ fn go_mod_globs_are_safe() {
         "go-mod.toml glob hit red lines:\n  {}",
         violations.join("\n  ")
     );
+}
+
+/// detect 层回归（docker_detect_and_match 同款结构）：detect 正负路径 + 每个
+/// scope 至少一条正向 glob 命中（防加 scope 忘测）。[match] 刻意留空（文件头
+/// "设计取舍"：没有安全的基名片段），匹配器不参与，无落盘断言可做。
+#[test]
+fn go_mod_detect_and_match() {
+    // 与 go_mod_globs_are_safe 同一套 env fixture。
+    std::env::set_var("USERPROFILE", "C:/Users/test");
+    std::env::set_var("APPDATA", "C:/Users/test/AppData/Roaming");
+    std::env::set_var("LOCALAPPDATA", "C:/Users/test/AppData/Local");
+    std::env::set_var("HOME", "/home/test");
+
+    let scaffold = load_go_mod();
+    let scopes: Vec<(String, globset::GlobSet)> = scaffold
+        .scopes
+        .iter()
+        .map(|s| (s.id.clone(), build_set(&expand(&s.glob))))
+        .collect();
+    let scaffolds = vec![scaffold];
+
+    // ========================================================================
+    // detect 正向：GOPATH 三平台默认 + GOCACHE 三平台默认 + ** 通配兜底
+    // （GOPATH 搬到仍叫 go 的位置、GOCACHE 搬到仍叫 go-build 的位置）。
+    // ========================================================================
+    for p in [
+        "C:/Users/test/go",
+        "/home/test/go",
+        "C:/Users/test/AppData/Local/go-build",
+        "/home/test/.cache/go-build",
+        "/home/test/Library/Caches/go-build",
+        // 重定位：GOPATH 换盘但仍叫 go —— 兜底锚的是 go/pkg/mod 两级深，不是裸 **/go
+        "D:/gopath/go/pkg/mod",
+        // 重定位：GOCACHE 换盘但仍叫 go-build
+        "E:/ci/go-build",
+    ] {
+        assert_eq!(
+            pinkbin_scaffold::detect_for(&scaffolds, Path::new(p)).as_deref(),
+            Some("go-mod"),
+            "detect missed `{p}`",
+        );
+    }
+
+    // ========================================================================
+    // detect 负向：用户项目目录（裸 **/go 刻意不用）、前缀邻居（segment
+    // 精确性）、GOPATH 结构自身不是扫描根、GOPATH src 工作区（红线）也不是
+    // detect 根。
+    // ========================================================================
+    for p in [
+        "C:/Users/test/Projects/go",
+        "C:/Users/test/Projects/my-go-build",
+        "C:/Users/test/go/pkg",
+        "C:/Users/test/go/src",
+    ] {
+        assert_eq!(
+            pinkbin_scaffold::detect_for(&scaffolds, Path::new(p)).as_deref(),
+            None,
+            "unrelated dir `{p}` must not be tagged as go-mod",
+        );
+    }
+
+    // ========================================================================
+    // scope 覆盖：每个 [[scope]] 至少一条正向 glob 命中（样本取 go-mod.toml
+    // 头部 2026-09-28 实测布局）。
+    // ========================================================================
+    let positives: &[(&str, &str)] = &[
+        // mod-cache —— 精确锚定 pkg/mod 目录自身（整树一条回收站记录）
+        ("mod-cache", "C:/Users/test/go/pkg/mod"),
+        // sumdb —— 单元是 pkg/sumdb/<db> 目录
+        ("sumdb", "C:/Users/test/go/pkg/sumdb/sum.golang.org"),
+        // build-cache —— 两位 hex 对象目录下的编译产物（file 粒度 + days 30）
+        (
+            "build-cache",
+            "C:/Users/test/AppData/Local/go-build/00/3f9a2b1c8d7e6f5a-d/x.a",
+        ),
+        (
+            "build-cache",
+            "/home/test/.cache/go-build/ab/cd1234abcd5678ef/prog",
+        ),
+    ];
+    for (expected_id, p) in positives {
+        let hits = matching_scopes(&scopes, p);
+        assert!(
+            hits.contains(expected_id),
+            "expected scope `{expected_id}` to match `{p}`, got {hits:?}",
+        );
+    }
+    let covered: std::collections::HashSet<&str> = positives.iter().map(|(id, _)| *id).collect();
+    let all_ids: Vec<&str> = scaffolds[0].scopes.iter().map(|s| s.id.as_str()).collect();
+    for id in &all_ids {
+        assert!(
+            covered.contains(id),
+            "scope `{id}` has no positive path in the test",
+        );
+    }
 }

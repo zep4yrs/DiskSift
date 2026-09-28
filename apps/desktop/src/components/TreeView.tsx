@@ -37,12 +37,23 @@ export function TreeView({ root, selectedPath, onSelect, focusPath, verdicts }: 
   // 在渲染期重置（React「props 变化时调整状态」范式，避免旧键残留/首帧塌缩）。
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() => ({ [root.path]: true }));
   const [prevRoot, setPrevRoot] = useState(root);
+  // focus 链手动收起覆盖：focusAncestors 会把链上目录强制顶在展开态，用户点
+  // chevron 收起时改 expanded[p] 也会被 includes(p) 盖回去（收不起来的根因）。
+  // 这个集合显式记录「用户要它合上」，在 isOpen 里判定优先级最高。
+  const [collapsedOverrides, setCollapsedOverrides] = useState<Set<string>>(() => new Set());
+  const [prevFocusPath, setPrevFocusPath] = useState(focusPath);
   // 行元素注册表：path → DOM，供 focusPath 滚动定位用
   const rowEls = useRef<Map<string, HTMLDivElement>>(new Map());
   if (prevRoot !== root) {
     setPrevRoot(root);
     setExpanded({ [root.path]: true });
+    setCollapsedOverrides(new Set()); // 新扫描 = 新树，旧链的收起意图一并作废
     rowEls.current.clear();
+  }
+  if (prevFocusPath !== focusPath) {
+    // focusPath 换目标：旧链的收起覆盖全部作废，新链回到默认强制展开
+    setPrevFocusPath(focusPath);
+    setCollapsedOverrides(new Set());
   }
 
   // focusPath 的祖先链（root → … → 父目录），渲染期派生：行可见性直接吃它，
@@ -60,13 +71,32 @@ export function TreeView({ root, selectedPath, onSelect, focusPath, verdicts }: 
     rowEls.current.get(focusPath)?.scrollIntoView({ block: 'nearest' });
   }, [focusPath, focusAncestors]);
 
-  const toggleOpen = (p: string) => setExpanded((m) => ({ ...m, [p]: !m[p] }));
   const registerEl = (p: string, el: HTMLDivElement | null) => {
     if (el) rowEls.current.set(p, el);
     else rowEls.current.delete(p);
   };
-  // 行可见性 = 手动展开 ∪ focusPath 祖先链（渲染期派生，外部聚焦无需 effect 抢跑）
-  const isOpen = (p: string) => !!expanded[p] || (focusAncestors?.includes(p) ?? false);
+  // 行可见性判定顺序：collapsedOverrides（用户显式收起，压过 focus 链）>
+  // 手动展开 > focusPath 祖先链（渲染期派生，外部聚焦无需 effect 抢跑）。
+  const isOpen = (p: string) => {
+    if (collapsedOverrides.has(p)) return false;
+    if (expanded[p]) return true;
+    return focusAncestors?.includes(p) ?? false;
+  };
+  const toggleOpen = (p: string) => {
+    if (focusAncestors?.includes(p)) {
+      // 链上目录按「有效开合态」（isOpen，同序）分支，而不是 expanded[p]——链上
+      // 目录在 expanded 里多半是 undefined，按它取反会误判成「当前收起」。
+      const open = isOpen(p);
+      setCollapsedOverrides((s) => {
+        const next = new Set(s);
+        if (open) next.add(p); // 展开→收起：记入覆盖集，focusAncestors 再也顶不回开态
+        else next.delete(p); // 收起→再点：移出覆盖集，回到链上默认展开
+        return next;
+      });
+      return;
+    }
+    setExpanded((m) => ({ ...m, [p]: !m[p] }));
+  };
 
   // ── 右键「进回收站（可还原）」（上游 #22①）──────────────────────────
   // 两步确认纪律与 TriageView 一键清扫同款：首点进入预备态，5 秒内再点才执行，

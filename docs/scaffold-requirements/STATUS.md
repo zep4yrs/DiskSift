@@ -22,11 +22,27 @@
 | Scaffold | Req doc | TOML | Safety test | UI 验证 | 备注 |
 |---|:---:|:---:|:---:|:---:|---|
 | conda | ⏳ | ✅ | ✅ | ⏳ | env 卡片专用 UI；整目录 recycle |
-| cargo | ⏳ | ✅ | ✅ | ⏳ | registry/git 缓存 + 项目 target/{debug,release}（CACHEDIR.TAG 判别）；2026-09-28 重做（见 2026-05-05 清理） |
-| go-mod | ⏳ | ✅ | ✅ | ⏳ | pkg/mod 整树 directory 粒度（= go clean -modcache）+ sumdb + go-build hex 对象 30 天；2026-09-28 重做（见 2026-05-05 清理） |
-| gradle | ⏳ | ✅ | ✅ | ⏳ | caches 整树 directory 粒度（= 删 ~/.gradle/caches）；wrapper/dists·daemon·native 红线；2026-09-28 重做（见 2026-05-05 清理） |
-| maven | ⏳ | ✅ | ✅ | ⏳ | repository 整树 directory 粒度（= 删 ~/.m2/repository）；settings.xml·wrapper/dists·项目 target/ 红线；本机无 Maven，路径按官方布局（文件头声明）；2026-09-28 重做（见 2026-05-05 清理） |
-| nuget | ⏳ | ✅ | ✅ | ⏳ | 三桶 directory 粒度（global-packages / v3-cache / plugins-cache，= dotnet nuget locals）；NuGet.Config·Migrations 红线；2026-09-28 重做（见 2026-05-05 清理） |
+| cargo | ✅ | ✅ | ✅ | ⏳ | registry/git 缓存 + 项目 target/{debug,release}（CACHEDIR.TAG 判别）；2026-09-28 重做（见 2026-05-05 清理） |
+| go-mod | ✅ | ✅ | ✅ | ⏳ | pkg/mod 整树 directory 粒度（= go clean -modcache）+ sumdb + go-build hex 对象 30 天；2026-09-28 重做（见 2026-05-05 清理） |
+| gradle | ✅ | ✅ | ✅ | ⏳ | caches 整树 directory 粒度（= 删 ~/.gradle/caches）；wrapper/dists·daemon·native 红线；2026-09-28 重做（见 2026-05-05 清理） |
+| maven | ✅ | ✅ | ✅ | ⏳ | repository 整树 directory 粒度（= 删 ~/.m2/repository）；settings.xml·wrapper/dists·项目 target/ 红线；本机无 Maven，路径按官方布局（文件头声明）；2026-09-28 重做（见 2026-05-05 清理） |
+| nuget | ✅ | ✅ | ✅ | ⏳ | 三桶 directory 粒度（global-packages / v3-cache / plugins-cache，= dotnet nuget locals）；NuGet.Config·Migrations 红线；2026-09-28 重做（见 2026-05-05 清理） |
+| docker | ✅ | ✅ | ✅ | ⏳ | Docker Desktop 缓存桶；本机未装 Docker，布局按官方文档（文件头声明）；2026-09-28 重做（见 2026-05-05 清理） |
+
+## Browsers
+
+| Scaffold | Req doc | TOML | Safety test | UI 验证 | 备注 |
+|---|:---:|:---:|:---:|:---:|---|
+| chrome | ✅ | ✅ | ✅ | ⏳ | Chromium 通用桶设计；本机未装 Chrome，布局按官方文档 + Chromium 桶分级（文件头声明）；2026-09-28 重做（见 2026-05-05 清理） |
+| edge | ✅ | ✅ | ✅ | ⏳ | Chromium 通用桶，结构对齐 chrome.toml；本机 Edge 已移除，按官方布局（文件头声明）；2026-09-28 重做（见 2026-05-05 清理） |
+| firefox | ✅ | ✅ | ✅ | ⏳ | Gecko 布局，按 profiles.ini 定位；本机装有 Firefox，目录名为实测；2026-09-28 重做（见 2026-05-05 清理） |
+| brave | ✅ | ✅ | ✅ | ⏳ | Chromium 通用桶，结构对齐 chrome.toml；本机未装 Brave，按官方布局（文件头声明）；2026-09-28 重做（见 2026-05-05 清理） |
+
+## AI / 模型缓存
+
+| Scaffold | Req doc | TOML | Safety test | UI 验证 | 备注 |
+|---|:---:|:---:|:---:|:---:|---|
+| huggingface | ✅ | ✅ | ✅ | ⏳ | hub 模型/数据集缓存按官方 manage-cache 桶结构点名；token / modules 红线；2026-09-28 重做（见 2026-05-05 清理） |
 
 ---
 
