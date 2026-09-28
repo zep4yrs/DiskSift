@@ -321,7 +321,7 @@ async function cannedAdvice(req: AdvisorRequest): Promise<AdvisorResponse> {
   if (p.includes('locallow')) {
     return { what: '低权限 App 数据', category: 'app_cache', safe_to_delete: true, risk: 'low', action: 'recycle', reasoning: '通常是 Edge/IE 沙盒数据，可清。', needs_inspection: false };
   }
-  return { what: '（演示数据）未配置 AI Key 时使用预设回答', category: 'unknown', safe_to_delete: false, risk: 'medium', action: 'keep', reasoning: '在右上角设置里填 OpenAI / Anthropic / Ollama 的 key 后，就能拿到真正的 AI 判断。', needs_inspection: true };
+  return { what: '（演示数据）未配置 AI Key 时使用预设回答', category: 'unknown', safe_to_delete: false, risk: 'medium', action: 'keep', reasoning: '在活动栏底部的设置里填 OpenAI / Anthropic / Ollama 的 key 后，就能拿到真正的 AI 判断。', needs_inspection: true };
 }
 
 export async function execute(plan: Plan, _dryRun: boolean): Promise<UndoEntry[]> {

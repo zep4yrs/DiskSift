@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use pinkbin_executor::{execute, Action, Plan};
+use pinkbin_executor::{execute, is_never_touch, Action, Plan};
 use pinkbin_scanner::{scan_with_stats, Node, ScanOptions};
 
 /// 计划任务名。不加文件夹前缀（`\DiskSift\AutoPatrol` 形态要求文件夹已存在，
@@ -36,26 +36,11 @@ pub const AUTO_PATROL_MIN_BYTES: u64 = 1024 * 1024 * 1024;
 /// 这里按 tauri.conf.json 的 identifier（dev.pinkbin.app）拼同一路径。
 const HEADLESS_IDENTIFIER: &str = "dev.pinkbin.app";
 
-/// never-touch 目录段（lowercase）。前端同款清单见 triage.ts 的
-/// NEVER_TOUCH_PATH_FRAGS + USER_CONTENT_FRAGS，这里改成整段名匹配：
-/// 子串形态（`/boot`）在 Rust 侧会误伤别的路径，段名匹配既精确又更保守
-/// ——命中即跳过，宁可漏清。
-const NEVER_TOUCH_SEGMENTS: &[&str] = &[
-    "windows",
-    "program files",
-    "program files (x86)",
-    "programdata",
-    "$recycle.bin",
-    "system volume information",
-    "$extend",
-    "boot",
-    "documents",
-    "pictures",
-    "music",
-    "videos",
-    "desktop",
-    "downloads",
-];
+// v26.1.2 高危修复：NEVER_TOUCH 段表与 is_never_touch 提升到公共位置
+// pinkbin_executor::is_never_touch（execute() 的执行前守卫共用同一份），
+// 本模块经 use 引入（见文件头 use 块）。共享表补了 recovery / windows.old，
+// 语义只收紧不放松；无头巡查的逐目录过滤（原 :494）与 executor 的整单拒绝
+// 构成无人值守路径的双保险。
 
 // ── Task Scheduler 注册面 ────────────────────────────────────────────────────
 
@@ -496,14 +481,6 @@ fn consider_candidate(
     }
     out.push(PathBuf::from(&n.path));
     true
-}
-
-fn is_never_touch(path: &str) -> bool {
-    path.split(['\\', '/']).any(|seg| {
-        NEVER_TOUCH_SEGMENTS
-            .iter()
-            .any(|want| seg.eq_ignore_ascii_case(want))
-    })
 }
 
 #[cfg(test)]

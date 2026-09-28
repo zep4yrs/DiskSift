@@ -306,14 +306,20 @@ struct ScopeSize {
 /// Walk `root_path` and tally how many bytes / files each `[[scope]]` glob
 /// True when `path`'s first `wxid_*` segment is in `allow`. Paths with no
 /// `wxid_*` segment (e.g. `all_users/`, `%APPDATA%/Tencent/xwechat/log/`)
-/// always pass — those are cross-account or roaming-only data that aren't
-/// wxid-scoped. `None` or an empty allow-list disables the filter entirely.
+/// pass when the filter is enabled with a non-empty allow-list — those are
+/// cross-account or roaming-only data that aren't wxid-scoped. `None`
+/// disables the filter entirely（调用方未启用账号过滤）; an EMPTY allow-list
+/// is FAIL-CLOSED and rejects EVERYTHING（v26.1.2 高危修复）: 「取消全部
+/// 账号勾选」= 什么都不清，跨账号路径也不豁免——用户说了零个账号可清。
+/// 旧语义 empty → true 把「取消全部勾选」反转成「清所有账号」。
 fn path_passes_wxid(path: &Path, wxid_filter: Option<&[String]>) -> bool {
     let Some(allowed) = wxid_filter else {
         return true;
     };
     if allowed.is_empty() {
-        return true;
+        // fail-closed：零勾选 = 整单不清（含跨账号/漫游路径——用户未授权
+        // 任何账号，就未授权任何清理）。
+        return false;
     }
     for component in path.components() {
         if let Some(s) = component.as_os_str().to_str() {
@@ -327,10 +333,17 @@ fn path_passes_wxid(path: &Path, wxid_filter: Option<&[String]>) -> bool {
 
 /// True when `path` has an `envs/<name>` segment whose `<name>` is in `allow`,
 /// OR has no `envs/` segment at all (paths from non-env scopes pass through —
-/// `pkgs/cache/foo`, `<conda-root>/python.exe`, etc.). Mirrors `path_passes_wxid`'s
-/// "filter only narrows the targeted layer" semantics so a single
-/// `execute_scope` call can carry both filters across mixed scopes.
-/// `None` or empty allow-list disables the filter entirely.
+/// `pkgs/cache/foo`, `<conda-root>/python.exe`, etc.). Filtering only narrows
+/// the targeted layer so a single `execute_scope` call can carry both filters
+/// across mixed scopes. `None` disables the filter entirely（调用方未启用）.
+///
+/// 与 path_passes_wxid 的语义分叉（v26.1.2 复核登记，勿顺手统一）：
+/// - wxid 空列表 = FAIL-CLOSED（零账号勾选 → 不清任何路径，见
+///   path_passes_wxid 注释与 tests::wxid_filter_empty_list_fails_closed）；
+/// - env 空列表仍放行 = 不过滤：conda 零勾选在前端已被双重拦截
+///   （CleanupModal runDryRun 空勾选拦预览 + canExecute 的 count>0 挡执行），
+///   base env 恒不可清，历史行为无 fail-open 实害。
+/// 分叉由 tests::env_filter_semantics_divergence_locked 锁定。
 fn path_passes_env(path: &Path, env_filter: Option<&[String]>) -> bool {
     let Some(allowed) = env_filter else {
         return true;
@@ -2033,6 +2046,61 @@ fn load_all_scaffolds(handle: &AppHandle) -> Vec<Scaffold> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::PathBuf;
+
+    // ── v26.1.2 高危修复：wxid 过滤 fail-closed ─────────────────────────
+    // 旧语义 allowed.is_empty() → true：前端「取消全部账号勾选」送达空列表
+    // 后不过滤任何路径 = 清所有账号，与「只清勾选账号下的文件」承诺相反。
+
+    #[test]
+    fn wxid_filter_empty_list_fails_closed() {
+        let wxid_path = PathBuf::from(r"C:\Users\u\Documents\xwechat_files\all_users\wxid_xyz\msg");
+        // 空列表：wxid 路径一律拒绝（零勾选 = 不清任何账号）
+        assert!(!path_passes_wxid(&wxid_path, Some(&[])));
+        // None（未启用过滤）：照常放行——调用方语义不变
+        assert!(path_passes_wxid(&wxid_path, None));
+        // 命中 / 未命中勾选
+        let allow = vec!["wxid_ok".to_string()];
+        assert!(path_passes_wxid(
+            &PathBuf::from(r"C:\x\wxid_ok\cache\a.dat"),
+            Some(&allow)
+        ));
+        assert!(!path_passes_wxid(
+            &PathBuf::from(r"C:\x\wxid_other\cache\a.dat"),
+            Some(&allow)
+        ));
+        // 非 wxid 路径（跨账号/漫游数据）在零勾选下一并拒绝：用户取消全部
+        // 账号 = 什么都不清，不做「账号层不留、共享层照清」的部分执行。
+        let cross = PathBuf::from(r"C:\x\all_users\log\cm.log");
+        assert!(!path_passes_wxid(&cross, Some(&[])));
+        assert!(path_passes_wxid(&cross, None));
+        // 过滤启用且非空时，跨账号路径照常放行（过滤器只收窄 wxid 层）。
+        assert!(path_passes_wxid(&cross, Some(&allow)));
+    }
+
+    #[test]
+    fn env_filter_semantics_divergence_locked() {
+        // v26.1.2 复核：锁定 env 与 wxid 的语义分叉（见 path_passes_env 注释）。
+        // env 空列表放行是有意保留——前端已双重拦截零勾选（拦预览 + 挡执行），
+        // base 恒不可清，无 fail-open 实害；wxid 空列表已 fail-closed。
+        let env_path = PathBuf::from(r"C:\conda\envs\py312\lib\site.pkg");
+        assert!(path_passes_env(&env_path, None));
+        assert!(path_passes_env(&env_path, Some(&[])));
+        assert!(!path_passes_wxid(
+            &PathBuf::from(r"C:\x\wxid_a\msg"),
+            Some(&[])
+        ));
+        let allow = vec!["py312".to_string()];
+        assert!(path_passes_env(&env_path, Some(&allow)));
+        assert!(!path_passes_env(
+            &PathBuf::from(r"C:\conda\envs\py310\lib\x"),
+            Some(&allow)
+        ));
+        // 非 envs 路径不受 env 过滤管辖（空列表与启用态都放行）。
+        let non_env = PathBuf::from(r"C:\conda\pkgs\cache\foo");
+        assert!(path_passes_env(&non_env, Some(&[])));
+        assert!(path_passes_env(&non_env, Some(&allow)));
+    }
 
     /// Verifies `pinkbin_walker` skips system trash / volume metadata directories
     /// at directory-read time. Without this prune a scope glob with a leading

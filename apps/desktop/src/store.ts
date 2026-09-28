@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Node, Scaffold, AdvisorResponse } from './types';
+import { collectDirs, isNeverTouch } from './triage';
 
 export interface WalkItem {
   node: Node;
@@ -17,6 +18,9 @@ export interface ChatTurn {
   // optional scaffold suggestion the user can act on inline
   scaffoldId?: string | null;
   pending?: boolean;
+  // f4-2：错误轮标记——构造多轮 history 时排除（错误文本塞回模型只会
+  // 带偏下一轮），渲染不变。
+  error?: boolean;
 }
 
 export interface ChatSession {
@@ -123,6 +127,8 @@ interface AppState {
   walkIndex: number;
   walkThresholdGB: number;
   reclaimedBytes: number;
+  /** f2-3：隔离不释放空间，按件数单独计数（walk-bar / 侧栏展示）。 */
+  quarantinedCount: number;
   chat: ChatSession;
   studioRequest: { scaffoldId: string; ts: number } | null;
 
@@ -135,10 +141,12 @@ interface AppState {
   patchWalkItem: (i: number, patch: Partial<WalkItem>) => void;
   setThreshold: (gb: number) => void;
   addReclaimed: (n: number) => void;
+  addQuarantined: (n: number) => void;
 
   focusChatOn: (node: Node, scaffoldId: string | null) => void;
   pushChatTurn: (t: ChatTurn) => void;
   patchChatTurn: (id: string, patch: Partial<ChatTurn>) => void;
+  removeChatTurn: (id: string) => void;
   setChatBusy: (b: boolean) => void;
   resetChat: () => void;
   requestStudio: (scaffoldId: string) => void;
@@ -224,6 +232,7 @@ export const useStore = create<AppState>((set, get) => ({
   walkIndex: 0,
   walkThresholdGB: 1,
   reclaimedBytes: 0,
+  quarantinedCount: 0,
   chat: { node: null, scaffoldId: null, turns: [], busy: false },
   studioRequest: null,
 
@@ -244,6 +253,7 @@ export const useStore = create<AppState>((set, get) => ({
     }),
   setThreshold: (walkThresholdGB) => set({ walkThresholdGB }),
   addReclaimed: (n) => set((s) => ({ reclaimedBytes: s.reclaimedBytes + n })),
+  addQuarantined: (n) => set((s) => ({ quarantinedCount: s.quarantinedCount + n })),
 
   focusChatOn: (node, scaffoldId) =>
     // Keep prior turns — the user wants ONE running conversation. We just
@@ -258,6 +268,8 @@ export const useStore = create<AppState>((set, get) => ({
         turns: s.chat.turns.map((t) => (t.id === id ? { ...t, ...patch } : t)),
       },
     })),
+  removeChatTurn: (id) =>
+    set((s) => ({ chat: { ...s.chat, turns: s.chat.turns.filter((t) => t.id !== id) } })),
   setChatBusy: (b) => set((s) => ({ chat: { ...s.chat, busy: b } })),
   resetChat: () => set(() => ({ chat: { node: null, scaffoldId: null, turns: [], busy: false } })),
   requestStudio: (scaffoldId) => set({ studioRequest: { scaffoldId, ts: Date.now() } }),
@@ -265,18 +277,11 @@ export const useStore = create<AppState>((set, get) => ({
 }));
 
 export function buildWalkQueue(root: Node, thresholdBytes: number): { node: Node; scaffoldId: string | null }[] {
-  const out: { node: Node; scaffoldId: string | null }[] = [];
-  const visit = (n: Node, depth: number) => {
-    if (!n.is_dir) return;
-    if (n.size >= thresholdBytes && depth > 0) {
-      out.push({ node: n, scaffoldId: n.scaffold_id ?? null });
-      return;
-    }
-    if (depth < 4) {
-      for (const c of n.children) visit(c, depth + 1);
-    }
-  };
-  visit(root, 0);
-  out.sort((a, b) => b.node.size - a.node.size);
-  return out;
+  // v26.1.2：与 triage() 共用 collectDirs（单一出处，深度上限统一 5，阈值
+  // 命中不再截断子树——C:\Users 90GB 曾挡住整棵用户树）。never-touch 系统
+  // 保护区仍不进队列（此前无过滤导致 C:\Windows 进队的修复保留）。
+  return collectDirs(root, thresholdBytes)
+    .filter(({ node }) => !isNeverTouch(node.path))
+    .sort((a, b) => b.node.size - a.node.size)
+    .map(({ node }) => ({ node, scaffoldId: node.scaffold_id ?? null }));
 }

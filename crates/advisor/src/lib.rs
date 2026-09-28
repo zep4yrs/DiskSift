@@ -83,6 +83,31 @@ Rules:
 - "model_weights" (HuggingFace, Ollama models) is medium risk: deletable but expensive to redownload.
 - Do not include any prose outside the JSON object."#;
 
+/// response_format 兼容判定（与前端 advisorClient.ts 的 isResponseFormatRejection
+/// 同规则）：免费接入三路径（GLM-4-Flash 官方免费档、硅基流动部分免费模型、
+/// Ollama 本地/其 OpenAI 兼容层）都不支持 json_object，首发带该参数会直接 4xx。
+/// 任何 4xx 一律视为「参数被拒」（鉴权/限流类误伤只是多一次注定失败的重试，
+/// 第二次的错误原样抛出，语义不变）；5xx 等其余状态码兜底看错误文本是否点名
+/// 该参数（response_format / json_object / json mode / json_mode 都算命中）。
+fn is_response_format_rejection(status: u16, err_text: &str) -> bool {
+    if (400..500).contains(&status) {
+        return true;
+    }
+    let t = err_text.to_lowercase();
+    ["response_format", "json_object", "json mode", "json_mode"]
+        .iter()
+        .any(|k| t.contains(k))
+}
+
+/// baseUrl 指向 Ollama（默认端口 11434 或原生 /api/chat 路径）时，其 OpenAI
+/// 兼容层不吃 response_format，首发就不带——与前端 detectProvider 同判据；
+/// 本机 OpenAI 兼容中转（one-api/new-api/vLLM 等）同样常绑 localhost，不能靠
+/// “本地地址”判 ollama。
+fn looks_like_ollama(base_url: &str) -> bool {
+    let u = base_url.to_lowercase();
+    u.contains("11434") || u.contains("/api/chat")
+}
+
 pub async fn advise(provider: &Provider, req: &AdvisorRequest) -> anyhow::Result<AdvisorResponse> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -95,25 +120,55 @@ pub async fn advise(provider: &Provider, req: &AdvisorRequest) -> anyhow::Result
             model,
             base_url,
         } => {
-            let body = serde_json::json!({
-                "model": model,
-                "response_format": { "type": "json_object" },
-                "messages": [
-                    { "role": "system", "content": SYSTEM },
-                    { "role": "user",   "content": user_prompt }
-                ]
-            });
-            let r = client
-                .post(format!(
-                    "{}/chat/completions",
-                    base_url.trim_end_matches('/')
-                ))
-                .bearer_auth(api_key)
-                .json(&body)
-                .send()
-                .await?
-                .error_for_status()?;
-            let v: serde_json::Value = r.json().await?;
+            let make_body = |with_format: bool| {
+                let mut body = serde_json::Map::new();
+                body.insert("model".into(), serde_json::json!(model));
+                // response_format 兼容：① 首选仍带（主流网关靠它保证纯 JSON）；
+                // ② 上游拒绝（4xx / 错误文本点名 json mode，见
+                // is_response_format_rejection）→ 去掉该字段原样重试一次；
+                // ③ baseUrl 判定为 ollama（11434 或 /api/chat 本地模型）→ 首发
+                // 就不带，免一次注定失败的请求。重试至多一次，无循环。
+                if with_format {
+                    body.insert(
+                        "response_format".into(),
+                        serde_json::json!({ "type": "json_object" }),
+                    );
+                }
+                body.insert(
+                    "messages".into(),
+                    serde_json::json!([
+                        { "role": "system", "content": SYSTEM },
+                        { "role": "user",   "content": user_prompt }
+                    ]),
+                );
+                serde_json::Value::Object(body)
+            };
+            let mut with_format = !looks_like_ollama(base_url);
+            let mut retried = false;
+            let raw_text = loop {
+                let r = client
+                    .post(format!(
+                        "{}/chat/completions",
+                        base_url.trim_end_matches('/')
+                    ))
+                    .bearer_auth(api_key)
+                    .json(&make_body(with_format))
+                    .send()
+                    .await?;
+                let status = r.status().as_u16();
+                if r.status().is_success() {
+                    break r.text().await?;
+                }
+                // body 只能读一次：读完再决定重试还是带上下文报错。
+                let err_text = r.text().await.unwrap_or_default();
+                if with_format && !retried && is_response_format_rejection(status, &err_text) {
+                    with_format = false;
+                    retried = true;
+                    continue;
+                }
+                anyhow::bail!("openai {status}: {err_text}");
+            };
+            let v: serde_json::Value = serde_json::from_str(&raw_text)?;
             v["choices"][0]["message"]["content"]
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("openai: missing message.content"))?
@@ -230,4 +285,44 @@ fn strip_codefence(s: &str) -> &str {
     let s = s.strip_prefix("```json").unwrap_or(s);
     let s = s.strip_prefix("```").unwrap_or(s);
     s.strip_suffix("```").unwrap_or(s).trim()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn any_4xx_counts_as_rejection() {
+        for status in [400u16, 401, 403, 404, 422, 429] {
+            assert!(
+                is_response_format_rejection(status, ""),
+                "{status} 应判为参数被拒"
+            );
+        }
+    }
+
+    #[test]
+    fn non_4xx_needs_error_text_mentioning_json_mode() {
+        assert!(is_response_format_rejection(
+            500,
+            r#"{"error":{"message":"response_format is not supported by this model"}}"#
+        ));
+        assert!(is_response_format_rejection(502, "upstream: json_object unsupported"));
+        assert!(is_response_format_rejection(500, "Json Mode is not enabled"));
+        assert!(is_response_format_rejection(500, "JSON_MODE disabled"));
+        assert!(!is_response_format_rejection(500, "internal server error"));
+        assert!(!is_response_format_rejection(200, ""));
+    }
+
+    #[test]
+    fn ollama_detection_by_url() {
+        assert!(looks_like_ollama("http://localhost:11434"));
+        assert!(looks_like_ollama("http://127.0.0.1:11434/v1"));
+        assert!(looks_like_ollama("HTTP://LocalHost:11434"));
+        assert!(looks_like_ollama("http://localhost:20128/api/chat"));
+        // 本机 OpenAI 兼容中转 / 官方免费档不能误判：
+        assert!(!looks_like_ollama("https://open.bigmodel.cn/api/paas/v4"));
+        assert!(!looks_like_ollama("https://api.siliconflow.cn/v1"));
+        assert!(!looks_like_ollama("http://localhost:20128/v1"));
+    }
 }

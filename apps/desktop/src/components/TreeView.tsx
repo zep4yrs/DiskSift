@@ -5,7 +5,7 @@ import { formatBytes, formatCount } from '../format';
 import { api } from '../api';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
 import { Icon } from './Icon';
-import type { VerdictEntry } from '../triage-cache';
+import { isFocusDimmed, type VerdictEntry } from '../triage-cache';
 
 type Props = {
   root: Node;
@@ -16,6 +16,10 @@ type Props = {
   focusPath?: string | null;
   /** 分诊图层 O1（triage-overlay-spec §4）：有判定的行加左缘 3px 同色条 */
   verdicts?: Map<string, VerdictEntry>;
+  /** 祖先聚合徽标数据源（spec §2.1.1）：聚焦模式（§2.1.2）的祖先链豁免判定用 */
+  cleanableUnder?: Map<string, number>;
+  /** 「只看可清理」聚焦模式（spec §2.1.2）：非可清理行同步淡显 */
+  focusClean?: boolean;
 };
 
 // DFS 找 root → 目标 的节点链（含两端）；目标不在子树内返回 null。
@@ -29,7 +33,7 @@ function chainTo(n: Node, p: string): Node[] | null {
   return null;
 }
 
-export function TreeView({ root, selectedPath, onSelect, focusPath, verdicts }: Props) {
+export function TreeView({ root, selectedPath, onSelect, focusPath, verdicts, cleanableUnder, focusClean = false }: Props) {
   const [ctx, setCtx] = useState<ContextMenuState | null>(null);
 
   // ── 受控展开（sync-nav：Row 的 open 状态提升到这里）──────────────────
@@ -41,7 +45,6 @@ export function TreeView({ root, selectedPath, onSelect, focusPath, verdicts }: 
   // chevron 收起时改 expanded[p] 也会被 includes(p) 盖回去（收不起来的根因）。
   // 这个集合显式记录「用户要它合上」，在 isOpen 里判定优先级最高。
   const [collapsedOverrides, setCollapsedOverrides] = useState<Set<string>>(() => new Set());
-  const [prevFocusPath, setPrevFocusPath] = useState(focusPath);
   // 行元素注册表：path → DOM，供 focusPath 滚动定位用
   const rowEls = useRef<Map<string, HTMLDivElement>>(new Map());
   if (prevRoot !== root) {
@@ -50,11 +53,10 @@ export function TreeView({ root, selectedPath, onSelect, focusPath, verdicts }: 
     setCollapsedOverrides(new Set()); // 新扫描 = 新树，旧链的收起意图一并作废
     rowEls.current.clear();
   }
-  if (prevFocusPath !== focusPath) {
-    // focusPath 换目标：旧链的收起覆盖全部作废，新链回到默认强制展开
-    setPrevFocusPath(focusPath);
-    setCollapsedOverrides(new Set());
-  }
+  // focusPath 换目标时【不】清空 collapsedOverrides：覆盖集记录的是用户显式收起，
+  // 每次下钻（drillTo → focusPath 变化）都清空会让"手动收起 → 图上一钻 → 链全弹回"，
+  // 表现为收不回去。新链的展开语义由 isOpen 兜底——链上且未被显式收起的照常顶开，
+  // 被收起过的保持收起（此时聚焦行可能不可见，scrollIntoView 对已卸载行是 no-op，安全）。
 
   // focusPath 的祖先链（root → … → 父目录），渲染期派生：行可见性直接吃它，
   // 展开在本次 commit 就生效，滚动 effect 拿到的 DOM 一定是最新布局。
@@ -95,6 +97,18 @@ export function TreeView({ root, selectedPath, onSelect, focusPath, verdicts }: 
       });
       return;
     }
+    // v26.1.2 修复：非链上分支也要先清覆盖集——目录在链上被手动收起后离开
+    // 聚焦链，覆盖集条目原本永远清不掉（isOpen 里覆盖集短路优先，而非链分支
+    // 只翻 expanded），用户点 caret 展开：新翻出的 expanded 值被覆盖集盖回，
+    // caret 永久失效，仅重扫（root 变化清集）可解。用户点开 = 要它开，先移出
+    // 覆盖集再翻 expanded；无条目时返回原 Set 避免多余渲染。链上分支语义不变
+    //（收起仍记入覆盖集压过 focus 链，再点移出回到链上默认展开）。
+    setCollapsedOverrides((s) => {
+      if (!s.has(p)) return s;
+      const next = new Set(s);
+      next.delete(p);
+      return next;
+    });
     setExpanded((m) => ({ ...m, [p]: !m[p] }));
   };
 
@@ -195,7 +209,7 @@ export function TreeView({ root, selectedPath, onSelect, focusPath, verdicts }: 
         <div className="col-size">大小</div>
         <div className="col-count">文件数</div>
       </div>
-      <div className="tree-body">
+      <div className="tree-body" role="tree" aria-label="目录树">
         <Row
           node={root}
           parentSize={root.size || 1}
@@ -207,6 +221,8 @@ export function TreeView({ root, selectedPath, onSelect, focusPath, verdicts }: 
           onToggle={toggleOpen}
           registerEl={registerEl}
           verdicts={verdicts}
+          cleanableUnder={cleanableUnder}
+          focusClean={focusClean}
         />
       </div>
       <ContextMenu state={ctx} onClose={() => setCtx(null)} />
@@ -288,6 +304,8 @@ function Row({
   onToggle,
   registerEl,
   verdicts,
+  cleanableUnder,
+  focusClean,
 }: {
   node: Node;
   parentSize: number;
@@ -300,12 +318,19 @@ function Row({
   onToggle: (p: string) => void;
   registerEl: (p: string, el: HTMLDivElement | null) => void;
   verdicts?: Map<string, VerdictEntry>;
+  cleanableUnder?: Map<string, number>;
+  focusClean?: boolean;
 }) {
   const open = isOpen(node.path);
   const hasKids = (node.children?.length ?? 0) > 0;
   const sel = node.path === selectedPath;
   const pct = parentSize > 0 ? (node.size / parentSize) * 100 : 0;
   const entry = verdicts?.get(node.path) ?? null;
+  // 「只看可清理」聚焦（spec §2.1.2）：树行与图块同一份判定语义（§4 三处一致）。
+  // safe 行与子树内含可清理的祖先行保持可见，其余淡显；选中行豁免（淡显会吞掉
+  // .selected 高亮，选中上下文优先）。
+  const dimmed =
+    !!focusClean && !sel && isFocusDimmed(entry, cleanableUnder?.get(node.path) ?? 0);
 
   return (
     <>
@@ -313,10 +338,36 @@ function Row({
         ref={(el) => registerEl(node.path, el)}
         className={
           'tree-row' + (sel ? ' selected' : '') + (node.is_dir ? '' : ' is-file') +
-          (entry ? ` verdict-${entry.verdict}` : '')
+          (entry ? ` verdict-${entry.verdict}` : '') + (dimmed ? ' focus-dim' : '')
         }
+        // f1-2：键盘可达——tab 聚焦（:focus-visible 全站规则自动给描边）、
+        // Enter/空格选中、→/← 展开/收起、Menu 键开右键菜单（坐标取行元素）。
+        tabIndex={0}
+        role="treeitem"
+        aria-expanded={node.is_dir && hasKids ? open : undefined}
+        aria-level={depth + 1}
         onClick={() => onSelect(node.path)}
         onContextMenu={(e) => onCtx(e, node)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onSelect(node.path);
+          } else if (e.key === 'ArrowRight' && hasKids && !open) {
+            e.preventDefault();
+            onToggle(node.path);
+          } else if (e.key === 'ArrowLeft' && hasKids && open) {
+            e.preventDefault();
+            onToggle(node.path);
+          } else if (e.key === 'ContextMenu') {
+            e.preventDefault();
+            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            onCtx({
+              clientX: r.left + 8,
+              clientY: r.bottom,
+              preventDefault() {},
+            } as unknown as React.MouseEvent, node);
+          }
+        }}
         draggable
         onDragStart={(e) => {
           e.dataTransfer.setData('application/x-pinkbin-path', node.path);
@@ -328,6 +379,7 @@ function Row({
         <div className="col-name" style={{ paddingLeft: 20 + depth * 14 }}>
           <span
             className="caret"
+            aria-hidden
             onClick={(e) => { e.stopPropagation(); if (hasKids) onToggle(node.path); }}
           >
             {hasKids
@@ -342,7 +394,8 @@ function Row({
         </div>
         <div className="col-pct">
           <PctRing pct={pct} />
-          <span className="pct-num">{pct.toFixed(1)}%</span>
+          {/* f1-4：与 PctRing 同一钳制口径——环封顶 100%，文本不再显示 137.4% */}
+          <span className="pct-num">{Math.min(100, Math.max(0, pct)).toFixed(1)}%</span>
         </div>
         <div className="col-size">{formatBytes(node.size)}</div>
         <div className="col-count">{formatCount(node.file_count)}</div>
@@ -360,6 +413,8 @@ function Row({
           onToggle={onToggle}
           registerEl={registerEl}
           verdicts={verdicts}
+          cleanableUnder={cleanableUnder}
+          focusClean={focusClean}
         />
       ))}
     </>
