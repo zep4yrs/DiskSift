@@ -8,7 +8,7 @@
 
 秒扫整盘 · AI 分诊上色 · 已知应用脚本清 · 红线双层兜底 —— 默认进回收站，永远不读你的文件内容。
 
-[![License](https://img.shields.io/badge/License-MIT-24C8DB.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB.svg)](https://tauri.app)
 [![Platform](https://img.shields.io/badge/Windows%2010%2F11-lightgrey.svg)](#快速开始)
 [![Release](https://img.shields.io/badge/Release-v26.1.3.1-005FB8.svg)](#快速开始)
@@ -24,7 +24,7 @@
 ## 它长什么样
 
 <p align="center">
-  <img src="docs/screenshots/hero.png" alt="Trae 式工作台：空间图 treemap + 判定染色 + 树视图 + AI 侧板" width="100%">
+  <img src="docs/screenshots/hero.png" alt="IDE 式工作台：空间图 treemap + 判定染色 + 树视图 + AI 侧板" width="100%">
 </p>
 
 扫完 C 盘的第一眼：中间是空间图 treemap（蓝色竖条 = AI/规则判定染色，绿色徽标 = 可清理聚合），左边资源管理器树每行带占用圆环——**图上双击下钻，树自动跟着展开；树里点目录，图跟着换根**。右边 AI 侧板随时回答"这是什么、能不能删"。
@@ -49,7 +49,7 @@ DiskSift 在这个底子上做了三件事：**前端整个重做、AI 从问答
 
 | | Pinkbin | DiskSift |
 |---|---|---|
-| **工作台** | 三栏布局 | Trae 式五区工作台 · 浏览器式多标签页 · 三区域独立折叠 |
+| **工作台** | 三栏布局 | IDE 式五区工作台 · 浏览器式多标签页 · 三区域独立折叠 |
 | **空间认知** | treemap / 树各自独立 | 图树**双向同步导航** · 占用圆环 · 面包屑下钻 |
 | **AI** | 拖文件夹问答 | **五判定分诊图层**：批量分诊 · 全站染色 · 只看可清理 · 聚合徽标 · AI 起草脚本（过红线才许保存） |
 | **清理脚本** | 2 个（微信/Conda） | **36 个** + 脚本中心（启用停用 · TOML 导入导出过红线） |
@@ -137,7 +137,7 @@ pnpm -C apps/desktop test # 前端引擎测试（分诊/树/清理规则）
 
 DiskSift 站在 [Pinkbin](https://github.com/cccyd2003-qwq/pinkbin) 的肩膀上——安全架构与最初实现全部继承自它。
 
-灵感：[WizTree](https://diskanalyzer.com)（MFT 直读标杆）· [SpaceSniffer](http://www.uderzo.it/main_products/space_sniffer/)（treemap 先驱）· [CleanMyWechat](https://github.com/blackboxo/CleanMyWechat)（微信清理范本）· [SquirrelDisk](https://github.com/adileo/squirreldisk)（Tauri 参考）· [Trae](https://trae.ai)（工作台设计语言）
+灵感：[WizTree](https://diskanalyzer.com)（MFT 直读标杆）· [SpaceSniffer](http://www.uderzo.it/main_products/space_sniffer/)（treemap 先驱）· [CleanMyWechat](https://github.com/blackboxo/CleanMyWechat)（微信清理范本）· [SquirrelDisk](https://github.com/adileo/squirreldisk)（Tauri 参考）· 现代 IDE（工作台设计语言）
 
 肩膀：[Tauri](https://tauri.app) · [d3-hierarchy](https://github.com/d3/d3-hierarchy) · [jwalk](https://github.com/jessegrosjean/jwalk) · [ntfs](https://github.com/ColinFinck/ntfs) · [globset](https://github.com/BurntSushi/ripgrep/tree/master/crates/globset) · [trash-rs](https://github.com/Byron/trash-rs) · [react-markdown](https://github.com/remarkjs/react-markdown) · [Lucide](https://lucide.dev)
 
@@ -159,4 +159,6 @@ DiskSift 站在 [Pinkbin](https://github.com/cccyd2003-qwq/pinkbin) 的肩膀上
 
 ## License
 
-[MIT](LICENSE) · 欢迎 fork、商用、闭源衍生。改 scaffold 时记得同步改它的 safety test——红线断言是防止误删用户数据的最后一道闸。
+**GPL-3.0-or-later** —— 你可以自由使用、学习、修改、再分发，商业使用的前提是**衍生作品同样以 GPL-3.0 开源**；不允许闭源衍生。
+
+本发行版包含并修改了源自 [Pinkbin](https://github.com/cccyd2003-qwq/pinkbin)（MIT）的代码，上游版权与 MIT 许可声明在 [LICENSE](LICENSE) 中原文保留。改 scaffold 时记得同步改它的 safety test——红线断言是防止误删用户数据的最后一道闸。

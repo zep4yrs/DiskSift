@@ -16,8 +16,8 @@ test('根级路径（无尾分隔符）命中——旧片段表 +/Windows/ 类�
 
 test('子路径与大小写/分隔符变体照常命中', () => {
   assert.equal(isNeverTouch('C:\\Windows\\Temp'), true);
-  assert.equal(isNeverTouch('C:\\Users\\90740\\Documents'), true);
-  assert.equal(isNeverTouch('C:\\Users\\90740\\Documents\\WeChat Files'), true);
+  assert.equal(isNeverTouch('C:\\Users\\demo-user\\Documents'), true);
+  assert.equal(isNeverTouch('C:\\Users\\demo-user\\Documents\\WeChat Files'), true);
   assert.equal(isNeverTouch('c:/users/u/documents/archive'), true); // 小写 + 正斜杠
   assert.equal(isNeverTouch('C:\\System Volume Information\\track'), true);
   assert.equal(isNeverTouch('C:\\Program Files (x86)\\X'), true);
@@ -34,7 +34,7 @@ test('段边界：前缀相像但整段不同不误命中（旧 /Program Files �
 });
 
 test('普通用户缓存目录不命中（巡查可清面不收缩）', () => {
-  assert.equal(isNeverTouch('C:\\Users\\90740\\AppData\\Local\\pip\\cache'), false);
+  assert.equal(isNeverTouch('C:\\Users\\demo-user\\AppData\\Local\\pip\\cache'), false);
   assert.equal(isNeverTouch('D:\\dev\\node_modules'), false);
 });
 

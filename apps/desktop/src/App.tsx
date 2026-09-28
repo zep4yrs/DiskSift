@@ -181,7 +181,7 @@ export default function App() {
   }, [focusClean]);
   const toggleFocusClean = () => setFocusClean((v) => !v);
 
-  // ── 区域三开关（spec §2：侧栏/底面板/右 AI 面板任意组合，Trae 五态全可达） ──
+  // ── 区域三开关（spec §2：侧栏/底面板/右 AI 面板任意组合，参考 IDE 五态全可达） ──
   const [regions, setRegions] = useState<{ sidebar: boolean; bottom: boolean; ai: boolean }>(() => {
     try {
       const raw = localStorage.getItem('pinkbin.regions');

@@ -1,11 +1,11 @@
-# 前端重塑规格 v2（定稿）：Trae 工作台行为模型 × 浏览器式多 tab
+# 前端重塑规格 v2（定稿）：IDE 工作台行为模型 × 浏览器式多 tab
 
-> 状态：交互基准 = v5 HTML 预览（docs/redesign-preview.html），用户五张 Trae 截图为布局目标。
+> 状态：交互基准 = v5 HTML 预览（docs/redesign-preview.html），用户五张 IDE 截图为布局目标。
 > 硬约束：**能力零删除**；图标一律 Lucide 真图标（从 node_modules/.pnpm/lucide-react@0.577.0*/dist/esm/icons 提取，**禁止手绘 SVG**）；字体系统栈**零 CDN**。
 > 交互模型铁律：**活动栏只切侧栏；编辑器是独立的 tab 床；两者零重复。**
 > 旧版规格（SiteLens 4.0 令牌 + wave-3 workbench）归档于 docs/redesign-spec-v1-archive.md。
 
-## 1. 色板（Trae light_modern / dark_modern 实测值，本机 theme-defaults 提取）
+## 1. 色板（IDE light 主题 / dark_modern 实测值，本机 theme-defaults 提取）
 
 | Token | Light | Dark | 用途 |
 | --- | --- | --- | --- |
@@ -35,7 +35,7 @@
 | **右 AI 面板** 300px 可折叠 | ChatPanel 全量（多轮/图片/总览）；表头：bot 图标 + 动作图标组（新对话/历史/搜索/关闭） | 对标 TRAE 右面板 |
 | **状态栏** 22px | 根路径 · 大小/文件数 · AI provider · 脚本数 · 字号档(A·md) · 版本 | mono 11px |
 
-**独立折叠规则**：侧栏/底面板/右 AI 面板三开关任意组合（用户 Trae 截图五态全部可达）；点活动栏同项=折叠/展开侧栏。
+**独立折叠规则**：侧栏/底面板/右 AI 面板三开关任意组合（用户 IDE 截图五态全部可达）；点活动栏同项=折叠/展开侧栏。
 
 ## 3. tab 模型（store）
 
@@ -67,7 +67,7 @@ openTab(kind,title) 去重→激活；closeTab(id)；activateTab(id)
 
 ## 6. 落地顺序
 
-1 store tab 模型 → 2 令牌层换 Trae 色板 + 外壳 CSS → 3 App.tsx 五区重写 → 4 六视图/入口页/右面板接线 → 5 门禁（tsc/build/cargo test --workspace/lint）→ 6 复核（能力零删除逐项核对）。
+1 store tab 模型 → 2 令牌层换 IDE 色板 + 外壳 CSS → 3 App.tsx 五区重写 → 4 六视图/入口页/右面板接线 → 5 门禁（tsc/build/cargo test --workspace/lint）→ 6 复核（能力零删除逐项核对）。
 
 ## 7. 豁免清单
 

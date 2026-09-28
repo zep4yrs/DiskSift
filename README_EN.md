@@ -8,7 +8,7 @@
 
 Open-source disk cleaner. Scan a whole drive in seconds to see where the bytes went, drag any unfamiliar folder into the AI to learn what it is and whether it's safe to delete, then clean by scope — defaults to the Recycle Bin, never reads your file contents.
 
-[![License](https://img.shields.io/badge/License-MIT-ff69b4.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-GPL--3.0-ff69b4.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB.svg)](https://tauri.app)
 [![Platform](https://img.shields.io/badge/Windows-lightgrey.svg)](#download)
 

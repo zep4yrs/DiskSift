@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════
-   pinkbin · 重塑版样式表 — Trae 工作台（spec v2 定稿，分层组织）
+   pinkbin · 重塑版样式表 — IDE 工作台（spec v2 定稿，分层组织）
 
    唯一事实来源：docs/redesign-spec.md（v2）；交互观感基准 docs/redesign-preview.html（v5）。
    纪律声明（重构期间全程有效）：
@@ -10,10 +10,10 @@
       已废除且不得回流：在线字体 @import、2.5px 墨线、硬投影、粉色系、大圆角。
    5. §3/§5/§6/§7 中 wave-3 视图切换式旧类按"不精简"纪律原样保留在文件内，
       新外壳（§2.5 .app-v2 作用域）不再引用它们；后续逐视图迁移时再清理。
-   6. §4 组件词汇层与 §5 遗留层经由 §1 别名桥消费 Trae 色板，保证不塌。
+   6. §4 组件词汇层与 §5 遗留层经由 §1 别名桥消费 IDE 色板，保证不塌。
 
    分层目录：
-   §1 令牌层      — spec §1 Trae light_modern/dark_modern 精确值 + 4.0 刻度
+   §1 令牌层      — spec §1 IDE light 主题/dark_modern 精确值 + 4.0 刻度
                     + 系统字体 + 旧令牌别名桥（两级）
    §2 基础层      — reset / body / 代码与工具类 / 选区 / 滚动条
    §2.5 workbench-v2 外壳 — spec §2 五区：titlebar 35 / activitybar 48 /
@@ -30,12 +30,12 @@
 
 
 /* ───────────────────────────────────────────────────────────────
-   §1 令牌层 —— spec §1 Trae light_modern / dark_modern 精确值
+   §1 令牌层 —— spec §1 IDE light 主题 / dark_modern 精确值
    （本机 theme-defaults 实测值；旧 SiteLens 4.0 令牌经别名桥指向新值）
    ─────────────────────────────────────────────────────────────── */
 
 :root {
-  /* ═══ Trae 色板 · Light（spec §1 精确值）═══ */
+  /* ═══ IDE 色板 · Light（spec §1 精确值）═══ */
   --chrome: #F8F8F8;             /* 活动栏/侧栏/顶带/底面板/状态栏 */
   --editor: #FFFFFF;             /* 编辑区/活动 tab 底 */
   --fg: #3B3B3B;                 /* 主文字 */
@@ -91,8 +91,8 @@
   --fw-normal: 400;
   --fw-strong: 600;
 
-  /* ── SiteLens 4.0 旧令牌 → Trae 色板别名桥（第一级）。
-        §4 组件词汇层与 §5 遗留层继续引用旧名，取值全部桥到 Trae 色板，
+  /* ── SiteLens 4.0 旧令牌 → IDE 色板别名桥（第一级）。
+        §4 组件词汇层与 §5 遗留层继续引用旧名，取值全部桥到 IDE 色板，
         保证词汇层不塌；六视图迁移逐类替换后整段删除。禁止新代码使用这些名字。 ── */
   --background: var(--chrome);
   --foreground: var(--fg);
@@ -130,7 +130,7 @@
 
   color-scheme: light;
 
-  /* ── 遗留别名桥（第二级，旧手绘类名字）：全部桥到 Trae 令牌。
+  /* ── 遗留别名桥（第二级，旧手绘类名字）：全部桥到 参考 IDE 令牌。
         六视图迁移逐类替换后整段删除。禁止新代码使用这些名字。 ── */
   --ink: var(--fg);
   --ink-2: var(--fg-muted);
@@ -154,7 +154,7 @@
   --shadow-lg: var(--shadow-3);
 }
 
-/* ═══ Trae 色板 · Dark（spec §1 dark_modern 精确值；状态色与刻度沿用 ：root）═══
+/* ═══ IDE 色板 · Dark（spec §1 dark_modern 精确值；状态色与刻度沿用 ：root）═══
    旧令牌在 :root 经 var() 桥接到九个规范名，.dark 只需覆盖规范名即可整体换肤。 */
 .dark {
   --chrome: #181818;
@@ -250,7 +250,7 @@ code, .mono {
    §2.5 workbench-v2 外壳 —— spec §2 五区（v5 预览对齐，全部 .app-v2 作用域）：
    titlebar 35 / activitybar 48 / sidebar 240 / tabbar 35 / editorarea /
    bottompanel 150 / aipanel 300 / statusbar 22；侧栏/底面板/右 AI 面板
-   三开关任意组合（Trae 五态全部可达）。
+   三开关任意组合（参考 IDE 五态全部可达）。
    旧 §3/§7 外壳类（.app/.header/.left/.right 等）不再被新 App 引用，按纪律保留。
    ─────────────────────────────────────────────────────────────── */
 
@@ -443,7 +443,7 @@ code, .mono {
   background: var(--editor);
 }
 
-/* tabbar 35px：Trae 式 tab——活动=editor 底 + 顶部 2px accent；非活动=chrome 灰 */
+/* tabbar 35px：IDE 式 tab——活动=editor 底 + 顶部 2px accent；非活动=chrome 灰 */
 .app-v2 .tabbar {
   height: 35px;
   flex-shrink: 0;
@@ -1553,7 +1553,7 @@ input:focus, select:focus {
   box-shadow: var(--shadow-1);
 }
 
-/* ── Triage 分诊（Trae 克制风：无彩框、hairline、单层表面） ── */
+/* ── Triage 分诊（参考 IDE 克制风：无彩框、hairline、单层表面） ── */
 .triage { padding: var(--space-4); display: grid; gap: var(--space-3); max-width: 1100px; margin: 0 auto; }
 .triage-header { padding-bottom: 2px; }
 .triage-title { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; color: var(--fg); }
@@ -4251,7 +4251,7 @@ section.center > .tabs { padding: 0 10px; border-bottom: 1px solid var(--border)
 }
 .app-v2 .trow-action .ghost { padding: 4px 10px; font-size: 11.5px; }
 
-/* ── §10 右侧 AI 面板重构（Trae 式：单表头、无框气泡、克制按钮）──
+/* ── §10 右侧 AI 面板重构（IDE 式：单表头、无框气泡、克制按钮）──
    ChatPanel 嵌入 aipanel 后的双表头收敛：ai-head 是唯一表头，
    chat-head 降级为聚焦上下文行（去边框/去底色/去关闭钮，留路径）。 */
 .app-v2 .aipanel .chat-head {
@@ -4265,7 +4265,7 @@ section.center > .tabs { padding: 0 10px; border-bottom: 1px solid var(--border)
 .app-v2 .aipanel .chat-title { font-size: 12px; font-weight: 600; }
 .app-v2 .aipanel .chat-sub { font-size: 10.5px; opacity: .75; }
 
-/* 气泡：无框平面，背景区分角色（Trae 式） */
+/* 气泡：无框平面，背景区分角色（IDE 式） */
 .app-v2 .aipanel .chat-turn.assistant .chat-bubble {
   border: none;
   background: var(--muted);
@@ -4361,7 +4361,7 @@ section.center > .tabs { padding: 0 10px; border-bottom: 1px solid var(--border)
 
 /* ── §12 观感升级 pass（2026-09-27）：统一排版节奏 / 微交互 / 溢出防护 ── */
 
-/* 12.1 Studio 卡片对齐 Trae（去 1px 墨框+投影 → hairline 浮起式） */
+/* 12.1 Studio 卡片对齐 参考 IDE（去 1px 墨框+投影 → hairline 浮起式） */
 .app-v2 .studio-card {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -4385,7 +4385,7 @@ section.center > .tabs { padding: 0 10px; border-bottom: 1px solid var(--border)
 .app-v2 .aipanel .chat-bubble code { word-break: break-all; white-space: pre-wrap; }
 .app-v2 .aipanel .chat-bubble img { max-width: 100%; }
 
-/* 12.3 全站键盘焦点环（Trae 同款：2px accent） */
+/* 12.3 全站键盘焦点环（IDE 同款：2px accent） */
 .app-v2 button:focus-visible,
 .app-v2 input:focus-visible,
 .app-v2 textarea:focus-visible,

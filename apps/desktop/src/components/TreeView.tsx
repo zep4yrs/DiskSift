@@ -274,7 +274,7 @@ export function TreeView({ root, selectedPath, onSelect, focusPath, verdicts, cl
 // 颜色走 currentColor → .tree-row .glyph 的 --fg-muted（spec §1：次级图标色）。
 
 // 占用环：替代旧长条 pct-bar（用户 2026-09-27 拍板）。环 = 进度语义（spec §1 允许清单），
-// 永远可见——旧长条填充色 --pink 别名桥在 Trae 色板下解析为白色系，导致只有选中行显形。
+// 永远可见——旧长条填充色 --pink 别名桥在 IDE 色板下解析为白色系，导致只有选中行显形。
 function PctRing({ pct }: { pct: number }) {
   const r = 6;
   const c = 2 * Math.PI * r;

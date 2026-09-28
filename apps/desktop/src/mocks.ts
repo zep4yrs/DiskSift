@@ -35,55 +35,55 @@ const MOCK_TREE: Node = {
       scaffold_id: null, top_extensions: [],
       children: [
         {
-          name: '90740', path: 'C:\\Users\\90740', is_dir: true, size: 90.3 * GB, file_count: 478_120,
+          name: 'demo-user', path: 'C:\\Users\\demo-user', is_dir: true, size: 90.3 * GB, file_count: 478_120,
           scaffold_id: null, top_extensions: [],
           children: [
             {
-              name: 'AppData', path: 'C:\\Users\\90740\\AppData', is_dir: true, size: 71.1 * GB, file_count: 410_220,
+              name: 'AppData', path: 'C:\\Users\\demo-user\\AppData', is_dir: true, size: 71.1 * GB, file_count: 410_220,
               scaffold_id: null, top_extensions: [],
               children: [
                 {
-                  name: 'Local', path: 'C:\\Users\\90740\\AppData\\Local', is_dir: true, size: 51 * GB, file_count: 280_110,
+                  name: 'Local', path: 'C:\\Users\\demo-user\\AppData\\Local', is_dir: true, size: 51 * GB, file_count: 280_110,
                   scaffold_id: null, top_extensions: [],
                   children: [
-                    leaf('Microsoft', 'C:\\Users\\90740\\AppData\\Local\\Microsoft', 14.8 * GB, 88_400, null),
+                    leaf('Microsoft', 'C:\\Users\\demo-user\\AppData\\Local\\Microsoft', 14.8 * GB, 88_400, null),
                     {
-                      name: 'Edge', path: 'C:\\Users\\90740\\AppData\\Local\\Microsoft\\Edge', is_dir: true,
+                      name: 'Edge', path: 'C:\\Users\\demo-user\\AppData\\Local\\Microsoft\\Edge', is_dir: true,
                       size: 12.8 * GB, file_count: 41_320, scaffold_id: 'edge',
                       top_extensions: [{ ext: '(none)', bytes: 6 * GB, count: 12_000 }],
                       children: [
-                        leaf('User Data', 'C:\\Users\\90740\\AppData\\Local\\Microsoft\\Edge\\User Data', 12.5 * GB, 40_900, 'edge'),
+                        leaf('User Data', 'C:\\Users\\demo-user\\AppData\\Local\\Microsoft\\Edge\\User Data', 12.5 * GB, 40_900, 'edge'),
                       ],
                     },
                     {
-                      name: 'Google', path: 'C:\\Users\\90740\\AppData\\Local\\Google', is_dir: true,
+                      name: 'Google', path: 'C:\\Users\\demo-user\\AppData\\Local\\Google', is_dir: true,
                       size: 6.4 * GB, file_count: 22_100, scaffold_id: 'chrome',
                       top_extensions: [], children: [
-                        leaf('Chrome', 'C:\\Users\\90740\\AppData\\Local\\Google\\Chrome', 6.4 * GB, 22_100, 'chrome'),
+                        leaf('Chrome', 'C:\\Users\\demo-user\\AppData\\Local\\Google\\Chrome', 6.4 * GB, 22_100, 'chrome'),
                       ],
                     },
-                    leaf('npm-cache', 'C:\\Users\\90740\\AppData\\Local\\npm-cache', 1.8 * GB, 8_400, 'npm'),
-                    leaf('pnpm', 'C:\\Users\\90740\\AppData\\Local\\pnpm', 4.2 * GB, 15_200, 'pnpm'),
-                    leaf('pip', 'C:\\Users\\90740\\AppData\\Local\\pip', 2.1 * GB, 5_300, 'pip'),
-                    leaf('JetBrains', 'C:\\Users\\90740\\AppData\\Local\\JetBrains', 3.6 * GB, 88_900, 'jetbrains'),
-                    leaf('Docker', 'C:\\Users\\90740\\AppData\\Local\\Docker', 5.2 * GB, 1_200, 'docker'),
+                    leaf('npm-cache', 'C:\\Users\\demo-user\\AppData\\Local\\npm-cache', 1.8 * GB, 8_400, 'npm'),
+                    leaf('pnpm', 'C:\\Users\\demo-user\\AppData\\Local\\pnpm', 4.2 * GB, 15_200, 'pnpm'),
+                    leaf('pip', 'C:\\Users\\demo-user\\AppData\\Local\\pip', 2.1 * GB, 5_300, 'pip'),
+                    leaf('JetBrains', 'C:\\Users\\demo-user\\AppData\\Local\\JetBrains', 3.6 * GB, 88_900, 'jetbrains'),
+                    leaf('Docker', 'C:\\Users\\demo-user\\AppData\\Local\\Docker', 5.2 * GB, 1_200, 'docker'),
                   ],
                 },
                 {
-                  name: 'Roaming', path: 'C:\\Users\\90740\\AppData\\Roaming', is_dir: true, size: 17.7 * GB, file_count: 95_400,
+                  name: 'Roaming', path: 'C:\\Users\\demo-user\\AppData\\Roaming', is_dir: true, size: 17.7 * GB, file_count: 95_400,
                   scaffold_id: null, top_extensions: [], children: [
-                    leaf('Tencent', 'C:\\Users\\90740\\AppData\\Roaming\\Tencent', 2.3 * GB, 4_100, null),
+                    leaf('Tencent', 'C:\\Users\\demo-user\\AppData\\Roaming\\Tencent', 2.3 * GB, 4_100, null),
                   ],
                 },
-                leaf('LocalLow', 'C:\\Users\\90740\\AppData\\LocalLow', 2.1 * GB, 12_900, null),
+                leaf('LocalLow', 'C:\\Users\\demo-user\\AppData\\LocalLow', 2.1 * GB, 12_900, null),
               ],
             },
             {
-              name: 'Documents', path: 'C:\\Users\\90740\\Documents', is_dir: true, size: 12.1 * GB, file_count: 18_400,
+              name: 'Documents', path: 'C:\\Users\\demo-user\\Documents', is_dir: true, size: 12.1 * GB, file_count: 18_400,
               scaffold_id: null, top_extensions: [],
               children: [
                 {
-                  name: 'WeChat Files', path: 'C:\\Users\\90740\\Documents\\WeChat Files', is_dir: true,
+                  name: 'WeChat Files', path: 'C:\\Users\\demo-user\\Documents\\WeChat Files', is_dir: true,
                   size: 11.4 * GB, file_count: 17_220, scaffold_id: 'wechat-pc',
                   top_extensions: [
                     { ext: '.dat', bytes: 6.8 * GB, count: 12_400 },
@@ -91,13 +91,13 @@ const MOCK_TREE: Node = {
                     { ext: '.mp4', bytes: 1.6 * GB, count: 420 },
                   ],
                   children: [
-                    leaf('wxid_gmsp9xjx12', 'C:\\Users\\90740\\Documents\\WeChat Files\\wxid_gmsp9xjx12', 10.7 * GB, 16_800, 'wechat-pc'),
+                    leaf('wxid_gmsp9xjx12', 'C:\\Users\\demo-user\\Documents\\WeChat Files\\wxid_gmsp9xjx12', 10.7 * GB, 16_800, 'wechat-pc'),
                   ],
                 },
               ],
             },
-            leaf('.cargo', 'C:\\Users\\90740\\.cargo', 0.8 * GB, 12_400, 'cargo'),
-            leaf('.cache/huggingface', 'C:\\Users\\90740\\.cache\\huggingface', 4.6 * GB, 320, 'huggingface'),
+            leaf('.cargo', 'C:\\Users\\demo-user\\.cargo', 0.8 * GB, 12_400, 'cargo'),
+            leaf('.cache/huggingface', 'C:\\Users\\demo-user\\.cache\\huggingface', 4.6 * GB, 320, 'huggingface'),
           ],
         },
       ],
