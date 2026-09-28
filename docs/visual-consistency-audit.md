@@ -261,3 +261,17 @@
 - [x] f4-1 未配置去重留空白灰卡气泡，面板开关一次 +1
 - [x] f4-2 错误气泡混入 assistant 历史污染后续请求（20 轮窗口）
 - [x] f5-1 侧栏 splitter 钳制漏算 8px（352 < MIN_CENTER 360）
+
+---
+
+## 6. v26.1.4.0 探 bug 降级清单（2026-09-29 凌晨；21→确认后 6 条 high/medium 已随版修复，以下 9 条 low/边界降级待办，归 26.1.4.1）
+
+- [ ] b3 树右键菜单贴底溢出 4~6px：ContextMenu 按"每项 30px"估高，实际 32.7px，钳制后末项底缘出窗（任何窗口高度贴底行必现，末项多数可点）
+- [ ] b6 迁移 undo 台账整批结束才一次性 append：迁移中途进程被杀/断电，已完成条目零台账、记录页不可回迁（数据在目标侧完好，无丢失）
+- [ ] b7 迁移删源阶段部分失败（源文件被锁）不写台账：已物理迁移部分无法经操作记录回迁
+- [ ] b8 迁移 Verifying 阶段 files_done 复用 Copy 计数器，从 N 涨到 2N 越界（前端显示 12/6 类进度；Done 事件硬编码总数所以单测没抓到）
+- [ ] b9 同卷判定只比盘字母：挂载文件夹/subst 场景误判同卷走 rename 报 ERROR_NOT_SAME_DEVICE（数据无损，该场景迁移不可用且报错误导）
+- [ ] b10 walkdir 兜底路径取消检查点按条目数不按时间：单个超大目录枚举期间取消信号推迟（MFT 主路径毫秒级成立）
+- [ ] b11 monitor refresh 重算不看 ext/glob 排除规则：USN 刷新把已排除文件字节算回目录统计，直至下次全量扫描（path 规则间接生效）
+- [ ] b13 MigrateModal 桌面模式 progress 事件订阅竞态（listen 异步 resolve 晚于退订）→ 监听器永久泄漏累积（useMonitor 同场景已正确处理，MigrateModal 没抄对）
+- [ ] b14 excludes 原子写归属的契约注释自相矛盾（crates/excludes lib.rs:10 说"前端负责"vs 实际后端 excludes_set 实现）——纯注释漂移，按 api.ts 注释为准
