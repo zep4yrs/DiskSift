@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
-import { X, CheckCircle2, Info, Eye, EyeOff, Settings2, CalendarClock } from 'lucide-react';
+import { Activity, X, CheckCircle2, Info, Eye, EyeOff, Settings2, CalendarClock } from 'lucide-react';
 import { api, type AutoPatrolFrequency, type AutoPatrolStatus } from '../api';
 import { isTauri } from '../env';
+import { useStore } from '../store';
+import { ExcludeRulesSection } from './ExcludeRulesSection';
 import {
   loadSettings,
   saveSettings,
@@ -51,6 +53,146 @@ const PATROL_FREQ_FULL: Record<AutoPatrolFrequency, string> = {
 
 function isPatrolFreq(v: string): v is AutoPatrolFrequency {
   return v === 'hourly' || v === 'daily' || v === 'weekly' || v === 'monthly';
+}
+
+/** 盘符提取（App.tsx driveOf 同口径的本地副本，避免跨文件导出扩散）。 */
+function driveOf(p: string): string {
+  return /^[A-Za-z]:/.test(p) ? `${p[0]}:` : '';
+}
+
+function fmtRefresh(ms: number | null): string {
+  if (ms == null) return '—';
+  const d = new Date(ms);
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleTimeString();
+}
+
+/** 「实时监控」区（v26.1.4.0 §1.2）：总开关 + 每已扫描卷开关 + 状态行 +
+ *  隐私说明。开关直接调 store 动作（api.monitorStart/Stop + status 快照），
+ *  事件流由 App 挂的 useMonitor 统一订阅；浏览器模式走 mock 假变更序列，
+ *  数字会动（规格：mock 层提供假变更序列驱动）。 */
+function MonitorSection() {
+  const root = useStore((s) => s.root);
+  const monitorVolumes = useStore((s) => s.monitorVolumes);
+  const monitorReason = useStore((s) => s.monitorReason);
+  const monitorBacklog = useStore((s) => s.monitorBacklog);
+  const monitorTotalChanges = useStore((s) => s.monitorTotalChanges);
+  const dirtyPaths = useStore((s) => s.dirtyPaths);
+  const startMonitor = useStore((s) => s.startMonitor);
+  const stopMonitor = useStore((s) => s.stopMonitor);
+
+  // 已扫描卷 = 当前扫描根的盘符（单扫描模型）；联合已在监控的卷（其他来源开启的）
+  const scannedVolume = root ? driveOf(root.path) : null;
+  const activeVolumes = monitorVolumes.filter((v) => v.running).map((v) => v.volume);
+  const volumeList = Array.from(new Set([...(scannedVolume ? [scannedVolume] : []), ...activeVolumes]));
+  const allOn = volumeList.length > 0 && volumeList.every((v) => activeVolumes.includes(v));
+  const anyRunning = activeVolumes.length > 0;
+
+  const totalPerSec = Math.round(monitorVolumes.reduce((a, v) => a + (v.running ? v.events_per_sec : 0), 0) * 10) / 10;
+  const lastRefresh = monitorVolumes.reduce<number | null>(
+    (acc, v) => (v.last_refresh != null && (acc == null || v.last_refresh > acc) ? v.last_refresh : acc), null,
+  );
+  const [busy, setBusy] = useState(false);
+  const [opErr, setOpErr] = useState<string | null>(null);
+
+  const toggleAll = async () => {
+    setBusy(true); setOpErr(null);
+    try {
+      for (const v of volumeList) {
+        if (allOn) await stopMonitor(v);
+        else if (!activeVolumes.includes(v)) await startMonitor(v);
+      }
+    } catch (e) {
+      setOpErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleOne = async (v: string) => {
+    setBusy(true); setOpErr(null);
+    try {
+      if (activeVolumes.includes(v)) await stopMonitor(v);
+      else await startMonitor(v);
+    } catch (e) {
+      setOpErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="monitor-section">
+      <div className="settings-section-head">
+        <Activity size={13} />
+        <span>实时监控</span>
+        <span className={'patrol-state' + (anyRunning ? ' on' : '')}>
+          {anyRunning ? `监控中 · ${totalPerSec} 变更/秒 · 上次刷新 ${fmtRefresh(lastRefresh)}` : '未开启'}
+        </span>
+      </div>
+      <p className="hint">
+        <Info size={12} />
+        <span>
+          读取 NTFS USN 日志（只读），只收<b>路径变更</b>，绝不读取文件内容；变更目录的
+          大小/文件数由后台按扫描同口径增量重算，空间图与树实时反映
+          （本会话已应用 {monitorTotalChanges} 条变更{Object.keys(dirtyPaths).length > 0 ? ` · 脏目录 ${Object.keys(dirtyPaths).length} 个` : ''}）。
+          积压过大时自动降级并建议重扫；关闭监控后零 CPU。
+        </span>
+      </p>
+
+      <div className="patrol-row">
+        <button
+          type="button"
+          className={allOn ? 'ghost' : 'primary'}
+          disabled={busy || volumeList.length === 0}
+          title={volumeList.length === 0
+            ? '先扫描一个磁盘，才能开启该卷的实时监控'
+            : allOn ? '停止全部已扫描卷的监控' : '对已扫描卷开启 USN 实时监控'}
+          onClick={() => void toggleAll()}
+        >
+          {busy ? '处理中…' : allOn ? '全部停止' : '全部开启'}
+        </button>
+        {!scannedVolume && (
+          <span className="muted small">还没有已扫描的卷 — 先选择磁盘并扫描。</span>
+        )}
+      </div>
+
+      {volumeList.map((v) => {
+        const st = monitorVolumes.find((x) => x.volume === v);
+        const running = activeVolumes.includes(v);
+        const reason = st?.reason ?? null;
+        return (
+          <div key={v} className="monitor-volume-row">
+            <span className="mono monitor-vol-letter">{v}</span>
+            <label className="excludes-toggle" title={running ? '点击停止该卷监控' : '点击开启该卷监控'}>
+              <input type="checkbox" checked={running} disabled={busy} onChange={() => void toggleOne(v)} />
+              {running ? '监控中' : '已停止'}
+            </label>
+            <span className="muted small monitor-vol-meta">
+              {running
+                ? `${st?.events_per_sec ?? 0} 变更/秒 · 上次刷新 ${fmtRefresh(st?.last_refresh ?? null)}`
+                : reason ? `降级：${reason}` : '未监控'}
+            </span>
+            {reason && running && <span className="badge warn" title={reason}>降级</span>}
+          </div>
+        );
+      })}
+
+      {monitorBacklog && (
+        <div className="error" role="status">
+          变更积压过大，监控已降级 — 建议重新扫描以获得准确数据（App 顶部也有提示条）。
+        </div>
+      )}
+      {monitorReason && !monitorBacklog && (
+        <div className="muted small">最近状态：{monitorReason}</div>
+      )}
+      {opErr && <div className="error">{opErr}</div>}
+      {!isTauri && (
+        <p className="muted small" style={{ margin: 0 }}>
+          浏览器预览模式：走 mock 层假变更序列（演示增量链路，无真实 USN）；真实监控仅桌面模式可用。
+        </p>
+      )}
+    </div>
+  );
 }
 
 export function Settings({ onClose, prefill }: Props) {
@@ -328,6 +470,12 @@ export function Settings({ onClose, prefill }: Props) {
             浏览器预览模式没有系统计划任务语义，以上操作不会生效。
           </p>
         )}
+
+        <div className="settings-divider" role="separator" />
+        <MonitorSection />
+
+        <div className="settings-divider" role="separator" />
+        <ExcludeRulesSection />
 
         <div className="modal-actions">
           {saved && <button className="ghost" onClick={wipe}>清除</button>}

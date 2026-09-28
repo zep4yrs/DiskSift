@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB.svg)](https://tauri.app)
 [![Platform](https://img.shields.io/badge/Windows%2010%2F11-lightgrey.svg)](#快速开始)
-[![Release](https://img.shields.io/badge/Release-v26.1.3.1-005FB8.svg)](#快速开始)
+[![Release](https://img.shields.io/badge/Release-v26.1.4.0-005FB8.svg)](#快速开始)
 
 **下载** · [看它长什么样](#它长什么样) · [和 Pinkbin 什么关系](#和-pinkbin-什么关系) · [四件事](#四件事) · [安全模型](#安全模型) · [从源码构建](#从源码构建)
 
@@ -58,7 +58,7 @@ DiskSift 在这个底子上做了三件事：**前端整个重做、AI 从问答
 | **撤销** | undo.jsonl | + 按天分组撤销中心 · 可视化还原 |
 | **密钥** | 明文 localStorage | Windows **DPAPI 加密** |
 
-版本自成一系：`年份后两位.破坏性+1.新功能+1.补丁+1`，当前 **v26.1.3.1**（[VERSIONING.md](VERSIONING.md)）。
+版本自成一系：`年份后两位.破坏性+1.新功能+1.补丁+1`，当前 **v26.1.4.0**（[VERSIONING.md](VERSIONING.md)）。
 
 ---
 
@@ -126,9 +126,9 @@ pnpm -C apps/desktop test # 前端引擎测试（分诊/树/清理规则）
 
 ## 路线图
 
-- [ ] **v26.1.4.0** 实时监控：USN Journal 感知目录变化
+- [x] **v26.1.4.0** 实时监控：USN Journal 感知目录变化
 - [ ] **v26.1.5.0** 跨平台安装包矩阵（签名 + 真机验证后）
-- [ ] 「建议迁移」目录一键搬到另一块盘（姐妹产品深链）
+- [x] **v26.1.4.0** 「建议迁移」目录一键搬到另一块盘（内置迁移引擎：同卷 rename / 跨盘并行复制 + SHA-256 校验，原姐妹产品深链方案内置化）
 - [ ] macOS 签名证书
 
 ---

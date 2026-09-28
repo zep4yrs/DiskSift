@@ -1,4 +1,23 @@
-import type { Node, Scaffold, AdvisorRequest, AdvisorResponse, UndoEntry, Plan, SteamInventory, WorkshopItem } from './types';
+import { matchExcludeRules } from './excludes';
+import type {
+  Node,
+  UsnChangeDir,
+  Scaffold,
+  AdvisorRequest,
+  AdvisorResponse,
+  UndoEntry,
+  Plan,
+  SteamInventory,
+  WorkshopItem,
+  MonitorStatus,
+  MonitorVolumeStatus,
+  MigratePhase,
+  MigrateProgressPayload,
+  UsnChangesPayload,
+  UsnStatePayload,
+  ExcludeRule,
+  ExcludesConfig,
+} from './types';
 import { callAdvisor, isConfigured, loadSettings, ensureApiKey } from './advisorClient';
 
 const GB = 1024 ** 3;
@@ -491,4 +510,282 @@ export function workshopTitles(ids: number[]): Record<number, string> {
     if (knownTitles[id]) out[id] = knownTitles[id];
   }
   return out;
+}
+
+// ═══ v26.1.4.0 契约 mock：USN 实时监控 / 迁移引擎 / 排除规则 / 事件通道 ═════
+// 浏览器 :1420 预览模式没有 Tauri IPC 与事件系统：这里为契约命令提供假实现——
+// monitor 走定时器驱动的【假变更序列】（数字会动，设置页/树/图可演示增量链路），
+// migrate 走分段假进度并写 mock 台账（操作记录页可演示回迁），excludes 走
+// localStorage（写侧先 .tmp 再改名，模拟 tmp+rename 原子写语义）。事件经
+// mockListen 微型通道分发（桌面模式由 Tauri listen 承担）。零真实文件系统副作用。
+
+// ── 微型事件通道（浏览器模式替代 @tauri-apps/api/event 的 listen）────────
+type MockHandler = (payload: unknown) => void;
+const mockListeners = new Map<string, Set<MockHandler>>();
+
+/** 订阅 mock 事件（事件名与 Tauri 事件逐字一致）；返回取消订阅函数。 */
+export function mockListen(event: string, handler: MockHandler): () => void {
+  let set = mockListeners.get(event);
+  if (!set) {
+    set = new Set();
+    mockListeners.set(event, set);
+  }
+  const subscribed: Set<MockHandler> = set;
+  subscribed.add(handler);
+  return () => { subscribed.delete(handler); };
+}
+
+function mockEmit(event: string, payload: unknown): void {
+  const set = mockListeners.get(event);
+  if (!set) return;
+  for (const h of set) {
+    try {
+      h(payload);
+    } catch {
+      // 单个订阅者异常不拖垮其它订阅方（浏览器 mock 通道，无事故语义）
+    }
+  }
+}
+
+// ── monitor_start / monitor_stop / monitor_status ────────────────────────
+// 契约：定时器驱动假变更序列——每 2s 从 mock 树取下 2 个目录，size/file_count
+// 按拍递增（useMonitor → applyMonitorChanges 让浏览器模式看到数字动），启停发
+// 'usn://state'（reason=null=正常态，对齐后端语义）。
+const MOCK_USN_TICK_MS = 2000;
+const monitorTimers = new Map<string, number>();
+/** 每卷发射日志：events_per_sec 滑窗（4s）与 last_refresh 的数据源。 */
+const monitorEmitLog = new Map<string, { t: number; n: number }[]>();
+/** 每目录已施加的增长拍数（轮转递增，数值只涨不跳变）。 */
+const monitorGrowth = new Map<string, number>();
+
+/** mock 树里所有 is_dir 路径（depth ≥ 1），启动时惰性构建一次。 */
+let mockDirPaths: string[] | null = null;
+function collectMockDirPaths(): string[] {
+  if (mockDirPaths) return mockDirPaths;
+  const out: string[] = [];
+  const walk = (n: Node, depth: number) => {
+    if (n.is_dir && depth >= 1) out.push(n.path);
+    for (const c of n.children) walk(c, depth + 1);
+  };
+  walk(MOCK_TREE, 0);
+  mockDirPaths = out;
+  return out;
+}
+
+function findMockNode(root: Node, path: string): Node | null {
+  if (root.path === path) return root;
+  for (const c of root.children) {
+    const hit = findMockNode(c, path);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function emitMockChanges(volume: string): void {
+  const dirs = collectMockDirPaths();
+  if (dirs.length === 0) return;
+  const kinds = ['rename', 'create', 'overwrite'] as const;
+  const picked: UsnChangeDir[] = [];
+  for (let i = 0; i < 2; i++) {
+    const path = dirs[(monitorGrowth.size + i) % dirs.length];
+    const tick = (monitorGrowth.get(path) ?? 0) + 1;
+    monitorGrowth.set(path, tick);
+    // 找到节点取基准值（找不到给固定量级），每拍 size +2%、文件数 +1
+    const base = findMockNode(MOCK_TREE, path);
+    const baseSize = base?.size ?? 128 * 1024 * 1024;
+    const baseCount = base?.file_count ?? 128;
+    picked.push({
+      path,
+      size: Math.round(baseSize * (1 + 0.02 * tick)),
+      file_count: baseCount + tick,
+      kind: kinds[(tick - 1) % kinds.length],
+    });
+  }
+  const log = monitorEmitLog.get(volume) ?? [];
+  log.push({ t: Date.now(), n: picked.length });
+  while (log.length > 0 && Date.now() - log[0].t > 4000) log.shift();
+  monitorEmitLog.set(volume, log);
+  const payload: UsnChangesPayload = { volume, dirs: picked, dropped: 0 };
+  mockEmit('usn://changes', payload);
+}
+
+export function monitorStart(volume: string): void {
+  if (monitorTimers.has(volume)) return; // 幂等（重复 start 同卷不叠加定时器）
+  // reason=null = 正常态（对齐 crates/monitor emit.rs：降级/停止才带原因）
+  const state: UsnStatePayload = { volume, running: true, reason: null };
+  mockEmit('usn://state', state);
+  monitorEmitLog.set(volume, []);
+  const timer = window.setInterval(() => emitMockChanges(volume), MOCK_USN_TICK_MS);
+  monitorTimers.set(volume, timer);
+}
+
+export function monitorStop(volume: string): void {
+  const timer = monitorTimers.get(volume);
+  if (timer === undefined) return; // 未在监控：幂等成功
+  window.clearInterval(timer);
+  monitorTimers.delete(volume);
+  monitorEmitLog.delete(volume);
+  const state: UsnStatePayload = { volume, running: false, reason: 'monitor_stop（mock）' };
+  mockEmit('usn://state', state);
+}
+
+export function monitorStatus(): Promise<MonitorStatus> {
+  const volumes: MonitorVolumeStatus[] = [];
+  const now = Date.now();
+  for (const volume of monitorTimers.keys()) {
+    const log = (monitorEmitLog.get(volume) ?? []).filter((e) => now - e.t <= 4000);
+    const perSec = log.reduce((acc, e) => acc + e.n, 0) / 4;
+    volumes.push({
+      volume,
+      running: true,
+      events_per_sec: Math.round(perSec * 10) / 10,
+      last_refresh: log.length > 0 ? log[log.length - 1].t : null,
+    });
+  }
+  return Promise.resolve({ running: volumes.length > 0, volumes });
+}
+
+// ── migrate_paths（假进度 + mock 台账）───────────────────────────────────
+// 契约：migrate 走假进度——copying → verifying → deleting → done 四相分段，
+// 每相 4 拍（250ms/拍），字节/文件数按相内进度线性插值；完成后把 action=migrate
+// 的台账条目追加进 mock undo 账本（listUndo 可见 → 操作记录页可演示「回迁」）。
+const MOCK_MIGRATE_TICK_MS = 250;
+const MOCK_MIGRATE_STEPS_PER_PHASE = 4;
+const MOCK_MIGRATE_BYTES = 96 * 1024 * 1024;
+const MOCK_MIGRATE_FILES = 120;
+const MIGRATE_PHASES: MigratePhase[] = ['copying', 'verifying', 'deleting', 'done'];
+
+/** mock undo 账本（浏览器模式 list_undo 的数据源；只进不出，封顶 500 条）。 */
+const mockUndoLedger: UndoEntry[] = [];
+
+export function listUndo(limit?: number): Promise<UndoEntry[]> {
+  return Promise.resolve(mockUndoLedger.slice(0, Math.max(0, limit ?? mockUndoLedger.length)));
+}
+
+function joinMockVolume(volume: string, name: string): string {
+  const sep = volume.endsWith('\\') || volume.endsWith('/') ? '' : '\\';
+  return `${volume}${sep}${name}`;
+}
+
+export function migratePaths(paths: string[], destVolume: string): Promise<UndoEntry[]> {
+  const src = paths[0] ?? '';
+  const baseName = src.split(/[\\/]/).filter(Boolean).pop() ?? 'dist';
+  const dst = joinMockVolume(destVolume, baseName);
+  return new Promise<UndoEntry[]>((resolve) => {
+    let tick = 0;
+    const timer = window.setInterval(() => {
+      const phaseIdx = Math.floor(tick / MOCK_MIGRATE_STEPS_PER_PHASE);
+      if (phaseIdx >= MIGRATE_PHASES.length) {
+        window.clearInterval(timer);
+        const entry: UndoEntry = {
+          timestamp: new Date().toISOString(),
+          action: 'migrate',
+          source: src,
+          destination: dst,
+          reason: `迁移到 ${destVolume}（mock 假进度，无真实 IO）`,
+          bytes: MOCK_MIGRATE_BYTES,
+        };
+        mockUndoLedger.unshift(entry);
+        if (mockUndoLedger.length > 500) mockUndoLedger.length = 500;
+        resolve([entry]);
+        return;
+      }
+      const frac = ((tick % MOCK_MIGRATE_STEPS_PER_PHASE) + 1) / MOCK_MIGRATE_STEPS_PER_PHASE;
+      const payload: MigrateProgressPayload = {
+        src,
+        dst,
+        bytes_done: Math.round(MOCK_MIGRATE_BYTES * frac),
+        bytes_total: MOCK_MIGRATE_BYTES,
+        files_done: Math.round(MOCK_MIGRATE_FILES * frac),
+        files_total: MOCK_MIGRATE_FILES,
+        phase: MIGRATE_PHASES[phaseIdx],
+      };
+      mockEmit('migrate://progress', payload);
+      tick++;
+    }, MOCK_MIGRATE_TICK_MS);
+  });
+}
+
+// ── cache_get_all / cache_set_all（localStorage mock）─────────────────────
+// 判定缓存的浏览器假实现：键 disksift.triage-cache，结构与 triage-cache.json
+// 一致（{version, entries}）。:1420 可注入 AI 判定（含 migrate）演示分诊/迁移 UI。
+
+const MOCK_TRIAGE_CACHE_KEY = 'disksift.triage-cache';
+
+export function cacheGetAll(): Promise<string> {
+  return Promise.resolve(localStorage.getItem(MOCK_TRIAGE_CACHE_KEY) ?? '{}');
+}
+
+export function cacheSetAll(json: string): Promise<void> {
+  // 写前校验与后端同纪律：非法 JSON 拒绝落盘
+  JSON.parse(json);
+  localStorage.setItem(MOCK_TRIAGE_CACHE_KEY, json);
+  return Promise.resolve();
+}
+
+// ── volume_info（假卷表：浏览器迁移目标盘选择器的「列卷+剩余空间」）────────
+// 只对盘符根给确定性假数据（C:/D:/E:），其余路径与真实命令一样返回 null。
+export function volumeInfo(path: string): Promise<{ total_bytes: number; used_bytes: number; free_bytes: number } | null> {
+  return Promise.resolve(volumeInfoSync(path));
+}
+
+function volumeInfoSync(path: string): { total_bytes: number; used_bytes: number; free_bytes: number } | null {
+  const m = /^([A-Za-z]):\\?$/.exec(path.trim());
+  if (!m) return null;
+  const letter = m[1].toUpperCase();
+  const specs: Record<string, [number, number]> = {
+    C: [512, 431],
+    D: [1024, 640],
+    E: [2048, 512],
+  };
+  const spec = specs[letter];
+  if (!spec) return null;
+  const total = spec[0] * GB;
+  const used = spec[1] * GB;
+  return { total_bytes: total, used_bytes: used, free_bytes: total - used };
+}
+
+// ── excludes_get / excludes_set / excludes_match（localStorage mock）───────
+// CONTRACT：excludes.json 结构 {"rules":[{id,type,value,enabled}]}，tmp+rename
+// 原子写。mock 用 localStorage 键 disksift.excludes，写侧先写 .tmp 键再改名，
+// 模拟原子语义；匹配器与后端 crates/excludes 同口径的前端简化版。
+
+const MOCK_EXCLUDES_KEY = 'disksift.excludes';
+const MOCK_EXCLUDES_TMP_KEY = 'disksift.excludes.tmp';
+
+function parseMockRules(raw: string | null): ExcludeRule[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const rules = (parsed as { rules?: unknown })?.rules;
+    if (!Array.isArray(rules)) return [];
+    return rules.filter(
+      (r): r is ExcludeRule =>
+        !!r && typeof r === 'object' &&
+        typeof (r as ExcludeRule).id === 'string' &&
+        typeof (r as ExcludeRule).value === 'string' &&
+        ['path', 'glob', 'ext'].includes((r as ExcludeRule).type) &&
+        typeof (r as ExcludeRule).enabled === 'boolean',
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function excludesGet(): Promise<ExcludesConfig> {
+  return Promise.resolve({ rules: parseMockRules(localStorage.getItem(MOCK_EXCLUDES_KEY)) });
+}
+
+export function excludesSet(rules: ExcludeRule[]): Promise<void> {
+  const text = JSON.stringify({ rules });
+  // tmp+rename 原子写语义的 localStorage 模拟：先落 .tmp 键，再覆盖正式键
+  localStorage.setItem(MOCK_EXCLUDES_TMP_KEY, text);
+  localStorage.setItem(MOCK_EXCLUDES_KEY, text);
+  localStorage.removeItem(MOCK_EXCLUDES_TMP_KEY);
+  return Promise.resolve();
+}
+
+/** excludes_match 假实现：localStorage 规则 + 前端同口径匹配器（src/excludes.ts）。 */
+export function excludesMatch(path: string): Promise<boolean> {
+  return excludesGet().then((cfg) => matchExcludeRules(cfg.rules, path));
 }

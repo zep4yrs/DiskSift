@@ -9,6 +9,9 @@ import type {
   CondaEnv,
   SteamInventory,
   WorkshopItem,
+  MonitorStatus,
+  ExcludeRule,
+  ExcludesConfig,
 } from './types';
 import { isTauri } from './env';
 import * as mocks from './mocks';
@@ -81,7 +84,7 @@ export const api = {
   volumeInfo: (path: string) =>
     isTauri
       ? invoke<{ total_bytes: number; used_bytes: number; free_bytes: number }>('volume_info', { path })
-      : Promise.resolve(null),
+      : mocks.volumeInfo(path),
 
   estimateSize: (path: string) =>
     isTauri ? invoke<number>('estimate_size', { path }) : Promise.resolve(0),
@@ -130,7 +133,7 @@ export const api = {
   listUndo: (limit?: number) =>
     isTauri
       ? invoke<UndoEntry[]>('list_undo', { limit: limit ?? null })
-      : Promise.resolve([] as UndoEntry[]),
+      : mocks.listUndo(limit),
 
   /** 还原一条隔离记录：destination 移回 source。源已存在/非隔离记录由后端 Err 阻断。 */
   restoreQuarantine: (entry: UndoEntry) =>
@@ -158,11 +161,11 @@ export const api = {
   // 静默 no-op（与 secureSet 同策略）。
 
   /** 读整个分诊判定缓存（JSON 文本）；文件不存在返回 "{}"。 */
-  cacheGetAll: () => (isTauri ? invoke<string>('cache_get_all') : Promise.resolve('{}')),
+  cacheGetAll: () => (isTauri ? invoke<string>('cache_get_all') : mocks.cacheGetAll()),
 
   /** 整体覆写分诊判定缓存；`json` 须为合法 JSON 文本（后端写前校验）。 */
   cacheSetAll: (json: string) =>
-    isTauri ? invoke<void>('cache_set_all', { json }) : Promise.resolve(),
+    isTauri ? invoke<void>('cache_set_all', { json }) : mocks.cacheSetAll(json),
 
   // ── 定时自动巡查（auto-patrol）：Task Scheduler 注册 + --auto 无头巡查 ──
   // 浏览器预览模式没有 Task Scheduler 语义：status 返回未注册，
@@ -209,6 +212,56 @@ export const api = {
   /** 导出 scaffold 的 TOML 文本（停用的也可导出）；id 不存在 reject。 */
   scaffoldExport: (id: string) =>
     isTauri ? invoke<string>('scaffold_export', { id }) : Promise.resolve(''),
+
+  // ── v26.1.4.0 契约命令（逐字对齐 Tauri 侧，不得改名）──────────────────
+  // monitor_start / monitor_stop / monitor_status / scan_cancel / migrate_paths；
+  // 事件 'usn://changes' · 'usn://state' · 'migrate://progress'（载荷镜像见
+  // types.ts，Rust 侧 crates/monitor/、crates/executor/src/move_engine.rs）。
+  // 浏览器 :1420 走 mocks：monitor 空变更定时器驱动、migrate 假进度、
+  // scan_cancel 静默 no-op（mock 扫描瞬时完成，无可取消对象）。
+
+  /** 开始对卷实时监控（USN Journal 只读轮询）。 */
+  monitorStart: (volume: string) =>
+    isTauri ? invoke<void>('monitor_start', { volume }) : mocks.monitorStart(volume),
+
+  /** 停止对卷的实时监控；未在监控时幂等成功。 */
+  monitorStop: (volume: string) =>
+    isTauri ? invoke<void>('monitor_stop', { volume }) : mocks.monitorStop(volume),
+
+  /** 监控状态：总开关 running + 各卷 events_per_sec / last_refresh 明细。 */
+  monitorStatus: () =>
+    isTauri ? invoke<MonitorStatus>('monitor_status') : mocks.monitorStatus(),
+
+  /** 取消进行中的扫描（含 MFT 直读路径）；保留部分结果，响应 ≤1s。 */
+  scanCancel: () => (isTauri ? invoke<void>('scan_cancel') : Promise.resolve()),
+
+  /** 迁移目录到目标盘（同卷 rename / 跨盘并行复制 + 校验 + 通过才删源）。
+   *  返回写进 undo.jsonl 的台账条目（action=migrate，双向 src/dst，可回迁）。 */
+  migratePaths: (paths: string[], destVolume: string) =>
+    isTauri
+      ? invoke<UndoEntry[]>('migrate_paths', { paths, destVolume })
+      : mocks.migratePaths(paths, destVolume),
+
+  /** 后端同款规则匹配器（crates/excludes）：对【已保存】的规则判一个路径是否被
+   *  排除。管理 UI 的预览工具用它保证与 scanner/分诊/USN filter 四处同一实现。 */
+  excludesMatch: (path: string) =>
+    isTauri
+      ? invoke<boolean>('excludes_match', { path })
+      : mocks.excludesMatch(path),
+
+  // ── 排除规则读写（Orch 拍板：走 Tauri 命令，tmp+rename 原子写后端实现）──
+  // excludes_get / excludes_set 后端已挂载（src-tauri lib.rs：serde 命令边界
+  // 校验 + %APPDATA%/DiskSift/excludes.json tmp+rename 原子写 + 写后立即失效
+  // excludes_cache；匹配同实现见 crates/excludes）。
+  // 浏览器 mock 走 localStorage（写侧先 .tmp 再改名，模拟 tmp+rename 语义）。
+
+  /** 读整份排除规则（excludes.json 不存在 = 空规则表）。 */
+  excludesGet: () =>
+    isTauri ? invoke<ExcludesConfig>('excludes_get') : mocks.excludesGet(),
+
+  /** 整体覆写排除规则；后端校验后 tmp+rename 原子写。 */
+  excludesSet: (rules: ExcludeRule[]) =>
+    isTauri ? invoke<void>('excludes_set', { rules }) : mocks.excludesSet(rules),
 };
 
 /** 巡查频率档位（auto_patrol.rs schedule_args 的四档）。 */

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, Trash2, Sparkles, Lock, AlertCircle } from 'lucide-react';
+import { ArrowRightLeft, ChevronDown, ChevronRight, Trash2, Sparkles, Lock, AlertCircle } from 'lucide-react';
 import type { Node } from '../types';
 import { triage, isNeverTouch, BUCKET_META, type Bucket, type Triaged } from '../triage';
 import { verdictToBucket, type VerdictEntry } from '../triage-cache';
+import { MigrateModal } from './MigrateModal';
 import { Icon } from './Icon';
 import { useStore } from '../store';
 import { formatBytes } from '../format';
@@ -85,6 +86,7 @@ export function TriageView({ root, thresholdBytes, onJumpToWalk, onSelect, verdi
             onJumpToWalk={onJumpToWalk}
             onSelect={onSelect}
             addReclaimed={addReclaimed}
+            verdicts={verdicts}
           />
         ))}
       </div>
@@ -100,7 +102,7 @@ export function TriageView({ root, thresholdBytes, onJumpToWalk, onSelect, verdi
 }
 
 function BucketSection({
-  bucket, items, totalBytes, expanded, onToggle, onJumpToWalk, onSelect, addReclaimed,
+  bucket, items, totalBytes, expanded, onToggle, onJumpToWalk, onSelect, addReclaimed, verdicts,
 }: {
   bucket: Bucket;
   items: Triaged[];
@@ -110,6 +112,8 @@ function BucketSection({
   onJumpToWalk: (it: Triaged) => void;
   onSelect: (p: string) => void;
   addReclaimed: (n: number) => void;
+  /** 合并判定索引（migrate 判定行在此渲染「迁移到…」动作；可能为 undefined=纯规则） */
+  verdicts?: Map<string, VerdictEntry>;
 }) {
   const meta = BUCKET_META[bucket];
   // 每桶专属 Lucide 图标 + 语义色（替代 emoji）。颜色统一取 BUCKET_META.tone
@@ -225,6 +229,7 @@ function BucketSection({
               key={it.node.path}
               item={it}
               bucket={bucket}
+              entry={verdicts?.get(it.node.path) ?? null}
               onJumpToWalk={onJumpToWalk}
               onSelect={onSelect}
             />
@@ -236,13 +241,17 @@ function BucketSection({
 }
 
 function BucketRow({
-  item, bucket, onJumpToWalk, onSelect,
+  item, bucket, entry, onJumpToWalk, onSelect,
 }: {
   item: Triaged;
   bucket: Bucket;
+  /** 合并判定（applyCache 后）：migrate 判定行给「迁移到…」（v26.1.4.0 §2.2） */
+  entry: VerdictEntry | null;
   onJumpToWalk: (it: Triaged) => void;
   onSelect: (p: string) => void;
 }) {
+  const [migrateOpen, setMigrateOpen] = useState(false);
+  const canMigrate = entry?.verdict === 'migrate' && !isNeverTouch(item.node.path);
   return (
     <div className="trow-item" onClick={() => onSelect(item.node.path)}>
       <div className="trow-main">
@@ -259,7 +268,20 @@ function BucketRow({
       </div>
       <div className="trow-size">{formatBytes(item.node.size)}</div>
       <div className="trow-action">
-        {bucket === 'system' || isNeverTouch(item.node.path) ? (
+        {canMigrate ? (
+          <>
+            <button
+              className="ghost"
+              title="选一个目标盘整体迁移（同盘改名瞬时 / 跨盘复制+校验，通过才删源）"
+              onClick={(e) => { e.stopPropagation(); setMigrateOpen(true); }}
+            >
+              <ArrowRightLeft size={12} /> 迁移到…
+            </button>
+            {migrateOpen && (
+              <MigrateModal paths={[item.node.path]} onClose={() => setMigrateOpen(false)} />
+            )}
+          </>
+        ) : bucket === 'system' || isNeverTouch(item.node.path) ? (
           // v26.1.2 高危修复：never-touch 目录即使因数据异常落进 unknown 桶，
           // 也不提供「让 AI 分析」（防御纵深；正常路径 classify 已把它判 system）。
           <Lock size={14} style={{ color: 'var(--fg-muted)' }} />

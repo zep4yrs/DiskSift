@@ -11,11 +11,13 @@
 use anyhow::{anyhow, Context};
 use ntfs::structured_values::{NtfsFileName, NtfsFileNamespace};
 use ntfs::{KnownNtfsFileRecordNumber, Ntfs, NtfsAttributeType, NtfsReadSeek};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::BufReader;
 use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use crate::{ExtShare, Node};
 
@@ -96,11 +98,17 @@ pub(super) fn volume_fs_check(volume_letter: char) -> super::VolumeFsDecision {
 ///
 /// `volume_letter` is e.g. `'C'`. `subroot` lets you ask only for a subtree
 /// of the volume (e.g. `D:\Foo`); when `None`, the whole volume is returned.
+/// `cancel`（v26.1.4.0 菜3）在记录循环每 256 条检查一次，命中即停止收集并
+/// 用已收集条目建部分树，返回 (node, cancelled=true)。`excludes`
+/// （v26.1.4.0 菜4）按完整路径标记被排除子树/文件（blocked 集），
+/// rollup 与建树一致跳过——卷上数字与可见树保持同口径。
 pub fn scan_volume<F>(
     volume_letter: char,
     subroot: Option<&Path>,
     mut on_progress: F,
-) -> anyhow::Result<Node>
+    cancel: Option<&Arc<AtomicBool>>,
+    excludes: &pinkbin_excludes::Excludes,
+) -> anyhow::Result<(Node, bool)>
 where
     F: FnMut(u64, u64), // (records_seen, bytes_seen)
 {
@@ -167,8 +175,17 @@ where
     // Pass 1: collect all entries by FRN.
     let mut entries: HashMap<u64, Entry> = HashMap::with_capacity(total_records as usize);
     let mut bytes_total: u64 = 0;
+    let mut was_cancelled = false;
+    let mut records_seen = total_records;
 
     for record_num in 0..total_records {
+        // 菜3：每 256 条检查取消令牌——命中即停止收集，后续用部分条目建树。
+        if record_num % 256 == 0 && super::cancelled_now(cancel) {
+            was_cancelled = true;
+            records_seen = record_num;
+            tracing::info!("MFT scan: cancelled at record {record_num}（返回部分结果）");
+            break;
+        }
         let f = match ntfs.file(&mut reader, record_num) {
             Ok(f) => f,
             Err(_) => continue,
@@ -261,7 +278,7 @@ where
             on_progress(record_num, bytes_total);
         }
     }
-    on_progress(total_records, bytes_total);
+    on_progress(records_seen, bytes_total);
 
     // Pass 2: link children to parents.
     let frns: Vec<u64> = entries.keys().copied().collect();
@@ -278,11 +295,41 @@ where
     let root_frn = KnownNtfsFileRecordNumber::RootDirectory as u64;
     let volume_root = format!("{}:\\", volume_letter.to_ascii_uppercase());
 
+    // 菜4：用户排除规则。自根向下 DFS 逐条目拼完整路径并匹配规则，命中的
+    // 目录整树（不下钻）、命中的文件单独进 blocked 集——rollup 与建树共用
+    // 同一集合，卷上 rollup 数字与可见树保持同口径。is_empty 时零开销跳过。
+    let mut blocked: HashSet<u64> = HashSet::new();
+    if !excludes.is_empty() {
+        let mut stack: Vec<(u64, PathBuf)> = vec![(root_frn, PathBuf::from(&volume_root))];
+        while let Some((frn, path)) = stack.pop() {
+            let Some(e) = entries.get(&frn) else { continue };
+            for &c in &e.children {
+                if c == frn {
+                    continue;
+                }
+                let Some(ce) = entries.get(&c) else { continue };
+                if ce.is_reparse_link {
+                    continue; // 本就剪枝的联接项
+                }
+                let cpath = path.join(&ce.name);
+                if excludes.matches(&cpath) {
+                    blocked.insert(c); // 目录：整树（不下钻）；文件：单条
+                } else if ce.is_dir {
+                    stack.push((c, cpath));
+                }
+            }
+        }
+        if !blocked.is_empty() {
+            tracing::info!("MFT scan: {} 个条目命中用户排除规则，已剪枝", blocked.len());
+        }
+    }
+
     // Compute roll-up sizes once via DFS.
     fn rollup(
         frn: u64,
         entries: &HashMap<u64, Entry>,
         sizes: &mut HashMap<u64, (u64, u64)>,
+        blocked: &HashSet<u64>,
     ) -> (u64, u64) {
         if let Some(c) = sizes.get(&frn) {
             return *c;
@@ -303,14 +350,16 @@ where
                     if let Some(centry) = entries.get(&c) {
                         // Same prune set as build_node below, so rolled-up
                         // totals always match what the visible tree shows.
+                        // （v26.1.4.0 菜4：用户排除 blocked 集加入同一剪枝面。）
                         if centry.is_reparse_link
+                            || blocked.contains(&c)
                             || (centry.is_dir
                                 && super::is_pruned_system_dir(std::ffi::OsStr::new(&centry.name)))
                         {
                             continue;
                         }
                     }
-                    let (b, n) = rollup(c, entries, sizes);
+                    let (b, n) = rollup(c, entries, sizes, blocked);
                     total_bytes = total_bytes.saturating_add(b);
                     total_files = total_files.saturating_add(n);
                 }
@@ -321,7 +370,7 @@ where
     }
 
     let mut sizes: HashMap<u64, (u64, u64)> = HashMap::new();
-    rollup(root_frn, &entries, &mut sizes);
+    rollup(root_frn, &entries, &mut sizes, &blocked);
 
     // Build the visible Node tree, optionally rooted at `subroot`.
     let start_frn = if let Some(sub) = subroot {
@@ -335,8 +384,8 @@ where
         PathBuf::from(&volume_root)
     };
 
-    let node = build_node(start_frn, &start_path, &entries, &sizes, 0);
-    Ok(node)
+    let node = build_node(start_frn, &start_path, &entries, &sizes, &blocked, 0);
+    Ok((node, was_cancelled))
 }
 
 fn find_frn_for_path(target: &Path, root_frn: u64, entries: &HashMap<u64, Entry>) -> Option<u64> {
@@ -367,6 +416,7 @@ fn build_node(
     path: &Path,
     entries: &HashMap<u64, Entry>,
     sizes: &HashMap<u64, (u64, u64)>,
+    blocked: &HashSet<u64>,
     depth: usize,
 ) -> Node {
     let entry = entries.get(&frn);
@@ -411,7 +461,9 @@ fn build_node(
             // child nodes — they must not surface as 0-byte empty dirs that the
             // frontend could select and act on. Mirrors the walker chain's
             // `file_type.is_symlink()` prune in scan_with_stats.
+            // （v26.1.4.0 菜4：用户排除 blocked 集同面剪枝。）
             if centry.is_reparse_link
+                || blocked.contains(cfrn)
                 || (centry.is_dir
                     && super::is_pruned_system_dir(std::ffi::OsStr::new(&centry.name)))
             {
@@ -429,7 +481,7 @@ fn build_node(
                 *ext_count.entry(ext).or_insert(0) += 1;
             }
 
-            let cnode = build_node(*cfrn, &cpath, entries, sizes, depth + 1);
+            let cnode = build_node(*cfrn, &cpath, entries, sizes, blocked, depth + 1);
             children_nodes.push(cnode);
         }
     }

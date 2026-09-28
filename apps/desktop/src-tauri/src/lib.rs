@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use include_dir::{include_dir, Dir};
@@ -10,7 +11,9 @@ use pinkbin_scaffold::{
     compile_all, detect_compiled, detect_for, expand_env, load_dir, parse_toml, CompiledScaffold,
     RecycleGranularity, Scaffold,
 };
-use pinkbin_scanner::{sample_paths, scan_with_stats, Node, ScanOptions, ScanStats};
+use pinkbin_scanner::{
+    sample_paths, scan_with_stats_cancellable, Node, ScanOptions, ScanStats,
+};
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -43,8 +46,40 @@ struct AppState {
     /// scaffold-config.json（脚本中心启停名单）是 read-modify-write，用它把
     /// set_enabled 的并发写串行化，避免丢条目（同 secure_io_lock 的理由）。
     scaffold_io_lock: Mutex<()>,
+    /// USN 实时监控的多卷任务集中管理（v26.1.4.0 菜1）。每卷一个 worker
+    /// 线程，状态经 monitor_status / usn://state 事件面输出。
+    monitor_hub: pinkbin_monitor::MonitorHub,
+    /// 当前扫描的取消令牌（v26.1.4.0 菜3）。scan_path 注册、结束时清除；
+    /// scan_cancel() 置位令牌，消费循环每 256 条检查一次。
+    scan_cancel: Mutex<Option<Arc<AtomicBool>>>,
+    /// 用户排除规则缓存（v26.1.4.0 菜4）：按文件 mtime 失效，避免 classify
+    /// 逐节点查询时反复读盘。
+    excludes_cache: Mutex<Option<(pinkbin_excludes::Excludes, Option<SystemTime>)>>,
 }
 
+/// 按文件 mtime 失效的用户排除规则缓存（%APPDATA%/DiskSift/excludes.json）。
+/// 文件缺失/坏 JSON 时得空集（引擎自身语义），缓存同样生效。
+fn current_excludes(state: &AppState) -> pinkbin_excludes::Excludes {
+    let mtime = pinkbin_excludes::Excludes::default_path().and_then(|p| {
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .ok()
+    });
+    let mut cache = state.excludes_cache.lock().unwrap();
+    if let Some((cached, cached_at)) = cache.as_ref() {
+        if cached_at == &mtime {
+            return cached.clone();
+        }
+    }
+    let fresh = pinkbin_excludes::Excludes::load_default();
+    *cache = Some((fresh.clone(), mtime));
+    fresh
+}
+
+/// scan_path 返回体保持既有契约（裸 Node）——独立复核修复：曾短暂改为
+/// {node, cancelled} 包装对象导致前端 api.ts invoke<Node>('scan_path') 拿到
+/// 包装体当 Node 用（运行时 TypeError）。取消标记（菜3）改经 `scan-stats`
+/// 事件的 cancelled 字段送达（本命令仍返回部分树，字段是增量、零破坏）。
 #[tauri::command]
 async fn scan_path(
     app: AppHandle,
@@ -60,18 +95,28 @@ async fn scan_path(
     // Mutex across thread boundaries. The compiled form is `Send` and used by
     // the post-scan walk to fill `Node.scaffold_id`.
     let compiled = compile_all(&state.scaffolds.lock().unwrap().clone());
+    // 用户排除规则（四处之一：扫描剪枝）随扫描快照载入。
+    let excludes = current_excludes(&state);
+    // 取消令牌（菜3）：注册进 AppState 供 scan_cancel() 置位，结束即清除。
+    let token = Arc::new(AtomicBool::new(false));
+    *state.scan_cancel.lock().unwrap() = Some(token.clone());
 
     let result = tokio::task::spawn_blocking(move || {
-        let scan_result = scan_with_stats(p, ScanOptions::default(), |progress| {
-            let _ = app_for_progress.emit(
-                "scan-progress",
-                ScanProgressEvent {
-                    files_seen: progress.files_seen,
-                    bytes_seen: progress.bytes_seen,
-                    current_path: progress.current_path.clone(),
-                },
-            );
-        });
+        let opts = ScanOptions {
+            excludes,
+            ..ScanOptions::default()
+        };
+        let scan_result =
+            scan_with_stats_cancellable(p, opts, |progress| {
+                let _ = app_for_progress.emit(
+                    "scan-progress",
+                    ScanProgressEvent {
+                        files_seen: progress.files_seen,
+                        bytes_seen: progress.bytes_seen,
+                        current_path: progress.current_path.clone(),
+                    },
+                );
+            }, Some(&token));
         // After the scan returns, walk the tree once to fill scaffold_id and
         // apply the depth-based breadth caps that the frontend's tagScaffolds
         // used to apply. Doing both here in one pass with pre-compiled
@@ -85,15 +130,19 @@ async fn scan_path(
     .await
     .map_err(|e| e.to_string())?;
 
+    // 扫描已出结果（无论取消与否），令牌使命完成。
+    *state.scan_cancel.lock().unwrap() = None;
+
     match result {
         Ok((node, stats, tag_ms)) => {
             let cmd_ms = cmd_t0.elapsed().as_millis() as u64;
             tracing::info!(
-                "scan_path: cmd_ms={} scanner_ms={} tag_ms={} overhead={}ms",
+                "scan_path: cmd_ms={} scanner_ms={} tag_ms={} overhead={}ms cancelled={}",
                 cmd_ms,
                 stats.total_ms,
                 tag_ms,
                 cmd_ms.saturating_sub(stats.total_ms).saturating_sub(tag_ms),
+                stats.cancelled,
             );
             let _ = app_for_stats.emit(
                 "scan-stats",
@@ -168,6 +217,8 @@ struct ScanStatsEvent {
     files_seen: u64,
     bytes_seen: u64,
     dirs_in_acc: u64,
+    /// v26.1.4.0 菜3：本次扫描是否被取消（部分结果）。
+    cancelled: bool,
 }
 
 impl From<(u64, u64, &ScanStats)> for ScanStatsEvent {
@@ -185,6 +236,7 @@ impl From<(u64, u64, &ScanStats)> for ScanStatsEvent {
             files_seen: s.files_seen,
             bytes_seen: s.bytes_seen,
             dirs_in_acc: s.dirs_in_acc,
+            cancelled: s.cancelled,
         }
     }
 }
@@ -1905,6 +1957,188 @@ fn set_advisor(
     Ok(())
 }
 
+// ── USN 实时监控（v26.1.4.0 菜1）───────────────────────────────────────────
+// CONTRACT 签名逐字一致，不得改名：
+//   monitor_start(volume: string) / monitor_stop(volume: string) /
+//   monitor_status() -> {running, volumes: [{volume, running, events_per_sec,
+//   last_refresh, reason}]}
+// 失败面纪律：监控侧任何失败（非 NTFS / 无管理员权限 / 线程异常）都不返回
+// Err 弹错误框——一律注册即降级，原因走 monitor_status 的 reason 字段与
+// `usn://state` 事件（crates/monitor 的 hub 实现这里只做转发）。
+
+/// 启动一个卷的 USN 实时监控。对已在监控的卷幂等；对非 NTFS / 无权限卷
+/// 立即降级（status 显示 running=false + reason），不报错弹窗。
+#[tauri::command]
+fn monitor_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    volume: String,
+) -> Result<(), String> {
+    state.monitor_hub.start(&volume, app);
+    Ok(())
+}
+
+/// 停止一个卷的监控。幂等（未知卷也发 `usn://state` running=false）；
+/// worker ≤50ms 内退出并关闭卷句柄，不阻塞卷卸载。
+#[tauri::command]
+fn monitor_stop(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    volume: String,
+) -> Result<(), String> {
+    state.monitor_hub.stop(&volume, &app);
+    Ok(())
+}
+
+/// CONTRACT 返回体：{running, volumes: [...]}。顶层 running = 任一卷在监控。
+#[tauri::command]
+fn monitor_status(state: State<'_, AppState>) -> pinkbin_monitor::MonitorStatus {
+    state.monitor_hub.status()
+}
+
+// ── 扫描取消（v26.1.4.0 菜3）───────────────────────────────────────────────
+// CONTRACT：scan_cancel()。置位当前扫描的取消令牌；消费循环每 256 条检查
+// 一次（MFT 路径同样可中断），取消响应远小于 1s。scan_path 结束时返回
+// { node: 部分树, cancelled: true }。无扫描在跑时幂等 Ok。
+
+#[tauri::command]
+fn scan_cancel(state: State<'_, AppState>) -> Result<(), String> {
+    if let Some(token) = state.scan_cancel.lock().unwrap().as_ref() {
+        token.store(true, std::sync::atomic::Ordering::Relaxed);
+        tracing::info!("scan_cancel: 已置位取消令牌");
+    }
+    Ok(())
+}
+
+// ── 迁移引擎命令面（v26.1.4.0 菜2）─────────────────────────────────────────
+// CONTRACT：migrate_paths(paths: string[], dest_volume: string)。
+// 同卷 rename 瞬时；跨盘 MoveEngine 并行复制 + SHA-256 校验 + 校验通过删源
+// + 失败回滚绝不删源。进度经 `migrate://progress` 事件推送，载荷
+// { src, dst, bytes_done, bytes_total, files_done, files_total, phase }，
+// phase ∈ copying | verifying | deleting | done | rolled_back。
+// 返回已迁移条目的 undo 台账（action=migrate 双向 src/dst，回迁 = 反向再迁）。
+
+/// CONTRACT `migrate://progress` 事件名。
+const EVENT_MIGRATE_PROGRESS: &str = "migrate://progress";
+
+#[tauri::command]
+async fn migrate_paths(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+    dest_volume: String,
+) -> Result<Vec<UndoEntry>, String> {
+    // dest_volume 归一（复用 monitor 的卷标识解析："D:" / "D:\\" / "d" 均可）。
+    // 独立复核修复（回迁落点）：也接受一个【已存在的目录】作为目标父目录
+    // ——回迁条目传 undo.source 的原父目录即可落回原路径，而非盘根拼 leaf。
+    let dest_root: PathBuf = match pinkbin_monitor::normalize_volume(&dest_volume) {
+        Some(spec) => PathBuf::from(spec.root_path),
+        None => {
+            let p = PathBuf::from(dest_volume.trim());
+            if p.is_dir() {
+                p
+            } else {
+                return Err(format!(
+                    "无法识别的目标卷/目录：{dest_volume:?}（需要形如 \"D:\" 的盘符卷，或一个已存在的目标目录）"
+                ));
+            }
+        }
+    };
+    let srcs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    let undo_log = state.undo_log.clone();
+
+    // NEVER_TOUCH 保护由 move_engine::move_paths 内置整单拦截；用户排除规则
+    // 在引擎内同样生效（只能收紧）。
+    let result = tokio::task::spawn_blocking(move || {
+        let app_for_progress = app;
+        pinkbin_executor::move_paths(
+            &srcs,
+            &dest_root,
+            "DiskSift 迁移",
+            false,
+            &undo_log,
+            None,
+            &mut |p| {
+                let _ = app_for_progress.emit(EVENT_MIGRATE_PROGRESS, &p);
+            },
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let outcome = result.map_err(|e| e.to_string())?;
+    if let Some(err) = &outcome.error {
+        // 失败：已完成项已在 undo 台账（可回迁），错误面带上原因。
+        return Err(format!("迁移失败：{err}"));
+    }
+    if outcome.cancelled {
+        return Err("迁移已取消（当前项已回滚，源文件完好）".into());
+    }
+    Ok(outcome.entries)
+}
+
+// ── 用户排除规则查询面（v26.1.4.0 菜4）─────────────────────────────────────
+// 分诊 classify 在前端（triage.ts）：后端把统一判定函数经此命令暴露给
+// classify 层（缓存按 excludes.json mtime 失效，逐节点查询不读盘）。
+
+#[tauri::command]
+fn excludes_match(state: State<'_, AppState>, path: String) -> bool {
+    current_excludes(&state).matches(Path::new(&path))
+}
+
+// ── 用户排除规则读写（v26.1.4.0 菜4；独立复核修复：设置页
+// ExcludeRulesSection 经 api.excludesGet/excludesSet 调用这两个命令，
+// 此前后端缺失导致桌面端无法创建/读取规则）────────────────────────────────
+// CONTRACT 结构 {"rules":[{id,type,value,enabled}]}，落
+// %APPDATA%/DiskSift/excludes.json；写入走与 secure.json / scaffold-config.json
+// 同款 tmp+rename 原子替换（写一半崩溃不留下截断配置）。写后失效
+// excludes_cache（mtime 兜底之外的双保险，同 tick mtime 分辨率边缘不漏）。
+
+/// 读整份排除规则。缺文件（首次使用）= 空规则表；坏 JSON 返回空表并 warn
+/// （与引擎 load 语义一致：配置损坏不挡主链路）。直接读盘（文件即事实源），
+/// 不走匹配缓存。
+#[tauri::command]
+fn excludes_get() -> pinkbin_excludes::ExcludesConfig {
+    let Some(path) = pinkbin_excludes::Excludes::default_path() else {
+        return Default::default();
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
+            tracing::warn!("excludes_get: {} 解析失败，按空规则表返回: {e}", path.display());
+            Default::default()
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
+        Err(e) => {
+            tracing::warn!("excludes_get: {} 读取失败，按空规则表返回: {e}", path.display());
+            Default::default()
+        }
+    }
+}
+
+/// 整体覆写排除规则。参数即 CONTRACT 结构的 rules 数组（serde 在命令边界
+/// 已校验 id/type/value/enabled 形状）；序列化失败（非法 type 等）报错不上盘。
+#[tauri::command]
+fn excludes_set(
+    state: State<'_, AppState>,
+    rules: Vec<pinkbin_excludes::ExcludeRule>,
+) -> Result<(), String> {
+    let cfg = pinkbin_excludes::ExcludesConfig { rules };
+    let text = serde_json::to_string(&cfg).map_err(|e| format!("excludes 序列化失败: {e}"))?;
+    let path = pinkbin_excludes::Excludes::default_path()
+        .ok_or_else(|| "排除规则存储仅支持 Windows（%APPDATA%）".to_string())?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| format!("excludes 路径异常：{}", path.display()))?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("excludes 目录创建失败: {e}"))?;
+    let tmp = dir.join("excludes.json.tmp");
+    std::fs::write(&tmp, text).map_err(|e| format!("excludes.json 写入失败: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("excludes.json 替换失败: {e}"))?;
+    // 缓存立即可见（不等下一次 mtime 轮询）。
+    *state.excludes_cache.lock().unwrap() = None;
+    tracing::info!("excludes_set: 已写入 {}（{} 条规则）", path.display(), cfg.rules.len());
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -1950,6 +2184,9 @@ pub fn run() {
                 secure_io_lock: Mutex::new(()),
                 cache_io_lock: Mutex::new(()),
                 scaffold_io_lock: Mutex::new(()),
+                monitor_hub: pinkbin_monitor::MonitorHub::new(),
+                scan_cancel: Mutex::new(None),
+                excludes_cache: Mutex::new(None),
             });
             Ok(())
         })
@@ -1984,6 +2221,14 @@ pub fn run() {
             scaffold_set_enabled,
             scaffold_import,
             scaffold_export,
+            monitor_start,
+            monitor_stop,
+            monitor_status,
+            scan_cancel,
+            migrate_paths,
+            excludes_match,
+            excludes_get,
+            excludes_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

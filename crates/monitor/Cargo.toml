@@ -1,0 +1,27 @@
+[package]
+name        = "pinkbin-monitor"
+version.workspace     = true
+edition.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+
+[dependencies]
+serde.workspace   = true
+tracing.workspace = true
+walkdir.workspace = true
+# v26.1.4.0 菜4：USN filter 是排除规则四处遵守点之一——用户规则命中的
+# 目录变更不再上报（可见面只收紧）。
+pinkbin-excludes  = { path = "../excludes" }
+# emit.rs 按 CONTRACT 推送 Tauri v2 事件（usn://changes / usn://state）。
+# 版本/特性与 apps/desktop/src-tauri 的 tauri 依赖一致，cargo 会统一编译。
+tauri = { version = "2", features = [] }
+
+[target.'cfg(windows)'.dependencies]
+# Win32_System_Ioctl：FSCTL_* / USN_REASON_* / USN_RECORD_V2 / READ_USN_JOURNAL_DATA_V1
+# 等 USN 常量与结构都在 System::Ioctl 命名空间（本仓库其它用法只开了
+# Win32_Storage_FileSystem 等，这里按需追加；workspace 依赖的 features 是并集）。
+windows-sys = { workspace = true, features = ["Win32_System_Ioctl"] }
+
+[dev-dependencies]
+tempfile.workspace   = true
+serde_json.workspace = true

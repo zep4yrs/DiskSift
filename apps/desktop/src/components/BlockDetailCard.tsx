@@ -9,6 +9,7 @@ import { useStore } from '../store';
 import { formatBytes, formatCount } from '../format';
 import { VERDICT_META, type Verdict, type VerdictEntry } from '../triage-cache';
 import { DraftScaffoldModal } from './DraftScaffoldModal';
+import { MigrateModal } from './MigrateModal';
 
 // 详情卡（triage-overlay-spec §2.0：单击块 → 选中 → 详情卡浮于地图角落，不遮挡）。
 // 动作闭环（spec §2 流程图 + §3 表 + §5）：
@@ -101,6 +102,10 @@ export function BlockDetailCard({
   const canDraft = entry?.verdict === 'safe' && node.is_dir && !node.scaffold_id && !recycleDone;
   const [draftOpen, setDraftOpen] = useState(false);
 
+  // ── [迁移到…]（v26.1.4.0 §2.2）：migrate 判定行内置化，目标盘选择 + 进度 ──
+  const canMigrate = entry?.verdict === 'migrate' && node.is_dir && !recycleDone;
+  const [migrateOpen, setMigrateOpen] = useState(false);
+
   return (
     <div className="block-detail-card" role="dialog" aria-label="目录详情卡">
       <div className="bdc-head">
@@ -166,6 +171,15 @@ export function BlockDetailCard({
             <FileCode size={13} /> 让 AI 起草脚本
           </button>
         )}
+        {canMigrate && (
+          <button
+            className="btn ghost bdc-migrate"
+            title="选一个目标盘整体迁移（同盘改名瞬时 / 跨盘复制+校验，通过才删源）"
+            onClick={() => setMigrateOpen(true)}
+          >
+            <ArrowRightLeft size={13} /> 迁移到…
+          </button>
+        )}
         {canIgnore && (
           <button
             className="btn ghost bdc-ignore"
@@ -187,6 +201,7 @@ export function BlockDetailCard({
         )}
       </div>
       {draftOpen && <DraftScaffoldModal node={node} onClose={() => setDraftOpen(false)} />}
+      {migrateOpen && <MigrateModal paths={[node.path]} onClose={() => setMigrateOpen(false)} />}
     </div>
   );
 }

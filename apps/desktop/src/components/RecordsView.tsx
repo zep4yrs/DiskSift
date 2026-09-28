@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { ArchiveRestore, History, RefreshCw, Trash2 } from 'lucide-react';
+import { ArchiveRestore, ArrowRightLeft, History, RefreshCw, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import { formatBytes } from '../format';
 import type { UndoEntry } from '../types';
@@ -27,13 +27,15 @@ const ACTION_LABEL: Record<UndoEntry['action'], string> = {
   recycle: '回收站',
   quarantine: '隔离',
   delete: '删除',
+  migrate: '迁移',
 };
 
-/** 语义徽标色：隔离=warn（可逆但已挪位），删除=danger（不可逆），回收站=info。 */
+/** 语义徽标色：隔离=warn（可逆但已挪位），删除=danger（不可逆），回收站/迁移=info。 */
 const ACTION_BADGE: Record<UndoEntry['action'], 'info' | 'warn' | 'danger'> = {
   recycle: 'info',
   quarantine: 'warn',
   delete: 'danger',
+  migrate: 'info',
 };
 
 /** 动作图标（撤销中心升级②）：一律 Lucide 提取组件，禁手绘；
@@ -42,6 +44,7 @@ const ACTION_ICON: Record<UndoEntry['action'], typeof RefreshCw> = {
   recycle: RefreshCw,
   quarantine: ArchiveRestore,
   delete: Trash2,
+  migrate: ArrowRightLeft,
 };
 
 // ── 按天分组（撤销中心升级①）：今天 / 昨天 / 近 7 天 / 更早 ─────────────
@@ -89,6 +92,14 @@ type Props = {
   /** Side Bar 时间筛选（spec §4）：只看最近 N 天；null/缺省 = 不限。 */
   sinceDays?: number | null;
 };
+
+/** 路径父目录（Windows 双向分隔符）；根级子项（C:\foo）返回盘根 "C:"，
+ *  再退无可退返回 null（canReverse 拦掉）。回迁目标父目录用。 */
+function parentDirOf(p: string): string | null {
+  const i = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'));
+  if (i < 0) return null;
+  return i > 3 ? p.slice(0, i) : `${p[0]}:`;
+}
 
 function fmtTime(ts: string): string {
   const d = new Date(ts);
@@ -171,6 +182,36 @@ export function RecordsView({ actionFilter = 'all', sinceDays = null }: Props = 
 
   const canRestore = (e: UndoEntry): boolean =>
     e.action === 'quarantine' && !!e.destination;
+
+  /** migrate 条目可「回迁」：destination 有值且源路径可解析出父目录（v26.1.4.0
+   *  §2.2，走 migrate_paths 反向）。探 bug 修复（落点）：后端已支持「已存在的
+   *  目录」作为目标父目录（lib.rs migrate_paths 注释：传 undo.source 的原父目录
+   *  即可落回原路径，而非盘根拼 leaf）——传原父目录，回迁后目录回到原位。 */
+  const canReverse = (e: UndoEntry): boolean =>
+    e.action === 'migrate' && !!e.destination && /^[A-Za-z]:/.test(e.source) && parentDirOf(e.source) !== null;
+
+  const onReverse = (e: UndoEntry, key: string) => {
+    if (key !== armedKey) {
+      // 两步确认第一步：进入预备态（armed 纪律与「还原」同款）
+      setArmedKey(key);
+      setNotice(null);
+      return;
+    }
+    const backDest = parentDirOf(e.source) as string;
+    setBusyKey(key);
+    api
+      .migratePaths([e.destination as string], backDest)
+      .then((entries) => {
+        setNotice(`已回迁：${entries[0]?.destination ?? e.source}`);
+        setError(null);
+      })
+      .catch((err) => setError(String(err)))
+      .finally(() => {
+        setBusyKey(null);
+        setArmedKey(null);
+        reload();
+      });
+  };
 
   // 侧栏筛选（spec §4：动作/时间）在已加载条目上做客户端过滤；
   // undo.jsonl 倒序返回，截取页之外的旧记录不参与过滤（页脚计数已标明）。
@@ -274,6 +315,20 @@ export function RecordsView({ actionFilter = 'all', sinceDays = null }: Props = 
                           >
                             <ArchiveRestore size={12} />
                             {busyKey === key ? '还原中…' : armed ? '确认还原' : '还原'}
+                          </button>
+                        ) : canReverse(e) ? (
+                          <button
+                            className={'btn small' + (armed ? ' armed' : '')}
+                            disabled={busyKey !== null}
+                            onClick={() => onReverse(e, key)}
+                            title={
+                              armed
+                                ? '再点一次确认回迁；点其他地方或按 Esc 取消'
+                                : `把 ${e.destination} 迁回原路径 ${e.source}（migrate_paths 反向）`
+                            }
+                          >
+                            <ArrowRightLeft size={12} />
+                            {busyKey === key ? '回迁中…' : armed ? '确认回迁' : '回迁'}
                           </button>
                         ) : e.action === 'recycle' ? (
                           <button

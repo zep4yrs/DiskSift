@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -84,6 +84,10 @@ pub struct ScanOptions {
     pub max_depth: Option<usize>,
     /// How many files to keep per directory in the returned tree. None = all (memory hog on large dirs).
     pub keep_files_per_dir: Option<usize>,
+    /// v26.1.4.0 菜4：用户排除规则（四处之一：build_tree 剪枝）。命中规则
+    /// 的目录整树从扫描中剪掉（大小/计数同步收紧），文件条目同样剔除。
+    /// Default = 空规则集（零行为差异）。
+    pub excludes: pinkbin_excludes::Excludes,
 }
 
 impl Default for ScanOptions {
@@ -92,6 +96,7 @@ impl Default for ScanOptions {
             follow_symlinks: false,
             max_depth: None,
             keep_files_per_dir: Some(500),
+            excludes: pinkbin_excludes::Excludes::empty(),
         }
     }
 }
@@ -118,6 +123,10 @@ pub struct ScanStats {
     pub files_seen: u64,
     pub bytes_seen: u64,
     pub dirs_in_acc: u64, // accs.len() — proxy for memory pressure (walkdir mode only)
+    /// v26.1.4.0 菜3：扫描被取消（返回的是部分结果）。serde default 兼容
+    /// 旧调用方/旧缓存里无此字段的历史结构。
+    #[serde(default)]
+    pub cancelled: bool,
 }
 
 pub fn scan<P: AsRef<Path>>(root: P) -> anyhow::Result<Node> {
@@ -138,6 +147,23 @@ pub fn scan_with_stats<P, F>(
     root: P,
     opts: ScanOptions,
     on_progress: F,
+) -> anyhow::Result<(Node, ScanStats)>
+where
+    P: AsRef<Path>,
+    F: Fn(&ScanProgress) + Send + Sync,
+{
+    scan_with_stats_cancellable(root, opts, on_progress, None)
+}
+
+/// v26.1.4.0 菜3：带取消令牌的扫描。`cancel` 每 256 个消费条目检查一次
+/// （walkdir 消费循环）——命中即停止收集并**返回部分结果**，`stats.cancelled
+/// = true` 标记；MFT 路径在记录循环同样可中断（见 mft::scan_volume）。
+/// 取消响应远小于 1s（256 条远小于任何 1s 批量）。
+pub fn scan_with_stats_cancellable<P, F>(
+    root: P,
+    opts: ScanOptions,
+    on_progress: F,
+    cancel: Option<&Arc<AtomicBool>>,
 ) -> anyhow::Result<(Node, ScanStats)>
 where
     P: AsRef<Path>,
@@ -188,13 +214,19 @@ where
                 // we always fall back to walkdir cleanly. AssertUnwindSafe is OK
                 // because we don't observe partial state on panic.
                 let mft_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    mft::scan_volume(letter, subroot, |records, bytes| {
-                        progress(&ScanProgress {
-                            files_seen: records,
-                            bytes_seen: bytes,
-                            current_path: format!("MFT record {}", records),
-                        });
-                    })
+                    mft::scan_volume(
+                        letter,
+                        subroot,
+                        |records, bytes| {
+                            progress(&ScanProgress {
+                                files_seen: records,
+                                bytes_seen: bytes,
+                                current_path: format!("MFT record {}", records),
+                            });
+                        },
+                        cancel,
+                        &opts.excludes,
+                    )
                 }))
                 .unwrap_or_else(|_| {
                     Err(anyhow::anyhow!(
@@ -202,24 +234,26 @@ where
                     ))
                 });
                 match mft_result {
-                    Ok(n) => {
+                    Ok((n, cancelled)) => {
                         stats.mft_ms = mft_t0.elapsed().as_millis() as u64;
                         stats.mft_succeeded = true;
                         stats.mode = "mft".into();
                         stats.files_seen = n.file_count;
                         stats.bytes_seen = n.size;
+                        stats.cancelled = cancelled;
                         stats.total_ms = total_t0.elapsed().as_millis() as u64;
                         tracing::info!(
-                            "scan: mode=mft mft_ms={} total_ms={} files={} bytes={}",
+                            "scan: mode=mft mft_ms={} total_ms={} files={} bytes={} cancelled={}",
                             stats.mft_ms,
                             stats.total_ms,
                             stats.files_seen,
                             stats.bytes_seen,
+                            stats.cancelled,
                         );
                         progress(&ScanProgress {
                             files_seen: n.file_count,
                             bytes_seen: n.size,
-                            current_path: "done (mft)".into(),
+                            current_path: if cancelled { "cancelled (mft)".into() } else { "done (mft)".into() },
                         });
                         return Ok((n, stats));
                     }
@@ -234,20 +268,21 @@ where
             }
         }
     }
-
     stats.mode = "walkdir".into();
     let files_seen = Arc::new(AtomicU64::new(0));
     let bytes_seen = Arc::new(AtomicU64::new(0));
     let last_emit = Arc::new(AtomicU64::new(0));
 
     // Phase 1: parallel walk, collect (path, size) pairs for every file.
+    // process_read_dir 闭包要求 'static：排除规则集克隆进闭包（廉价 Vec clone）。
+    let excludes = opts.excludes.clone();
     let mut walker = JWalk::new(&root)
         .skip_hidden(false)
         .follow_links(opts.follow_symlinks)
         .parallelism(jwalk::Parallelism::RayonDefaultPool {
             busy_timeout: std::time::Duration::from_secs(5),
         })
-        .process_read_dir(|_, _, _, children| {
+        .process_read_dir(move |_, _, _, children| {
             children.retain(|res| {
                 let Ok(entry) = res else { return true };
                 // BlueTidy 纪律（plan §2.4）：junction/symlink 目录项一律剪掉
@@ -260,6 +295,12 @@ where
                 // results_list 派生（jwalk-0.8.1 core/read_dir.rs:22-28），
                 // 被剪目录既不会被 yield 也不会被 read_dir。
                 if entry.file_type.is_symlink() {
+                    return false;
+                }
+                // v26.1.4.0 菜4：用户排除规则（四处之一）。目录整树剪
+                // （下钻集合从过滤后的 children 派生，天然不进入），文件条目
+                // 同步剔除——可见面只收紧不放松。is_empty 短路零开销。
+                if !excludes.is_empty() && excludes.matches(&entry.path()) {
                     return false;
                 }
                 if !entry.file_type.is_dir() {
@@ -282,7 +323,18 @@ where
     let mut child_dirs: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
     let walk_t0 = Instant::now();
 
-    for entry in walker.into_iter().flatten() {
+    // 消费循环：每 256 条检查取消令牌（菜3）——命中即停止收集，用已收集的
+    // accs/child_dirs 建部分树返回，stats.cancelled 标记。
+    let mut consumed: u64 = 0;
+    let mut entries_it = walker.into_iter().flatten();
+    loop {
+        if consumed.is_multiple_of(256) && cancelled_now(cancel) {
+            stats.cancelled = true;
+            tracing::info!("scan: 已取消于 {} 条（返回部分结果）", consumed);
+            break;
+        }
+        let Some(entry) = entries_it.next() else { break };
+        consumed += 1;
         if entry.file_type().is_dir() {
             // 根条目（depth 0）不记：它的 parent_path 在扫描根之外，记了
             // 也只是一条不会被查询的垃圾边；真边全部来自根内部的目录项。
@@ -382,7 +434,7 @@ where
     on_progress(&ScanProgress {
         files_seen: stats.files_seen,
         bytes_seen: stats.bytes_seen,
-        current_path: "done".into(),
+        current_path: if stats.cancelled { "cancelled".into() } else { "done".into() },
     });
 
     let build_t0 = Instant::now();
@@ -390,13 +442,19 @@ where
     stats.build_tree_ms = build_t0.elapsed().as_millis() as u64;
     stats.total_ms = total_t0.elapsed().as_millis() as u64;
     tracing::info!(
-        "scan: mode=walkdir walk_ms={} build_tree_ms={} total_ms={} dirs_in_acc={}",
+        "scan: mode=walkdir walk_ms={} build_tree_ms={} total_ms={} dirs_in_acc={} cancelled={}",
         stats.walk_ms,
         stats.build_tree_ms,
         stats.total_ms,
         stats.dirs_in_acc,
+        stats.cancelled,
     );
     Ok((tree, stats))
+}
+
+/// 取消令牌的读取 helper（None = 无令牌，恒 false）。
+fn cancelled_now(cancel: Option<&Arc<AtomicBool>>) -> bool {
+    cancel.map(|c| c.load(Ordering::Relaxed)).unwrap_or(false)
 }
 
 fn build_tree(
@@ -817,5 +875,101 @@ mod tests {
         assert_eq!(super::volume_fs_decision(None, Some(21)), D::Unknown);
         assert_eq!(super::volume_fs_decision(Some("   "), None), D::Unknown);
         assert_eq!(super::volume_fs_decision(None, None), D::Unknown);
+    }
+
+    // ── v26.1.4.0 菜4：扫描侧用户排除剪枝 ──
+
+    fn excl(rules: Vec<pinkbin_excludes::ExcludeRule>) -> pinkbin_excludes::Excludes {
+        use pinkbin_excludes::ExcludesConfig;
+        pinkbin_excludes::Excludes::from_config(&ExcludesConfig { rules })
+    }
+
+    fn rule(kind: pinkbin_excludes::RuleKind, value: &str) -> pinkbin_excludes::ExcludeRule {
+        pinkbin_excludes::ExcludeRule {
+            id: format!("{kind:?}-{value}"),
+            kind,
+            value: value.into(),
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn excludes_prune_dirs_and_files_from_scan_tree() {
+        let dir = tempdir_path();
+        let keep = dir.join("keep");
+        let excl_dir = dir.join("excl-dir");
+        fs::create_dir_all(&keep).unwrap();
+        fs::create_dir_all(&excl_dir).unwrap();
+        fs::write(keep.join("f1.txt"), b"aaa").unwrap();
+        fs::write(excl_dir.join("f2.txt"), b"bbbbbb").unwrap();
+        fs::write(dir.join("f3.log"), b"cccccccccc").unwrap();
+
+        // \\?\ verbatim 绕开 MFT 快路径（与既有 walker 链测试同手法）。
+        let scan_root = PathBuf::from(format!(r"\\?\{}", dir.display()));
+        let opts = ScanOptions {
+            excludes: excl(vec![
+                rule(pinkbin_excludes::RuleKind::Path, &excl_dir.to_string_lossy()),
+                rule(pinkbin_excludes::RuleKind::Ext, "log"),
+            ]),
+            ..ScanOptions::default()
+        };
+        let (node, stats) = scan_with_stats_cancellable(scan_root, opts, |_| {}, None).unwrap();
+
+        assert!(!stats.cancelled);
+        // excl-dir 整树剪掉；f3.log 被 ext 规则剔除；只剩 keep/f1.txt。
+        assert_eq!(node.file_count, 1, "只剩 keep/f1.txt：{}", node.file_count);
+        assert_eq!(node.size, 3);
+        assert!(
+            !node.children.iter().any(|c| c.name == "excl-dir"),
+            "被排除目录不得出现在树里"
+        );
+        assert!(
+            node.children.iter().any(|c| c.name == "keep"),
+            "未命中目录必须保留"
+        );
+        // 空规则集行为与 26.1.3.1 完全一致（默认参数零回归）。
+        let (node2, _) = scan_with_stats_cancellable(
+            PathBuf::from(format!(r"\\?\{}", dir.display())),
+            ScanOptions::default(),
+            |_| {},
+            None,
+        )
+        .unwrap();
+        assert_eq!(node2.file_count, 3);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── v26.1.4.0 菜3：扫描取消（部分结果 + cancelled 标记）──
+
+    #[test]
+    fn scan_cancel_returns_partial_tree_with_flag() {
+        let dir = tempdir_path();
+        let bulk = dir.join("bulk");
+        fs::create_dir_all(&bulk).unwrap();
+        for i in 0..2000 {
+            fs::write(bulk.join(format!("f{i:05}.bin")), vec![0u8; 8]).unwrap();
+        }
+        // verbatim 绕开 MFT 快路径，专测 walker 消费循环的 256 条检查点。
+        let scan_root = PathBuf::from(format!(r"\\?\{}", dir.display()));
+
+        // 预先取消：消费循环在第一个检查点（0 条处）即停，部分树 + 标记。
+        let token = Arc::new(AtomicBool::new(true));
+        let (node, stats) =
+            scan_with_stats_cancellable(&scan_root, ScanOptions::default(), |_| {}, Some(&token))
+                .unwrap();
+        assert!(stats.cancelled, "取消必须被标记");
+        assert!(node.is_dir);
+        assert!(
+            node.file_count < 2000,
+            "取消后应是部分结果：{}",
+            node.file_count
+        );
+
+        // 对照组：无令牌跑完 → 全量、无标记（既有能力零回退）。
+        let (node2, stats2) =
+            scan_with_stats_cancellable(&scan_root, ScanOptions::default(), |_| {}, None).unwrap();
+        assert!(!stats2.cancelled);
+        assert_eq!(node2.file_count, 2000);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

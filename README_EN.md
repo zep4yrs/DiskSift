@@ -11,7 +11,7 @@ Whole-drive scan in seconds · AI triage with color coding · script-based clean
 [![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB.svg)](https://tauri.app)
 [![Platform](https://img.shields.io/badge/Windows%2010%2F11-lightgrey.svg)](#quick-start)
-[![Release](https://img.shields.io/badge/Release-v26.1.3.1-005FB8.svg)](#quick-start)
+[![Release](https://img.shields.io/badge/Release-v26.1.4.0-005FB8.svg)](#quick-start)
 
 **Download** · [Screenshots](#screenshots) · [Relation to Pinkbin](#relation-to-pinkbin) · [Four things](#four-things) · [Security model](#security-model) · [Building from source](#building-from-source)
 
@@ -58,7 +58,7 @@ DiskSift does three things on top: **the frontend is rebuilt from scratch, AI ev
 | **Undo** | undo.jsonl | + day-grouped undo center · visual restore |
 | **Keys** | Plain-text localStorage | Windows **DPAPI encryption** |
 
-Versioning is its own lineage: `YY.breaking+1.feature+1.patch+1`, currently **v26.1.3.1** ([VERSIONING.md](VERSIONING.md)).
+Versioning is its own lineage: `YY.breaking+1.feature+1.patch+1`, currently **v26.1.4.0** ([VERSIONING.md](VERSIONING.md)).
 
 ---
 
@@ -126,9 +126,9 @@ Requires **Node 20+ · pnpm 9+ · Rust stable · Tauri prerequisites** (VS Build
 
 ## Roadmap
 
-- [ ] **v26.1.4.0** Real-time monitoring via USN Journal
+- [x] **v26.1.4.0** Real-time monitoring via USN Journal
 - [ ] **v26.1.5.0** Cross-platform installer matrix (after signing + real-machine verification)
-- [ ] One-click "migrate" to another drive
+- [x] **v26.1.4.0** One-click "migrate" to another drive (built-in MoveEngine: same-volume rename / cross-drive parallel copy + SHA-256 verification, superseding the old sister-product deep link)
 - [ ] macOS signing certificate
 
 ---

@@ -245,13 +245,16 @@ export function applyCache(index: VerdictIndex, root: Node, cache: Map<string, C
   return { verdicts, cleanableUnder: aggregateCleanable(root, verdicts) };
 }
 
-/** React 接线：扫描根/脚本库/阈值任一变化时重算（一次 O(目录数) DFS，memo 缓存）。 */
-export function useVerdicts(root: Node | null, thresholdBytes: number): VerdictIndex {
+/** React 接线：扫描根/脚本库/阈值任一变化时重算（一次 O(目录数) DFS，memo 缓存）。
+ *  bump（v26.1.4.0 §1.2）：实时监控的「跨桶阈值」信号——监控增量平时不重算
+ *  （root 引用不变，判定缓存也不失效），只有某目录体积跨过巡查阈值时 App 才
+ *  bump 一次，强制重跑规则层让该条落对桶（其余条目判定不变，缓存照常命中）。 */
+export function useVerdicts(root: Node | null, thresholdBytes: number, bump = 0): VerdictIndex {
   const scaffolds = useStore((s) => s.scaffolds);
   return useMemo(() => {
     if (!root) {
       return { verdicts: new Map<string, VerdictEntry>(), cleanableUnder: new Map<string, number>() };
     }
     return buildVerdicts(root, scaffolds, thresholdBytes);
-  }, [root, scaffolds, thresholdBytes]);
+  }, [root, scaffolds, thresholdBytes, bump]);
 }

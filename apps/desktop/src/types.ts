@@ -72,14 +72,16 @@ export interface AdvisorResponse {
 }
 
 export interface Plan {
-  action: 'recycle' | 'quarantine' | 'delete';
+  action: 'recycle' | 'quarantine' | 'delete' | 'migrate';
+  /** migrate 条目的双向记录：source=原路径，destination=迁移后路径（回迁用）。 */
   paths: string[];
   reason: string;
 }
 
 export interface UndoEntry {
   timestamp: string;
-  action: 'recycle' | 'quarantine' | 'delete';
+  action: 'recycle' | 'quarantine' | 'delete' | 'migrate';
+  /** migrate 条目的双向记录：source=原路径，destination=迁移后路径（回迁用）。 */
   source: string;
   destination?: string | null;
   reason: string;
@@ -157,4 +159,87 @@ export interface SteamInventory {
   steam_root: string | null;
   candidates_checked: string[];
   libraries: SteamLibrary[];
+}
+
+// ── v26.1.4.0 实时监控 / 迁移引擎（接口契约，逐字对齐 Tauri 命令与事件）──────
+// 命令：monitor_start / monitor_stop / monitor_status / scan_cancel / migrate_paths
+// 事件：'usn://changes' · 'usn://state' · 'migrate://progress'
+// 镜像位（Rust 侧）：crates/monitor/、crates/executor/src/move_engine.rs。
+
+/** 'usn://changes' 载荷里的单条聚合目录变更（aggregate 500ms 折叠产物）。
+ *  kind 取值域冻结（crates/monitor/src/emit.rs DirChange）：create|delete|rename|overwrite。 */
+export interface UsnChangeDir {
+  path: string;
+  size: number;
+  file_count: number;
+  kind: 'create' | 'delete' | 'rename' | 'overwrite';
+}
+
+/** 'usn://changes' 载荷：dirs 为受影响目录聚合，dropped 为自启动累计丢弃数。 */
+export interface UsnChangesPayload {
+  volume: string;
+  dirs: UsnChangeDir[];
+  dropped: number;
+}
+
+/** 'usn://state' 载荷：监控启停状态迁移。reason=null=正常态（启动成功/积压恢复）；
+ *  非空 = 降级/停止/积压的人类可读原因（如「非 NTFS 卷（exFAT），不支持实时监控」、
+ *  「变更积压超过 1000 个目录，已降级，建议重扫」）。 */
+export interface UsnStatePayload {
+  volume: string;
+  running: boolean;
+  reason: string | null;
+}
+
+/** migrate://progress 的 phase（copying → verifying → deleting → done；失败 rolled_back）。 */
+export type MigratePhase = 'copying' | 'verifying' | 'deleting' | 'done' | 'rolled_back';
+
+/** 'migrate://progress' 载荷：字节 + 文件数双进度。 */
+export interface MigrateProgressPayload {
+  src: string;
+  dst: string;
+  bytes_done: number;
+  bytes_total: number;
+  files_done: number;
+  files_total: number;
+  phase: MigratePhase;
+}
+
+/** monitor_status() 返回的单卷状态。last_refresh 为 Unix epoch 毫秒
+ *  （crates/monitor/src/lib.rs VolumeStatus，从未产出 = null）；reason 非 null =
+ *  该卷降级中（非 NTFS 等），running=false + reason 同现。 */
+export interface MonitorVolumeStatus {
+  volume: string;
+  running: boolean;
+  events_per_sec: number;
+  last_refresh: number | null;
+  /** 后端附加字段（CONTRACT 之外的可选项，降级原因），正常态为 null。 */
+  reason?: string | null;
+}
+
+/** monitor_status() 返回：总开关 + 各卷明细。 */
+export interface MonitorStatus {
+  running: boolean;
+  volumes: MonitorVolumeStatus[];
+}
+
+// ── v26.1.4.0 自定义排除规则（CONTRACT：excludes.json 逐字结构）──────────────
+// 文件：%APPDATA%/DiskSift/excludes.json，{"rules":[...]}，tmp+rename 原子写。
+// 前端读写走 Tauri 命令 excludes_get / excludes_set（后端已挂载，见 src-tauri
+// lib.rs），浏览器 mock 走 localStorage；规则匹配的同一实现另见 crates/excludes
+// （四处遵守的后端面）。
+
+export type ExcludeRuleType = 'path' | 'glob' | 'ext';
+
+/** CONTRACT 单条规则。字段名冻结：id / type / value / enabled。 */
+export interface ExcludeRule {
+  id: string;
+  type: ExcludeRuleType;
+  value: string;
+  enabled: boolean;
+}
+
+/** CONTRACT 配置根结构。字段名冻结：rules。 */
+export interface ExcludesConfig {
+  rules: ExcludeRule[];
 }

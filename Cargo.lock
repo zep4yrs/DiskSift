@@ -2490,7 +2490,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pinkbin-advisor"
-version = "26.1.3"
+version = "26.1.4"
 dependencies = [
  "anyhow",
  "reqwest 0.12.28",
@@ -2503,7 +2503,7 @@ dependencies = [
 
 [[package]]
 name = "pinkbin-desktop"
-version = "26.1.3"
+version = "26.1.4"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2511,7 +2511,9 @@ dependencies = [
  "include_dir",
  "jwalk",
  "pinkbin-advisor",
+ "pinkbin-excludes",
  "pinkbin-executor",
+ "pinkbin-monitor",
  "pinkbin-scaffold",
  "pinkbin-scanner",
  "pinkbin-steam-inspector",
@@ -2532,21 +2534,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "pinkbin-excludes"
+version = "26.1.4"
+dependencies = [
+ "globset",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "pinkbin-executor"
-version = "26.1.3"
+version = "26.1.4"
 dependencies = [
  "anyhow",
  "chrono",
+ "pinkbin-excludes",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
  "tracing",
  "trash",
+ "walkdir",
+]
+
+[[package]]
+name = "pinkbin-monitor"
+version = "26.1.4"
+dependencies = [
+ "pinkbin-excludes",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tempfile",
+ "tracing",
+ "walkdir",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "pinkbin-scaffold"
-version = "26.1.3"
+version = "26.1.4"
 dependencies = [
  "anyhow",
  "globset",
@@ -2559,7 +2589,7 @@ dependencies = [
 
 [[package]]
 name = "pinkbin-scaffold-lint"
-version = "26.1.3"
+version = "26.1.4"
 dependencies = [
  "anyhow",
  "pinkbin-scaffold",
@@ -2568,11 +2598,12 @@ dependencies = [
 
 [[package]]
 name = "pinkbin-scanner"
-version = "26.1.3"
+version = "26.1.4"
 dependencies = [
  "anyhow",
  "jwalk",
  "ntfs",
+ "pinkbin-excludes",
  "rayon",
  "serde",
  "thiserror 2.0.18",
@@ -2583,7 +2614,7 @@ dependencies = [
 
 [[package]]
 name = "pinkbin-steam-inspector"
-version = "26.1.3"
+version = "26.1.4"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",

@@ -13,3 +13,8 @@ thiserror.workspace  = true
 trash.workspace      = true
 chrono.workspace     = true
 tracing.workspace    = true
+walkdir.workspace    = true
+# MoveEngine 的 SHA-256 校验。workspace 声明的 sha2="0.11" 当前无任何 crate
+# 使用且本地缓存只有 0.10.9——直接钉 0.10（API：Sha256::new/update/finalize）。
+sha2                 = "0.10"
+pinkbin-excludes     = { path = "../excludes" }

@@ -380,7 +380,13 @@ fn patrol_once() -> Result<(usize, u64), String> {
         .map_err(|e| format!("triage-cache.json 解析失败: {e}"))?;
 
     let root = system_drive_root();
-    let (tree, _stats) = scan_with_stats(&root, ScanOptions::default(), |_| {})
+    // v26.1.4.0 菜4：无人值守巡查同样遵守用户排除规则——用户从可见面排除
+    // 的目录，自动化也不得清（看不见的不动）。
+    let scan_opts = ScanOptions {
+        excludes: pinkbin_excludes::Excludes::load_default(),
+        ..ScanOptions::default()
+    };
+    let (tree, _stats) = scan_with_stats(&root, scan_opts, |_| {})
         .map_err(|e| format!("{} 扫描失败: {e}", root.display()))?;
 
     let mut candidates: Vec<PathBuf> = Vec::new();

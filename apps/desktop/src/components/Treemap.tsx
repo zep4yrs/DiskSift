@@ -3,6 +3,7 @@ import { hierarchy, treemap, treemapSquarify } from 'd3-hierarchy';
 import type { Node } from '../types';
 import { formatBytes } from '../format';
 import { isFocusDimmed, VERDICT_META, type VerdictEntry } from '../triage-cache';
+import { useStore } from '../store';
 
 type Props = {
   node: Node;                       // 当前 treemap 根（可下钻后的子树）
@@ -58,6 +59,10 @@ function fit(s: string, maxW: number, fontSize: number): string {
 }
 
 export function Treemap({ node, width, height, onSelect, selectedPath, onOpen, verdicts, cleanableUnder, focusClean = false }: Props) {
+  // 实时监控（v26.1.4.0 §1.2）：monitorTick 入 layout 依赖——监控就地改写节点
+  // 数值后按新尺寸重排（treemap 布局必须反映增量）；dirtyPaths 驱动块角脏点。
+  const monitorTick = useStore((s) => s.monitorTick);
+  const dirtyPaths = useStore((s) => s.dirtyPaths);
   const layout = useMemo(() => {
     // 性能关键：先把树剪到 2 层再 hierarchy。否则 hierarchy 会遍历整棵扫描树
     // （几十万节点），每次尺寸变化全量重建 = 渲染后持续卡顿的根因。
@@ -96,7 +101,10 @@ export function Treemap({ node, width, height, onSelect, selectedPath, onOpen, v
       .paddingTop(16)(root)
       .descendants()
       .filter((n) => n.depth >= 1 && n.depth <= 2);
-  }, [node, width, height]);
+    // monitorTick 是「就地变更」重排信号（节点对象引用不变，deps 分析看不到数据流，
+    // 属有意保留——监控增量后必须按新尺寸重排）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [node, width, height, monitorTick]);
 
   return (
     <svg width={width} height={height} className="treemap">
@@ -132,6 +140,7 @@ export function Treemap({ node, width, height, onSelect, selectedPath, onOpen, v
         // 可清理目录的发现面（§2.1.1），压暗祖先链等于关掉发现路径；选中块淡显会
         // 连带吞掉选中描边，选中上下文优先。
         const dimmed = focusClean && isFocusDimmed(entry, cleanable) && !isSelected;
+        const dirty = dirtyPaths[d.data.path] !== undefined;
         return (
           <g
             key={d.data.path}
@@ -195,6 +204,13 @@ export function Treemap({ node, width, height, onSelect, selectedPath, onOpen, v
                   {pillLabel}
                 </text>
               </g>
+            )}
+            {/* 实时监控脏点：块左上角呼吸点（pkb-breath 同款动画），提示该目录
+                刚收到增量变更（数值已按扫描同口径重算） */}
+            {dirty && (
+              <circle className="tm-dirty-dot" cx={x + 4} cy={y + 4} r={2.8}>
+                <title>实时监控：此目录刚发生变更（数值已增量更新）</title>
+              </circle>
             )}
             {/* 父块标签：画在 16px 标题条内（paddingTop 保证子块不侵入）；挂徽标时右侧让位 */}
             {d.depth === 1 && w > 56 && (

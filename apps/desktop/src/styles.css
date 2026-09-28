@@ -306,6 +306,78 @@ code, .mono {
   white-space: nowrap;
 }
 .app-v2 .menus span:hover { background: var(--hover); }
+
+/* ── 顶带五菜单真下拉（26.1.4.0 §6，审计单 §2-2）：数据驱动 MenuBar ──────
+   旧 .menus span 死占位按「不精简」纪律原样保留（上方），新壳改用 .menu-root。
+   下拉面板 = 1px var(--border) + var(--shadow-1)，全部消费 §1 语义令牌。 */
+.app-v2 .menubar { flex-shrink: 0; }
+.app-v2 .menu-anchor { position: relative; }
+.app-v2 .menu-root {
+  border: none;
+  background: none;
+  font: inherit;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: default;
+  color: var(--fg);
+  white-space: nowrap;
+}
+.app-v2 .menu-root:hover,
+.app-v2 .menu-root.open { background: var(--hover); }
+.app-v2 .menu-pop {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 240px;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--editor);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+}
+.app-v2 .menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--fg);
+  cursor: pointer;
+  white-space: nowrap;
+}
+/* 项高亮：hover 与键盘焦点同底（键盘焦点另有全站 :focus-visible 2px --ring 描边） */
+.app-v2 .menu-item:hover:not(:disabled),
+.app-v2 .menu-item:focus:not(:disabled) { background: var(--hover); }
+.app-v2 .menu-item:disabled { color: var(--fg-inactive); cursor: default; }
+.app-v2 .menu-ico {
+  width: 15px;
+  display: inline-flex;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--fg-muted);
+}
+.app-v2 .menu-label { flex: 1 1 auto; }
+.app-v2 .menu-check {
+  width: 15px;
+  display: inline-flex;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.app-v2 .menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
 /* 区域三开关（panel-left / panel-bottom / panel-right）：选中 = editor 底浮起 shadow-1 */
 .app-v2 .rg {
   display: flex;
@@ -441,6 +513,10 @@ code, .mono {
   display: flex;
   flex-direction: column;
   background: var(--editor);
+  /* 探 bug 修复（工具行拥挤）：maincol 作 inline-size 查询容器，供下方
+     @container 阶梯在窄主列时按序让位（sz → 图例信息段）。maincol 宽度
+     由 flex 布局决定、不依赖内容，inline-size containment 无副作用。 */
+  container-type: inline-size;
 }
 
 /* tabbar 35px：IDE 式 tab——活动=editor 底 + 顶部 2px accent；非活动=chrome 灰 */
@@ -536,17 +612,36 @@ code, .mono {
   white-space: nowrap;
 }
 /* 2c-13：面包屑段弹性容器——flex:1+min-width:0 独吃行内富余，行内深路径
-   不再顶挤右侧工具簇；溢出时 overflow:hidden 配 justify-content:flex-end
-   从左侧裁浅层段、保最深段可见，完整路径由 App.tsx 挂在容器 title 上。
-   gap 补回原来由 .crumb 父级提供的段间距（段现在是本容器的子项）。 */
+   不再顶挤右侧工具簇；溢出时从左侧裁浅层段、保最深段可见，完整路径由
+   App.tsx 挂在容器 title 上。
+   探 bug 修复（工具行拥挤时整条面包屑左溢出逃逸被侧栏树行遮挡）：原
+   flex + justify-content:flex-end 在压缩到 0 宽时 start 侧溢出会逃出
+   overflow:hidden（Chrome flex 滚动溢出区域怪癖），落到主列左界之外。
+   改块容器 text-align:right：行盒锚右、左浅右深次序不变，inline 溢出
+   两侧都被 padding box 可靠裁剪；子项间距由相邻兄弟 margin 补回。 */
 .app-v2 .crumb .crumb-path {
   flex: 1;
-  min-width: 0;
+  /* 探 bug 修复：0 宽时整条面包屑消失（「裁浅层保最深段」名存实亡）。
+     min-width 保底 120px——⌂ 回根按钮 + 最深段 + 分隔的最小可读组合；
+     行内其余信息项按下方 @container 阶梯让位，任何宽度下不再挤压到 0。 */
+  min-width: 120px;
   overflow: hidden;
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 8px;
+  display: block;
+  text-align: right;
+  white-space: nowrap;
+}
+.app-v2 .crumb .crumb-path > * + * { margin-left: 8px; }
+
+/* 工具行让位阶梯（窄主列）：先隐 sz（根体积在状态栏本就有），再隐图例的
+   五个信息色段（.lg-item，功能性的「只看可清理」开关 .lg-btn 永远保留）。
+   阶梯预算（固定项 90 AI 按钮 + 24 间隙 + crumb-path 120 保底）：
+   >760 全量（sz 在，612 固定，crumb 仍有 ≥148）；≤760 隐 sz（固定 481）；
+   ≤680 再隐信息段（固定 344，主列最小 360 仍放下）。 */
+@container (max-width: 760px) {
+  .app-v2 .crumb .sz { display: none; }
+}
+@container (max-width: 680px) {
+  .app-v2 .triage-legend .lg-item { display: none; }
 }
 .app-v2 .crumb .sz { margin-left: auto; flex-shrink: 0; }
 .app-v2 .tbody { padding: 14px 18px; font-size: 13px; }
@@ -1900,6 +1995,18 @@ input:focus, select:focus {
   width: 480px; max-width: 92vw;
   display: grid; gap: var(--space-3);
   box-shadow: var(--shadow-lg);
+  /* 探 bug 修复（1280x800 溢出）：26.1.4.0 设置弹窗新增实时监控/排除规则两区后
+     总高 1266px，无 max-height/overflow 时底部「保存/关闭」落在视口外且无滚动途径。
+     max-height 留 32px 上下边距，内容超出即弹窗内滚动（modal-bg 是 fixed flex 无滚动）。 */
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+/* 弹窗头部吸顶：内容滚动时「关闭」按钮与标题始终可达 */
+.modal-head {
+  position: sticky;
+  top: calc(-1 * var(--space-5));
+  background: var(--card);
+  z-index: 1;
 }
 .modal-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -4506,3 +4613,113 @@ section.center > .tabs { padding: 0 10px; border-bottom: 1px solid var(--border)
 .seg-4 { grid-template-columns: repeat(4, 1fr); flex: 1; }
 .seg-4 .seg-opt { padding: var(--space-2) 4px; font-size: 10.5px; text-align: center; }
 .patrol-status { margin-top: 2px; }
+
+/* ─────────────────────────────────────────────────────────────────
+   §8 v26.1.4.0 增量：实时监控 / 排除规则 / 迁移 UI
+   （设置页两区 + MigrateModal + 树/图 dirty 标记；全部消费 §1 语义令牌）
+   ───────────────────────────────────────────────────────────────── */
+
+/* 监控区（Settings「实时监控」）：状态行随开关态着色 */
+.settings-section-head .patrol-state.on { color: var(--ok); }
+.monitor-volume-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px 0;
+  font-size: 12px;
+}
+.monitor-vol-letter { width: 28px; flex-shrink: 0; font-family: var(--font-mono); font-weight: var(--fw-strong); }
+.monitor-vol-meta { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 排除规则区（Settings「排除规则」） */
+.excludes-section { display: flex; flex-direction: column; gap: var(--space-2); }
+.excludes-add { display: flex; flex-direction: column; gap: var(--space-2); }
+.excludes-add-row { display: flex; gap: var(--space-2); }
+.excludes-add-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--editor);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.excludes-add-row input:focus-visible { outline: var(--ring-w) solid var(--ring); outline-offset: 1px; }
+.excludes-add-row .btn { flex-shrink: 0; }
+.excludes-type { max-width: 260px; }
+.excludes-preview {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--info);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--info) 8%, var(--card));
+  color: var(--fg);
+}
+.excludes-preview-list { color: var(--fg-muted); word-break: break-all; }
+.excludes-list { display: flex; flex-direction: column; }
+.excludes-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.excludes-row:last-child { border-bottom: none; }
+.excludes-value { flex: 1 1 auto; min-width: 0; }
+.excludes-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.excludes-toggle input { accent-color: var(--accent); cursor: pointer; }
+.excludes-del { flex-shrink: 0; color: var(--fg-muted); }
+.excludes-del:hover { color: var(--danger); }
+.excludes-empty { padding: var(--space-2) 0; }
+.excludes-save { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+
+/* 迁移弹层（MigrateModal）：目标盘选择 + 进度 */
+.migrate-modal { display: flex; flex-direction: column; gap: var(--space-2); min-width: 380px; max-width: 520px; }
+.migrate-volumes { display: flex; flex-direction: column; gap: 2px; }
+.migrate-volume {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--editor);
+  color: var(--fg);
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+}
+.migrate-volume:hover { background: var(--hover); }
+.migrate-vol-letter { font-weight: var(--fw-strong); width: 30px; flex-shrink: 0; }
+.migrate-vol-meta { flex: 1 1 auto; min-width: 0; color: var(--fg-muted); }
+.migrate-progress { display: flex; flex-direction: column; gap: var(--space-1); }
+
+/* 实时监控 dirty 标记（树行 + 空间图块）：呼吸绿点（复用 pkb-breath 关键帧） */
+.tree-dirty-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--ok);
+  flex-shrink: 0;
+  animation: pkb-breath 2.4s ease-in-out infinite;
+}
+.tm-dirty-dot {
+  fill: var(--ok);
+  animation: pkb-breath 2.4s ease-in-out infinite;
+}

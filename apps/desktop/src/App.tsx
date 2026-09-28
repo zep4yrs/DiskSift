@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
+import { readTextFile } from '@tauri-apps/plugin-fs';
+import { open as shellOpen } from '@tauri-apps/plugin-shell';
 import { listen } from '@tauri-apps/api/event';
+// Tauri v2：exit 收敛在 app 模块（等价旧 plugin-process 的 exit，走 plugin:app|exit）
+import { exit } from '@tauri-apps/api/app';
 import { api } from './api';
 import { isTauri } from './env';
 import { buildWalkQueue, useStore, type EditorTab, type TabKind, type WalkItem } from './store';
@@ -21,10 +25,13 @@ import { Splitter } from './components/Splitter';
 import { Logo } from './components/Logo';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Icon } from './components/Icon';
+import { MenuBar, type MenuDef } from './components/MenuBar';
 import { formatBytes } from './format';
 import { loadSettings, isConfigured, ensureApiKey } from './advisorClient';
 import { applyCache, parseCache, serializeCache, useVerdicts, type CachedVerdict } from './triage-cache';
 import { cacheHitFor, pickAiTriageTargets, runAiTriage, FREE_AI_PATHS } from './triage-ai';
+import { useMonitor } from './useMonitor';
+import type { MonitorDelta } from './store';
 
 // ═══ pinkbin · workbench v2（redesign-spec v2 §2 五区）══════════════════
 // titlebar 35（品牌+呼吸点 · 菜单占位 · 区域三开关 icon-only · 主题切换）
@@ -38,7 +45,14 @@ import { cacheHitFor, pickAiTriageTargets, runAiTriage, FREE_AI_PATHS } from './
 
 // 版本规则（2026-09-27 用户定）：年份后两位.破坏性+1.新功能+1.补丁+1
 // Cargo/tauri 只认三段 semver，第四位补丁段仅在用户可见处展示。
-const APP_VERSION = '26.1.3.1';
+const APP_VERSION = '26.1.4.0';
+
+// 帮助菜单 / 关于弹层的固定链接（26.1.4.0 真菜单 §6）。README 走仓库 README
+// 锚点：README.md 不随安装包分发（bundle resources 只有 scaffolds），本地路径
+// 在装好的应用里不存在，链接到线上 README 才是真可用动作。
+const REPO_URL = 'https://github.com/zep4yrs/DiskSift';
+const README_URL = 'https://github.com/zep4yrs/DiskSift#readme';
+const UPSTREAM_URL = 'https://github.com/cccyd2003-qwq/pinkbin';
 
 function isDriveRoot(p: string): boolean {
   // C: / C:\ / C:/  — anything beyond is a subfolder
@@ -62,6 +76,9 @@ interface ScanStatsEvent {
   files_seen: number;
   bytes_seen: number;
   dirs_in_acc: number;
+  /** v26.1.4.0 菜3：本次扫描是否被取消（部分结果）。后端经 scan-stats 事件送达
+   *  （lib.rs:79-83 注释：scan_path 返回体保持裸 Node 既有契约，取消标记走事件）。 */
+  cancelled?: boolean;
 }
 
 interface ScanDiag {
@@ -282,11 +299,16 @@ export default function App() {
     setOutLines((ls) => [...ls.slice(-199), { level, text }]);
 
   const [scanning, setScanning] = useState(false);
+  // 菜3（规格 §3）：取消后保留部分结果并 banner 标注；scanCancelBusy 防取消键连点
+  const [scanCancelled, setScanCancelled] = useState(false);
+  const [scanCancelBusy, setScanCancelBusy] = useState(false);
   const [scanProgress, setScanProgress] = useState<{ files: number; bytes: number; path: string } | null>(null);
   const [scanTotalBytes, setScanTotalBytes] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [pickedPath, setPickedPath] = useState<string>('');
   const [showSettings, setShowSettings] = useState(false);
+  // 帮助菜单「关于 DiskSift」弹层（26.1.4.0 真菜单 §6：版本 + GPL-3.0 + 上游链接）
+  const [showAbout, setShowAbout] = useState(false);
   const [advisorTag, setAdvisorTag] = useState<{ provider: string } | null>(null);
   const [diag, setDiag] = useState<ScanDiag | null>(null);
   // Holds the latest scan-stats event so we can merge it into ScanDiag once
@@ -400,8 +422,41 @@ export default function App() {
 
 
   const walkThresholdBytes = walkThresholdGB * 1024 ** 3;
+  // ── 实时监控（v26.1.4.0 §1.2）：事件订阅挂载 + 判定缓存维护 ─────────────
+  // 规格口径：判定缓存【不失效】——监控改了目录大小，AI 判定签名同步到新值继续
+  // 命中；只有体积【跨过巡查阈值桶】的条目才失效重算（规则层经 verdictBump 重跑，
+  // 下次 AI 分诊重问）。缓存批量写盘失败只警告，不阻塞监控流。
+  const [verdictBump, setVerdictBump] = useState(0);
+  const monitorBacklog = useStore((s) => s.monitorBacklog);
+  const onMonitorApplied = (deltas: MonitorDelta[]) => {
+    let crossed = false;
+    let cacheChanged = false;
+    const next = new Map(cacheRef.current);
+    for (const d of deltas) {
+      if (!d.changed) continue;
+      const c = next.get(d.path);
+      if (!c) continue;
+      const before = d.oldSize >= walkThresholdBytes;
+      const after = d.newSize >= walkThresholdBytes;
+      if (before !== after) {
+        next.delete(d.path); // 跨桶：缓存条目失效（该条重算）
+        crossed = true;
+        cacheChanged = true;
+      } else if (c.bytes !== d.newSize || c.fileCount !== d.newCount) {
+        next.set(d.path, { ...c, bytes: d.newSize, fileCount: d.newCount }); // 签名同步，判定保留
+        cacheChanged = true;
+      }
+    }
+    if (cacheChanged) {
+      cacheRef.current = next;
+      setCacheMap(next);
+      api.cacheSetAll(serializeCache(next)).catch(() => pushOut('warn', '判定缓存写盘失败（triage-cache.json）'));
+    }
+    if (crossed) setVerdictBump((b) => b + 1);
+  };
+  useMonitor({ onApplied: onMonitorApplied });
   // ── 分诊图层 O1（triage-overlay-spec §3）：规则染色（scaffold + NEVER_TOUCH + 阈值）──
-  const ruleVerdicts = useVerdicts(root, walkThresholdBytes);
+  const ruleVerdicts = useVerdicts(root, walkThresholdBytes, verdictBump);
   // ── O2：判定缓存（triage-cache.json，api.cacheGetAll/ SetAll；§7 决策 1）──
   // cacheMap = 持久化缓存的单一副本（启动恢复 + 批量判定 + 忽略反馈都写这里）；
   // cacheRef 供异步批量循环读现值（App 既有 navRef 同款渲染期同步模式）。
@@ -529,9 +584,72 @@ export default function App() {
     if (typeof picked === 'string') setPickedPath(picked);
   };
 
+  // ── 真菜单（26.1.4.0 §6）动作 ────────────────────────────────────────
+  // 外链：桌面走 shell 插件（shell:default 允许 https），浏览器 window.open。
+  // 两个模式都是真动作——菜单里 GitHub/README 灰显只针对「浏览器模式没有
+  // shell 通道」的菜单项语义，弹层内的链接按钮两模式均可用。
+  const openExternal = async (url: string) => {
+    if (isTauri) {
+      try {
+        await shellOpen(url);
+      } catch (e) {
+        pushOut('error', `打开链接失败：${String(e)}`);
+      }
+    } else {
+      window.open(url, '_blank', 'noopener');
+    }
+  };
+
+  // 导入 TOML 脚本（文件菜单复用脚本中心同一条后端通道 api.scaffoldImport；
+  // Studio.importScaffold 原样保留，两处反馈渠道不同：这里走底面板输出）。
+  // 浏览器 mock：原生 input[type=file] 选本地 .toml 读文本，导入仍走
+  // api.scaffoldImport → mocks（返回空 id 不落盘），:1420 五菜单动作可用。
+  const importScaffoldToml = async () => {
+    try {
+      let toml: string;
+      if (isTauri) {
+        const picked = await open({
+          multiple: false,
+          filters: [{ name: 'TOML', extensions: ['toml'] }],
+        });
+        if (typeof picked !== 'string') return;
+        toml = await readTextFile(picked);
+      } else {
+        const picked = await new Promise<File | null>((resolve) => {
+          const inp = document.createElement('input');
+          inp.type = 'file';
+          inp.accept = '.toml';
+          inp.onchange = () => resolve(inp.files?.[0] ?? null);
+          inp.oncancel = () => resolve(null);
+          inp.click();
+        });
+        if (!picked) return;
+        toml = await picked.text();
+      }
+      const id = await api.scaffoldImport(toml);
+      const st = useStore.getState();
+      const list = await api.listScaffolds().catch(() => st.scaffolds);
+      st.setScaffolds(list);
+      const imported = list.find((s) => s.id === id);
+      if (imported) {
+        // 导入同名 id 把它从停用名单摘出（与 Studio.importScaffold 同口径）
+        st.setDisabledScaffolds(st.disabledScaffolds.filter((d) => d.id !== id));
+        pushOut('info', `已导入「${imported.name}」（${id}）`);
+      } else if (id) {
+        // 导入同名 id 但它躺在后端停用名单里：scaffold_import 不动名单，如实提示
+        pushOut('warn', `已导入 ${id}，但它在停用名单里——在脚本库「已停用」区启用后才会显示`);
+      } else {
+        pushOut('info', '浏览器预览模式：导入已模拟（mock 层不落盘）');
+      }
+    } catch (e) {
+      pushOut('error', `导入失败：${String(e)}`);
+    }
+  };
+
   const scan = async () => {
     if (!pickedPath) return;
     setErr(null); setScanning(true); setScanProgress(null); setScanTotalBytes(null); setDiag(null);
+    setScanCancelled(false);
     lastBackendStats.current = null;
     pushOut('info', `开始扫描 ${pickedPath}`);
     // spec §2：扫描时自动展开底面板显示进度
@@ -578,10 +696,20 @@ export default function App() {
         totalMs,
       };
       setDiag(next);
-      pushOut(
-        'info',
-        `扫描完成 · mode=${backend?.mode ?? 'n/a'} · ${node.file_count.toLocaleString()} 文件 · ${formatBytes(node.size)} · 总耗时 ${fmtMs(totalMs)}`,
-      );
+      // 菜3：stats 事件 cancelled=true = 用户取消，root 已是后端返回的部分树
+      const cancelled = backend?.cancelled === true;
+      setScanCancelled(cancelled);
+      if (cancelled) {
+        pushOut(
+          'warn',
+          `扫描已取消 · 部分结果：${node.file_count.toLocaleString()} 文件 · ${formatBytes(node.size)}（分诊/巡查对部分结果正常工作）`,
+        );
+      } else {
+        pushOut(
+          'info',
+          `扫描完成 · mode=${backend?.mode ?? 'n/a'} · ${node.file_count.toLocaleString()} 文件 · ${formatBytes(node.size)} · 总耗时 ${fmtMs(totalMs)}`,
+        );
+      }
       // eslint-disable-next-line no-console
       console.log('[pinkbin.diag]', {
         backend,
@@ -886,6 +1014,7 @@ export default function App() {
             verdicts={verdicts.verdicts}
             cleanableUnder={verdicts.cleanableUnder}
             focusClean={focusClean}
+            zoom={FS_ZOOM[fsTier] ?? 1}
           />
         ) : (
           <div className="side-info">
@@ -983,6 +1112,129 @@ export default function App() {
     }
   };
 
+  // ── 顶带五菜单（26.1.4.0 真菜单 §6，审计单 §2-2）：一份 MENU 定义数组渲染 ──
+  // 每项 run 复用既有动作（入口页选择/脚本中心导入/主题字号区域开关/扫描/诊断），
+  // 灰项一律 disabled + disabledReason（title 说明），禁假可用。
+  const MENUS: MenuDef[] = [
+    {
+      id: 'file',
+      label: '文件',
+      items: [
+        { id: 'file-pick', label: '选择磁盘或文件夹…', icon: 'folder-open', run: () => void pickDirectory() },
+        { id: 'file-import', label: '导入 TOML 脚本…', icon: 'file-json-2', run: () => void importScaffoldToml() },
+        { kind: 'separator' },
+        {
+          id: 'file-exit',
+          label: '退出',
+          disabled: !isTauri,
+          disabledReason: '浏览器预览模式没有应用生命周期——退出仅桌面应用可用',
+          run: () => {
+            exit(0).catch((e) => pushOut('error', `退出失败：${String(e)}`));
+          },
+        },
+      ],
+    },
+    {
+      // 编辑：复用树右键已有的两条真实能力（复制路径 / 资源管理器显示），
+      // 需先有选中项；浏览器模式无 shell 通道，「显示」照实灰显。
+      id: 'edit',
+      label: '编辑',
+      items: [
+        {
+          id: 'edit-copy',
+          label: '复制选中路径',
+          disabled: !selectedPath,
+          disabledReason: '先在资源管理器（树/图）里选中一项',
+          run: () => { if (selectedPath) void navigator.clipboard?.writeText(selectedPath).catch(() => { /* ignore */ }); },
+        },
+        {
+          id: 'edit-reveal',
+          label: '在文件管理器中显示',
+          disabled: !selectedPath || !isTauri,
+          disabledReason: !selectedPath
+            ? '先在资源管理器（树/图）里选中一项'
+            : '浏览器预览模式没有系统 shell 通道——仅桌面应用可用',
+          run: () => { if (selectedPath) api.revealInExplorer(selectedPath).catch(() => { /* ignore */ }); },
+        },
+      ],
+    },
+    {
+      id: 'view',
+      label: '查看',
+      items: [
+        {
+          id: 'view-theme',
+          label: theme === 'dark' ? '切换到浅色主题' : '切换到深色主题',
+          icon: theme === 'dark' ? 'sun' : 'moon',
+          run: () => setTheme((t) => (t === 'dark' ? 'light' : 'dark')),
+        },
+        {
+          id: 'view-fs',
+          label: `字号档位循环（当前 A·${fsTier}）`,
+          run: cycleFsTier,
+        },
+        { kind: 'separator' },
+        { id: 'view-sidebar', label: '侧栏', icon: 'panel-left', checked: regions.sidebar, run: () => toggleRegion('sidebar') },
+        { id: 'view-bottom', label: '底面板', icon: 'panel-bottom', checked: regions.bottom, run: () => toggleRegion('bottom') },
+        { id: 'view-ai', label: 'AI 面板', icon: 'panel-right', checked: regions.ai, run: () => toggleRegion('ai') },
+      ],
+    },
+    {
+      id: 'scan',
+      label: '扫描',
+      items: [
+        {
+          id: 'scan-start',
+          label: '开始扫描',
+          icon: 'scan-line',
+          disabled: !pickedPath || scanning,
+          disabledReason: !pickedPath ? '先选择磁盘或文件夹' : '扫描进行中，先取消或等待完成',
+          run: () => void scan(),
+        },
+        {
+          id: 'scan-rescan',
+          label: '重新扫描',
+          icon: 'refresh-cw',
+          disabled: !pickedPath || scanning,
+          disabledReason: !pickedPath ? '先选择磁盘或文件夹' : '扫描进行中，先取消或等待完成',
+          run: () => void scan(),
+        },
+        {
+          // 扫描诊断 = 底面板「诊断」tab（扫描各阶段耗时拆解）；展开底面板并跳过去
+          id: 'scan-diag',
+          label: '打开扫描诊断',
+          icon: 'activity',
+          run: () => {
+            setRegions((r) => (r.bottom ? r : { ...r, bottom: true }));
+            setBpTab('diag');
+          },
+        },
+      ],
+    },
+    {
+      id: 'help',
+      label: '帮助',
+      items: [
+        { id: 'help-about', label: '关于 DiskSift', icon: 'circle-help', run: () => setShowAbout(true) },
+        {
+          id: 'help-readme',
+          label: '打开 README',
+          icon: 'file-text',
+          disabled: !isTauri,
+          disabledReason: '浏览器预览模式没有系统 shell 通道——仅桌面应用可用',
+          run: () => void openExternal(README_URL),
+        },
+        {
+          id: 'help-github',
+          label: 'GitHub 仓库',
+          disabled: !isTauri,
+          disabledReason: '浏览器预览模式没有系统 shell 通道——仅桌面应用可用',
+          run: () => void openExternal(REPO_URL),
+        },
+      ],
+    },
+  ];
+
   return (
     <div className="app-v2">
       {/* ── 顶带 35px ── */}
@@ -992,9 +1244,8 @@ export default function App() {
           <span className="dot" />
           DiskSift
         </span>
-        <nav className="menus" aria-label="菜单占位">
-          <span>文件</span><span>编辑</span><span>查看</span><span>扫描</span><span>帮助</span>
-        </nav>
+        {/* 26.1.4.0 真菜单（审计单 §2-2）：五个死 span 换成数据驱动下拉（MenuBar） */}
+        <MenuBar menus={MENUS} />
         <div className="grow" />
         <div className="rg" role="group" aria-label="区域开关">
           <button
@@ -1077,6 +1328,16 @@ export default function App() {
 
         <section className="maincol">
           {err && <div className="banner error" style={{ flexShrink: 0 }}>{err}</div>}
+          {monitorBacklog && (
+            <div className="banner preview" style={{ flexShrink: 0 }} role="status">
+              实时监控变更积压过大已降级（超过 1000 目录）— 建议重新扫描以获得准确数据。
+            </div>
+          )}
+          {scanCancelled && (
+            <div className="banner preview" style={{ flexShrink: 0 }} role="status">
+              已取消 · 部分结果 — 当前数据可能不完整（分诊/巡查照常可用）；重新扫描可获取完整数据。
+            </div>
+          )}
           <div className="tabbar" role="tablist" aria-label="编辑器标签页">
             <button className="tb-btn" onClick={goEntry} title="回入口页" aria-label="回入口页">
               <Icon name="home" size={14} />
@@ -1152,6 +1413,25 @@ export default function App() {
                               ? `${scanProgress.files.toLocaleString()} 个文件 · ${formatBytes(scanTotalBytes ? Math.min(scanProgress.bytes, scanTotalBytes) : scanProgress.bytes)}${scanTotalBytes ? ` / ${formatBytes(scanTotalBytes)}` : ''}`
                               : '准备扫描…'}
                           </div>
+                          {/* 菜3（规格 §3）：进度态「取消」——置位后端取消令牌（≤1s 响应），
+                              scan_path 返回部分树 + stats.cancelled=true → 顶部部分结果 banner。
+                              浏览器 mock 扫描瞬时完成且无取消语义：灰显 + title 说明（禁假可用）。 */}
+                          <button
+                            className="btn ghost small scan-cancel"
+                            disabled={!isTauri || scanCancelBusy}
+                            title={!isTauri
+                              ? '浏览器预览模式的 mock 扫描瞬时完成，没有可取消的对象'
+                              : scanCancelBusy ? '已请求取消，等待扫描返回…' : '请求取消本次扫描（保留部分结果）'}
+                            onClick={() => {
+                              setScanCancelBusy(true);
+                              api.scanCancel()
+                                .then(() => pushOut('info', '已请求取消扫描…'))
+                                .catch((e) => pushOut('error', `取消失败：${String(e)}`))
+                                .finally(() => setScanCancelBusy(false));
+                            }}
+                          >
+                            {scanCancelBusy ? '取消中…' : '取消'}
+                          </button>
                         </div>
                       )}
                       {outLines.map((l, i) => (
@@ -1270,6 +1550,31 @@ export default function App() {
           onClose={() => { setShowSettings(false); setSettingsPrefill(null); refreshAdvisorTag(); }}
           prefill={settingsPrefill}
         />
+      )}
+
+      {/* 关于 DiskSift（26.1.4.0 真菜单 §6 帮助）：版本 + GPL-3.0 + 上游链接。
+          链接按钮走 openExternal（桌面 shell / 浏览器 window.open，两模式真可用） */}
+      {showAbout && (
+        <div className="modal-bg" onClick={() => setShowAbout(false)}>
+          <div className="card about-modal" onClick={(e) => e.stopPropagation()}>
+            <span className="sec-title">关于 DiskSift</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '10px 0 4px' }}>
+              <Logo size={20} />
+              <b>DiskSift</b>
+              <span className="mono">v{APP_VERSION}</span>
+            </div>
+            <p className="muted">
+              磁盘空间分析 + 分诊巡查清理工具（Windows）。
+              以 <b>GPL-3.0-or-later</b> 协议发行；基于
+              上游 Pinkbin（MIT）的二次发行版，安全架构与最初实现继承自它。
+            </p>
+            <div className="overview-actions">
+              <button className="btn" onClick={() => void openExternal(REPO_URL)}>GitHub 仓库</button>
+              <button className="btn" onClick={() => void openExternal(UPSTREAM_URL)}>上游 Pinkbin（MIT）</button>
+              <button className="btn ghost" onClick={() => setShowAbout(false)}>关闭</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

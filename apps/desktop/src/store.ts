@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import type { Node, Scaffold, AdvisorResponse } from './types';
+import type { Node, MonitorVolumeStatus, Scaffold, AdvisorResponse, UsnChangeDir } from './types';
+import { api } from './api';
 import { collectDirs, isNeverTouch } from './triage';
 
 export interface WalkItem {
@@ -103,6 +104,26 @@ function persistTabs(openTabs: EditorTab[], activeTabId: string | null) {
   }
 }
 
+/** 单条增量应用结果（App 判定缓存维护的输入）：changed=false = 路径不在扫描树。 */
+export interface MonitorDelta {
+  path: string;
+  oldSize: number;
+  newSize: number;
+  oldCount: number;
+  newCount: number;
+  changed: boolean;
+}
+
+/** path → node 就地查找（监控增量 ≤ 每事件几条，线性 DFS 足够）。 */
+function findNodeMut(root: Node, path: string): Node | null {
+  if (root.path === path) return root;
+  for (const c of root.children) {
+    const hit = findNodeMut(c, path);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 interface AppState {
   // ── 编辑器 tab 床（spec §3）──
   openTabs: EditorTab[];
@@ -131,6 +152,31 @@ interface AppState {
   quarantinedCount: number;
   chat: ChatSession;
   studioRequest: { scaffoldId: string; ts: number } | null;
+
+  // ── 实时监控（v26.1.4.0 §1.2：useMonitor 写这里，Settings/App/视图读这里）──
+  /** monitor_status() 最近一次快照（每卷 events_per_sec / last_refresh / reason） */
+  monitorVolumes: MonitorVolumeStatus[];
+  /** 最近一次 usn://state 的降级原因；null = 正常态（对齐后端 reason 语义） */
+  monitorReason: string | null;
+  /** 积压降级（后端 reason 含「建议重扫」）→ App 出提示条 */
+  monitorBacklog: boolean;
+  /** 本会话累计收到的变更条数（状态行「监控中 · N 变更/秒」的计数面） */
+  monitorTotalChanges: number;
+  /** 每次增量更新 +1：树/图/分诊订阅它触发重渲染（节点是就地变更，root 引用不变） */
+  monitorTick: number;
+  /** 脏目录表：path → 最近变更的 tick（treemap/树标 dirty 的数据源），新扫描清空 */
+  dirtyPaths: Record<string, number>;
+
+  setMonitorVolumes: (v: MonitorVolumeStatus[]) => void;
+  setMonitorState: (p: { reason: string | null; backlog: boolean }) => void;
+  /** 增量更新：脏目录 size/file_count 就地写回扫描树 + 记 dirty + bump tick。
+   *  返回逐条新旧值（App 据此做「判定缓存不失效，跨桶阈值才重算该条」的维护）。
+   *  未命中扫描树的路径（跨盘/已删）原样忽略。 */
+  applyMonitorChanges: (dirs: UsnChangeDir[]) => MonitorDelta[];
+  clearMonitorDirty: () => void;
+  refreshMonitorStatus: () => Promise<void>;
+  startMonitor: (volume: string) => Promise<void>;
+  stopMonitor: (volume: string) => Promise<void>;
 
   setRoot: (n: Node | null) => void;
   setScaffolds: (s: Scaffold[]) => void;
@@ -235,8 +281,60 @@ export const useStore = create<AppState>((set, get) => ({
   quarantinedCount: 0,
   chat: { node: null, scaffoldId: null, turns: [], busy: false },
   studioRequest: null,
+  monitorVolumes: [],
+  monitorReason: null,
+  monitorBacklog: false,
+  monitorTotalChanges: 0,
+  monitorTick: 0,
+  dirtyPaths: {},
 
-  setRoot: (root) => set({ root }),
+  setMonitorVolumes: (monitorVolumes) => set({ monitorVolumes }),
+  setMonitorState: ({ reason, backlog }) =>
+    set({ monitorReason: reason, monitorBacklog: backlog }),
+  applyMonitorChanges: (dirs) => {
+    const root = get().root;
+    if (!root || dirs.length === 0) {
+      return dirs.map((d) => ({ path: d.path, oldSize: 0, newSize: d.size, oldCount: 0, newCount: d.file_count, changed: false }));
+    }
+    const tick = get().monitorTick + 1;
+    const dirtyPaths = { ...get().dirtyPaths };
+    const deltas: MonitorDelta[] = [];
+    for (const d of dirs) {
+      const node = findNodeMut(root, d.path);
+      if (!node) {
+        deltas.push({ path: d.path, oldSize: 0, newSize: d.size, oldCount: 0, newCount: d.file_count, changed: false });
+        continue;
+      }
+      const oldSize = node.size;
+      const oldCount = node.file_count;
+      node.size = d.size;
+      node.file_count = d.file_count;
+      dirtyPaths[d.path] = tick;
+      deltas.push({ path: d.path, oldSize, newSize: d.size, oldCount, newCount: d.file_count, changed: true });
+    }
+    set({ monitorTick: tick, dirtyPaths, monitorTotalChanges: get().monitorTotalChanges + dirs.length });
+    return deltas;
+  },
+  clearMonitorDirty: () => set({ dirtyPaths: {} }),
+  refreshMonitorStatus: async () => {
+    try {
+      const st = await api.monitorStatus();
+      set({ monitorVolumes: st.volumes });
+    } catch {
+      /* 状态拉取失败静默保留旧值（状态行由 useMonitor 轮询兜底） */
+    }
+  },
+  startMonitor: async (volume) => {
+    await api.monitorStart(volume);
+    await get().refreshMonitorStatus();
+  },
+  stopMonitor: async (volume) => {
+    await api.monitorStop(volume);
+    await get().refreshMonitorStatus();
+  },
+
+  // 新扫描 = 新树：脏标记一并作废（monitorTick 保留，避免无关重渲染抖动）
+  setRoot: (root) => set({ root, dirtyPaths: {} }),
   setScaffolds: (scaffolds) => set({ scaffolds }),
   setDisabledScaffolds: (disabledScaffolds) => {
     persistDisabledScaffolds(disabledScaffolds);
