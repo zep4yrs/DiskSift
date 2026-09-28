@@ -163,4 +163,66 @@ export const api = {
   /** 整体覆写分诊判定缓存；`json` 须为合法 JSON 文本（后端写前校验）。 */
   cacheSetAll: (json: string) =>
     isTauri ? invoke<void>('cache_set_all', { json }) : Promise.resolve(),
+
+  // ── 定时自动巡查（auto-patrol）：Task Scheduler 注册 + --auto 无头巡查 ──
+  // 浏览器预览模式没有 Task Scheduler 语义：status 返回未注册，
+  // register / unregister 静默 no-op（与 secureSet 同策略）。
+
+  /** 巡查注册状态（AutoPatrolStatus 镜像）。 */
+  autoPatrolStatus: () =>
+    isTauri
+      ? invoke<AutoPatrolStatus>('auto_patrol_status')
+      : Promise.resolve({
+          registered: false,
+          frequency: '',
+          task_name: 'DiskSiftAutoPatrol',
+          exe_path: null,
+          next_run: null,
+          status: null,
+          enabled: false,
+        } as AutoPatrolStatus),
+
+  /** 注册定时巡查任务（缺省档位 = 每周日 03:00，后端规格缺省）；
+   *  指向本 exe + --auto，返回生效的 frequency。 */
+  autoPatrolRegister: (frequency?: AutoPatrolFrequency) =>
+    isTauri
+      ? invoke<string>('auto_patrol_register', { frequency: frequency ?? null })
+      : Promise.resolve(frequency ?? 'weekly'),
+
+  /** 注销定时巡查任务；未注册时幂等成功。 */
+  autoPatrolUnregister: () =>
+    isTauri ? invoke<void>('auto_patrol_unregister') : Promise.resolve(),
+
+  // ── 脚本中心：scaffold 启停 + TOML 导入导出 ──
+  // 浏览器预览模式无 %APPDATA% 语义：启停 no-op、import 返回空 id、export
+  // 返回空文本（与 cacheSetAll 同策略）。
+
+  /** 启用/停用 scaffold；停用的从 listScaffolds 过滤（scaffold-config.json）。 */
+  scaffoldSetEnabled: (id: string, enabled: boolean) =>
+    isTauri ? invoke<void>('scaffold_set_enabled', { id, enabled }) : Promise.resolve(),
+
+  /** 导入 scaffold TOML：后端校验（parse + scope + id 安全）→ 写入用户
+   *  scaffolds 目录并热重载 → 返回 id；校验失败 reject。 */
+  scaffoldImport: (toml: string) =>
+    isTauri ? invoke<string>('scaffold_import', { toml }) : Promise.resolve(''),
+
+  /** 导出 scaffold 的 TOML 文本（停用的也可导出）；id 不存在 reject。 */
+  scaffoldExport: (id: string) =>
+    isTauri ? invoke<string>('scaffold_export', { id }) : Promise.resolve(''),
 };
+
+/** 巡查频率档位（auto_patrol.rs schedule_args 的四档）。 */
+export type AutoPatrolFrequency = 'hourly' | 'daily' | 'weekly' | 'monthly';
+
+/** auto_patrol_status 的返回（auto_patrol.rs AutoPatrolStatus 镜像）。
+ *  frequency 未注册 = ''，识别不了 = 'unknown'；next_run / status 为
+ *  schtasks 原样本地化文本。 */
+export interface AutoPatrolStatus {
+  registered: boolean;
+  frequency: string;
+  task_name: string;
+  exe_path: string | null;
+  next_run: string | null;
+  status: string | null;
+  enabled: boolean;
+}

@@ -250,10 +250,11 @@ mod tests {
         let root = temp_dir("recycle");
         let sub = root.join("data");
         std::fs::create_dir_all(&sub).unwrap();
-        std::fs::write(sub.join("a.bin"), vec![0u8; 100]);
-        std::fs::write(sub.join("b.bin"), vec![0u8; 27]);
+        // fixture 写失败要让测试立刻响：静默丢 Result 会让字节断言给出误导性失败。
+        std::fs::write(sub.join("a.bin"), vec![0u8; 100]).unwrap();
+        std::fs::write(sub.join("b.bin"), vec![0u8; 27]).unwrap();
         let lone = root.join("lone.txt");
-        std::fs::write(&lone, vec![0u8; 11]);
+        std::fs::write(&lone, vec![0u8; 11]).unwrap();
 
         let undo = root.join("undo.jsonl");
         let plan = Plan {

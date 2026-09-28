@@ -1,0 +1,130 @@
+# cargo 清理 scaffold —— 覆盖两类可重生产物：~/.cargo 的 registry/git 依赖缓存，
+# 与各 Rust 项目的 target/<profile> 构建缓存。2026-05-05 被 36-scaffold 清理删掉的
+# legacy cargo 版本没有 safety test、glob 边界没人验过（docs/scaffold-requirements/
+# STATUS.md 历史），本文件按 14-phase 流程重做。
+#
+# 2026-09-28 本机实测（Windows 11，rustup 管理的 cargo，CARGO_HOME 未设置，
+# 只 ls 目录名，未读任何文件内容）：
+#   %USERPROFILE%/.cargo/ 一级 → { .crates.toml, .crates2.json, .global-cache,
+#     .package-cache, .package-cache-mutate, advisory-db..lock, bin, registry }
+#     —— 前六个是 rustup/cargo 的安装清单与锁文件，bin/ 是 rustup 工具链 shim
+#     （cargo.exe / rustc.exe / rust-analyzer.exe / clippy-driver.exe …），
+#     全部红线，一个都不进 scope。
+#   registry/ 一级 → { CACHEDIR.TAG, cache, index, src }（本机无 git/——没有
+#     git 依赖的机器就是没有，官方布局仍保留 glob，见 git scope）。
+#   registry/{cache,index,src}/ 各级 → 每注册表一个 <host>-<hash> 目录：本机
+#     实测并存 index.crates.io-1949cf8c6b5b557f 与 rsproxy.cn-e3de039b2554c837
+#     （国内镜像）——glob 必须按 <host>-<hash> 通配，不能锚死 crates.io。
+#   registry/index/<reg>/ → config.json（索引缓存元数据）；
+#   registry/cache/<reg>/ → <name>-<ver>.crate 下载文件；
+#   registry/src/<reg>/ → <name>-<ver>/ 解压后的源码树。
+#   本仓库 target/ 一级 → { CACHEDIR.TAG, debug, release, tmp }；
+#   target/debug/ 内有 .cargo-lock / .cargo-build-lock / .cargo-artifact-lock。
+#
+# 实测修正与设计取舍：
+# - 项目 target/ 目录不能进 detect 列表：`**/target` 会把全盘每个叫 target 的
+#   目录（Maven/Java 的构建目录也叫 target/）都标成 cargo 卡片。改走 [match]
+#   兜底：基名含 target 且**必须**存在 CACHEDIR.TAG 子项——cargo 从 1.80 前后
+#   开始在 target/ 根写入该标记（本机实测有，registry/ 下同样有）；Maven 的
+#   target/ 没有它。检测不到的旧版 target 目录宁可不出卡片，也不放宽匹配。
+# - registry 三桶合并为一个 scope、按 <host>-<hash> 目录整目录 recycle：等价
+#   cargo-cache 的 autoclean 语义；桶目录 mtime 随每次构建刷新，days 保留期在
+#   桶级没有过滤价值（同 pip.toml http-cache 的取舍）。
+# - target scope 只点名 debug / release 两个标准 profile，directory 粒度 +
+#   days prompt：profile 目录的 mtime = 最近一次构建时间，30 天门槛等于"只清
+#   一个月没构建过的项目"，活跃项目目录会自我保护（find_matching_dirs 的
+#   mtime 过滤在目录级生效）。target/ 根的 CACHEDIR.TAG 标记、tmp/、自定义
+#   profile 名不在 scope 内。
+#
+# lint:  cargo run -p pinkbin-scaffold-lint -- scaffolds/cargo.toml
+# test:  cargo test -p pinkbin-scaffold --test cargo_safety
+
+id          = "cargo"
+name        = "cargo"
+homepage    = "https://doc.rust-lang.org/cargo/"
+# medium：registry 清掉后下次构建重新下载 crate（含镜像流量）；target 清掉后
+# 下次构建全量重编译（Rust 重编译成本高）。与 npm / pip / pnpm（包缓存同评
+# medium）一致。
+risk        = "medium"
+disclaimer  = """\
+清理 cargo 的依赖缓存（~/.cargo 下的 registry 下载/解压/索引缓存与 git 依赖缓存）\
+与 Rust 项目的构建缓存（target/debug、target/release）。\
+registry 与 git 缓存删除后，下次构建会重新下载并解压对应依赖（需要网络，\
+--offline 构建在清空后不可用）；target 删除后，对应项目下次构建全量重编译。\
+绝不删：~/.cargo/bin（rustup 工具链 shim 与 cargo install 装的命令）、已安装命令的\
+清单（.crates.toml / .crates2.json）、cargo 配置与凭据（config.toml / config、\
+credentials / credentials.toml，内含 registry 登录令牌）、rustup/cargo 的锁文件\
+（.package-cache 等）、任何项目源码与 Cargo.toml / Cargo.lock、target/ 根下的 \
+CACHEDIR.TAG 标记、tmp/ 与自定义名字的 profile 目录。\
+只覆盖默认位置：CARGO_HOME 或 build.target-dir 重定位到不叫 .cargo / target 的路径、\
+老版本 cargo 写不出 CACHEDIR.TAG 标记的 target 目录，都检测不到，不在覆盖范围。\
+删除进行中的构建可能因文件被占用而失败，重跑即可。\
+所有删除走系统回收站，可还原。\
+"""
+
+# ---------------------------------------------------------------------------
+# detect：默认 CARGO_HOME（Windows 与 POSIX 同为 ~/.cargo）+ ** 通配兜底
+# （CARGO_HOME 搬到仍叫 .cargo 的位置同样命中）。不设 %CARGO_HOME% 分支——
+# 未设置时 shellexpand 整体回退成死分支（同 pip.toml 对 TMPDIR 的取舍）。
+# 项目 target/ 目录刻意不进 detect：见文件头"实测修正"。
+# ---------------------------------------------------------------------------
+detect = [
+  "%USERPROFILE%/.cargo",
+  "${HOME}/.cargo",
+  "**/.cargo",
+]
+
+# 项目 target/ 的唯一识别方式：基名含 target + 必须真有 CACHEDIR.TAG 子项
+# （cargo 的缓存目录标记，https://bford.info/cachedir/）。裸 "cargo" 不能进
+# name_contains——克隆的 cargo 源码仓库、用户自建的 cargo-workspace 目录都会误标。
+# "target" 片段的误标（mytarget / targets / target-backup）被 must_have_child
+# 挡住大半，glob 层的 segment 精确性由 cargo_safety.rs 红线断言兜底。
+[match]
+name_contains   = ["target"]
+must_have_child = ["CACHEDIR.TAG"]
+
+# ============================================================================
+# ~/.cargo 依赖缓存（registry / git），directory 粒度整桶 recycle。
+# glob 锚到 .cargo / registry / git 段名，<host>-<hash> 用 * 通配——本机实测
+# crates.io 与 rsproxy 镜像并存，锚死 crates.io 会漏掉一半用户。
+# ============================================================================
+
+# registry/{cache,index,src} 三桶：下载的 .crate、sparse/git 索引缓存、解压的
+# 源码树。全部可由 cargo 重新下载/解压重建。glob 尾部 * 在 literal_separator
+# (false) 下会连深层文件一起命中，运行时由 find_matching_dirs 剪枝祖先/后代，
+# 实际回收单元是每个 <host>-<hash> 目录（同 npm _npx 的取舍）。
+[[scope]]
+id                  = "registry"
+label               = "依赖缓存（registry 下载/解压/索引）"
+glob                = "**/.cargo/registry/{cache,index,src}/*"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"
+
+# git 依赖缓存：db/<repo>/ 是裸仓库克隆，checkouts/<repo>-<hash>/<rev>/ 是
+# 工作副本。都可重新 clone。本机没有 git 依赖（registry 同级无 git/），glob
+# 保留官方布局，等真正有 git 依赖的机器命中。
+[[scope]]
+id                  = "git"
+label               = "git 依赖缓存（db / checkouts）"
+glob                = "**/.cargo/git/{db,checkouts}/*"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"
+
+# ============================================================================
+# 项目构建缓存 target/<profile>，directory 粒度 + 30 天门槛。
+# glob 不带尾部 /**——`**/target/{debug,release}` 全串匹配恰好终结在 profile
+# 目录自身，深层文件不参与匹配，profile 目录就是回收单元；target/ 根下的
+# CACHEDIR.TAG、tmp/、doc/、自定义 profile 名都不在 glob 内。
+# ============================================================================
+[[scope]]
+id                  = "target"
+label               = "构建缓存 target（debug / release，30 天未构建）"
+glob                = "**/target/{debug,release}"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "days", default = 30, label = "保留最近多少天" }
+recycle_granularity = "directory"

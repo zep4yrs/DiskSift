@@ -1,0 +1,86 @@
+# Docker Desktop 清理 scaffold —— 2026-05-05 被裁撤的 legacy docker scaffold（无
+# safety test、glob 边界没人验过，见 docs/scaffold-requirements/STATUS.md 历史）
+# 按 14-phase 流程重做；本文件是重做版。
+#
+# 2026-09-28 勘测（Windows 11，只 ls 目录名，未读文件内容）：本机未安装 Docker
+# —— %LOCALAPPDATA%/Docker、%APPDATA%/Docker、~/.docker、C:/ProgramData/Docker、
+# C:/ProgramData/DockerDesktop 全部不存在（ls 确认）。目录布局依据 Docker 官方
+# 文档与社区资料，不是本机实测：
+#   - 主机日志（Windows）  %LOCALAPPDATA%/Docker/log/{host,vm}/（官方 Troubleshoot
+#     的排障入口就是 $Env:LOCALAPPDATA\Docker\log）
+#   - 主机日志（macOS）    ~/Library/Containers/com.docker.docker/Data/log/{host,vm}/
+#   - WSL 数据盘（新版）   %LOCALAPPDATA%/Docker/wsl/disk/docker_data.vhdx
+#   - WSL 数据盘（旧版）   %LOCALAPPDATA%/Docker/wsl/data/ext4.vhdx（+ distro/ 系统盘）
+#   - macOS VM 盘          ~/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw
+#   - CLI 配置根           ~/.docker（config.json 含 registry 凭据；本卡不 detect）
+#   - Desktop 设置（Win）  %APPDATA%/Docker/settings-store.json（本卡不 detect）
+# CLAUDE.md "实测回环" 缺口：装机的机器上复核 log/ 布局与 vhdx 变体命名后，按
+# Phase 7 回填 docs/scaffold-requirements/（dev-tool 类需求文档当前不存在，
+# STATUS.md Dev tools 表也未含本卡）。
+#
+# 为什么只有一个 logs scope：Docker Desktop 的可回收大头——镜像、build cache、
+# 卷、k8s 状态——全部装在单个 VM 虚拟磁盘里（上面的 vhdx / Docker.raw）。文件级
+# 删它等同于 Troubleshoot → Clean / Purge data 恢复出厂：镜像可重拉，卷里的数据
+# 库会一起没（L3 红线，与 CLAUDE.md *.db 红线同源）；声明式 scaffold 也做不了
+# vhdx 压缩/裁剪。主机侧唯一可再生的大体积内容是 log/。只做 logs 是 research
+# （docs/research/python-dev-cleanup-landscape.md）§3 产品哲学下的收敛——不是
+# 没看到"清虚拟磁盘释放几十 GB"的需求，而是它必须由 Docker Desktop 自己带确认
+# 语义的流程完成。§1/§2 本身不覆盖 Docker。
+#
+# 为什么没有 [match] 兜底："docker" 是高频项目/目录名，name_contains 兜底会把
+# 用户自己的 docker 项目目录标成扫描根（宁缺毋滥，python-tmp.toml 同款决策）。
+# Docker Desktop 的数据根由安装器定死、无迁移机制，固定路径 detect 足够，不需要
+# ** 通配兜底。
+#
+# 运行时可达性不变量：scope glob 的正向路径是 detect 根的严格后代（
+# .../Docker/log/、.../com.docker.docker/Data/log/）。glob 层 `**/Docker/log/**`
+# 对任意名为 docker/log 的路径都成立（如用户项目 docker/log/）——运行时不可达
+# （没有任何 detect 根指到那里），这是 glob 层的已知边界，见
+# tests/docker_safety.rs 文件头。
+#
+# lint:  cargo run -p pinkbin-scaffold-lint -- scaffolds/docker.toml
+# test:  cargo test -p pinkbin-scaffold --test docker_safety
+
+id          = "docker"
+name        = "Docker Desktop"
+homepage    = "https://docs.docker.com/"
+# low：目标只有主机日志——诊断用，删掉后 Docker Desktop 正常工作并继续生成新
+# 日志。大头（镜像/卷/build cache）在 VM 盘里，本卡绝不触碰（见 disclaimer）。
+risk        = "low"
+disclaimer  = """\
+清理 Docker Desktop 的主机侧日志（log/ 下的 host / vm 等）。日志只用于诊断排障，\
+删除后 Docker Desktop 正常工作，会继续生成新日志。\
+绝不删：Docker 的虚拟磁盘（Windows 的 wsl/disk/docker_data.vhdx 与旧版 \
+wsl/data/ext4.vhdx、macOS 的 vms/0/data/Docker.raw）——里面是全部镜像、容器、\
+卷与 build cache，删掉等同于恢复出厂，卷里的数据库会一起丢失；要释放这部分空间\
+请用 Docker Desktop 自带的 Troubleshoot → Clean / Purge data，或在引擎里跑 \
+docker system prune。\
+绝不删：~/.docker（config.json 内含 registry 登录凭据，cli-plugins / contexts / \
+buildx / trusts 是你安装的插件与上下文、签名状态——本卡片不检测该目录）、\
+%APPDATA%/Docker 里的设置文件（settings-store.json / settings.json）、Linux 的 \
+/var/lib/docker 与 /var/log/docker-desktop（系统位置，不在扫描范围）。\
+只覆盖默认安装位置下名为 log/ 的子树；Docker 数据根直下的其它文件与目录一律不碰。\
+正在写日志时删除可能因文件占用而失败，重跑即可。\
+所有删除走系统回收站，可还原。\
+"""
+
+# 数据根由安装器定死、无迁移机制：不加 ** 通配（加了只会把用户自己的 docker
+# 目录误标成扫描根）。两个平台各一条；Windows 上 ${HOME} 分支是死分支（无害，
+# npm.toml / pip.toml 同款跨平台 detect 习惯）。
+detect = [
+  "%LOCALAPPDATA%/Docker",
+  "${HOME}/Library/Containers/com.docker.docker/Data",
+]
+
+# 单 scope 覆盖两平台布局：Windows 的 <root>/log 与 macOS 的
+# com.docker.docker/Data/log 两条分支互斥（另一平台该段不存在），不会双计。
+# file 粒度：日志是独立文件（host 侧几十~几百个，含轮转），逐文件 recycle 可接受；
+# 且单文件 mtime = 写入时间，days 保留才有意义——排障后想留最近日志的用户把
+# 保留期调大即可。
+[[scope]]
+id       = "logs"
+label    = "主机日志（log/host、log/vm）"
+glob     = "**/{Docker/log,com.docker.docker/Data/log}/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
@@ -13,6 +13,8 @@ use pinkbin_scaffold::{
 use pinkbin_scanner::{sample_paths, scan_with_stats, Node, ScanOptions, ScanStats};
 
 use tauri::{AppHandle, Emitter, Manager, State};
+
+mod auto_patrol;
 
 // Compile-time embed of repo-root scaffolds/. Used as the lowest-priority
 // fallback in load_all_scaffolds so a portable raw exe (no resource_dir,
@@ -38,6 +40,9 @@ struct AppState {
     /// triage-cache.json 是整文件覆写，并发 set_all 会争用同一个 tmp 路径，
     /// 用它把缓存读写串行化（与 secure_io_lock 分开：两个文件互不阻塞）。
     cache_io_lock: Mutex<()>,
+    /// scaffold-config.json（脚本中心启停名单）是 read-modify-write，用它把
+    /// set_enabled 的并发写串行化，避免丢条目（同 secure_io_lock 的理由）。
+    scaffold_io_lock: Mutex<()>,
 }
 
 #[tauri::command]
@@ -184,9 +189,17 @@ impl From<(u64, u64, &ScanStats)> for ScanStatsEvent {
     }
 }
 
+/// 脚本中心：disabled 名单（scaffold-config.json）之外的 scaffold 才返回。
+/// 名单存文件而非内存——GUI 与未来可能的 CLI 读同一份；缺文件/坏文件一律
+/// 当「全部启用」，配置损坏不应让脚本库整体消失。
 #[tauri::command]
 fn list_scaffolds(state: State<'_, AppState>) -> Vec<Scaffold> {
-    state.scaffolds.lock().unwrap().clone()
+    let disabled = read_disabled_ids(&state.data_dir);
+    let all = state.scaffolds.lock().unwrap();
+    all.iter()
+        .filter(|s| !disabled.contains(&s.id))
+        .cloned()
+        .collect()
 }
 
 /// Fast size-only walk used to seed the progress-bar denominator before the
@@ -1406,6 +1419,144 @@ fn open_steam_url(action: String, appid: u64) -> Result<(), String> {
     }
 }
 
+// ── 脚本中心（scaffold 启停 + TOML 导入导出）────────────────────────────────
+// 启停名单存 data_dir/scaffold-config.json（与 secure.json / triage-cache.json
+// 同目录）；导入的用户 scaffolds 落 data_dir/scaffolds/ —— load_all_scaffolds
+// 里该目录优先级最高（用户 > 资源目录 > 内嵌），重启后同样生效。
+
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct ScaffoldConfig {
+    #[serde(default)]
+    disabled: Vec<String>,
+}
+
+fn scaffold_config_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("scaffold-config.json")
+}
+
+fn read_disabled_ids(data_dir: &Path) -> HashSet<String> {
+    match std::fs::read_to_string(scaffold_config_path(data_dir)) {
+        Ok(text) => serde_json::from_str::<ScaffoldConfig>(&text)
+            .map(|c| c.disabled.into_iter().collect())
+            .unwrap_or_else(|e| {
+                tracing::warn!("scaffold-config.json 解析失败，当全部启用: {e}");
+                HashSet::new()
+            }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => HashSet::new(),
+        Err(e) => {
+            tracing::warn!("scaffold-config.json 读取失败，当全部启用: {e}");
+            HashSet::new()
+        }
+    }
+}
+
+/// temp + rename：与 secure.json 同款原子替换，写一半崩溃不会留下截断配置
+/// （名单丢一半会让启停状态随机翻转）。
+fn write_scaffold_config(data_dir: &Path, disabled: &[String]) -> Result<(), String> {
+    std::fs::create_dir_all(data_dir).map_err(|e| format!("scaffold 配置目录创建失败: {e}"))?;
+    let text = serde_json::to_string(&ScaffoldConfig {
+        disabled: disabled.to_vec(),
+    })
+    .map_err(|e| format!("scaffold-config.json 序列化失败: {e}"))?;
+    let tmp = data_dir.join("scaffold-config.json.tmp");
+    std::fs::write(&tmp, text).map_err(|e| format!("scaffold-config.json 写入失败: {e}"))?;
+    std::fs::rename(&tmp, scaffold_config_path(data_dir))
+        .map_err(|e| format!("scaffold-config.json 替换失败: {e}"))
+}
+
+/// 启停一个 scaffold。disabled 名单只做过滤，不删除任何 TOML 文件。
+#[tauri::command]
+fn scaffold_set_enabled(
+    state: State<'_, AppState>,
+    id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let scaffolds = state.scaffolds.lock().unwrap();
+        if !scaffolds.iter().any(|s| s.id == id) {
+            return Err(format!("scaffold not found: {id}"));
+        }
+    }
+    let _guard = state.scaffold_io_lock.lock().unwrap();
+    let mut disabled: Vec<String> = read_disabled_ids(&state.data_dir).into_iter().collect();
+    if enabled {
+        disabled.retain(|d| d != &id);
+    } else if !disabled.contains(&id) {
+        disabled.push(id.clone());
+    }
+    disabled.sort();
+    write_scaffold_config(&state.data_dir, &disabled)
+}
+
+/// 导入校验。parse + 空 scopes 沿用 scaffold-lint 的规则（lint 对空 scopes
+/// 只 WARN，导入场景升级为拒绝——零 scope 的 scaffold 导进去只会渲染一张
+/// 废卡片）；再加 id 落盘安全：id 直接充当用户 scaffolds 目录下的文件名
+/// `<id>.toml`，路径分隔符与 Windows 保留名必须挡在写盘之前。
+fn validate_import_toml(text: &str) -> Result<Scaffold, String> {
+    const WINDOWS_RESERVED: &[&str] = &[
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    let s = parse_toml(text).map_err(|e| format!("TOML 校验失败: {e}"))?;
+    if s.scopes.is_empty() {
+        return Err("scaffold 没有任何 [[scope]]，拒绝导入".into());
+    }
+    let id = &s.id;
+    if id.is_empty() || id.len() > 64 {
+        return Err(format!("scaffold id 长度非法（1-64）: {id:?}"));
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        return Err(format!(
+            "scaffold id 含非法字符（只允许 A-Z a-z 0-9 - _ .）: {id:?}"
+        ));
+    }
+    if id.starts_with('.') || id.ends_with('.') {
+        return Err(format!("scaffold id 不能以 . 开头/结尾: {id:?}"));
+    }
+    if WINDOWS_RESERVED.contains(&id.to_ascii_uppercase().as_str()) {
+        return Err(format!("scaffold id 是 Windows 保留名: {id:?}"));
+    }
+    Ok(s)
+}
+
+/// 导入 = 校验 → 原样落盘（保留作者注释）→ 热重载进内存列表。同 id 覆盖
+/// （用户目录优先级本就高于内嵌/资源目录，导入即接管该 id）。
+#[tauri::command]
+fn scaffold_import(state: State<'_, AppState>, toml: String) -> Result<String, String> {
+    let s = validate_import_toml(&toml)?;
+    let dir = state.data_dir.join("scaffolds");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("用户 scaffolds 目录创建失败: {e}"))?;
+    let file = dir.join(format!("{}.toml", s.id));
+    std::fs::write(&file, &toml).map_err(|e| format!("写入 {} 失败: {e}", file.display()))?;
+    {
+        let mut scaffolds = state.scaffolds.lock().unwrap();
+        scaffolds.retain(|x| x.id != s.id);
+        scaffolds.push(s.clone());
+        scaffolds.sort_by(|a, b| a.id.cmp(&b.id));
+    }
+    tracing::info!("scaffold imported: id={} file={}", s.id, file.display());
+    Ok(s.id)
+}
+
+/// 导出 = 内存列表（未过滤启停：disabled 的也能导出）→ TOML 文本。
+/// 内嵌/资源目录的 scaffold 在磁盘上未必有源文件，所以统一从结构体重序列化
+/// ——`[[scopes]]` 形态带 alias，parse_toml 能原样读回，导出→导入闭环成立。
+#[tauri::command]
+fn scaffold_export(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    let s = {
+        let scaffolds = state.scaffolds.lock().unwrap();
+        scaffolds
+            .iter()
+            .find(|s| s.id == id)
+            .cloned()
+            .ok_or_else(|| format!("scaffold not found: {id}"))?
+    };
+    toml::to_string_pretty(&s).map_err(|e| format!("TOML 序列化失败: {e}"))
+}
+
 // ── Secure storage（Windows DPAPI，对标 BlueTidy 密钥方案）────────────────────
 // AI 的 apiKey 不再明文落 localStorage：前端经 secure_set 送达，这里用 DPAPI
 // （CryptProtectData，密文绑定当前 Windows 用户）加密后 base64 存进 %APPDATA%
@@ -1706,6 +1857,16 @@ pub fn run() {
         .with_target(false)
         .init();
 
+    // --auto：Task Scheduler 定时巡查入口（auto_patrol.rs）。无 GUI：扫系统盘
+    // → 读判定缓存 → 只回收 safe 桶 → 写 undo.jsonl → 立即退出。必须在构建
+    // Tauri app 之前分流，否则 tauri.conf.json 的主窗口会照常弹出。
+    if std::env::args().any(|a| a == "--auto") {
+        let code = auto_patrol::run_headless();
+        use std::io::Write as _;
+        let _ = std::io::stdout().flush();
+        std::process::exit(code);
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -1730,6 +1891,7 @@ pub fn run() {
                 data_dir,
                 secure_io_lock: Mutex::new(()),
                 cache_io_lock: Mutex::new(()),
+                scaffold_io_lock: Mutex::new(()),
             });
             Ok(())
         })
@@ -1758,6 +1920,12 @@ pub fn run() {
             list_steam_workshop_items,
             fetch_workshop_titles,
             open_steam_url,
+            auto_patrol::auto_patrol_register,
+            auto_patrol::auto_patrol_unregister,
+            auto_patrol::auto_patrol_status,
+            scaffold_set_enabled,
+            scaffold_import,
+            scaffold_export,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1991,5 +2159,135 @@ mod tests {
         write_cache_raw(dir, "{}").unwrap();
         assert_eq!(read_cache_raw(dir).unwrap(), "{}");
         assert!(!dir.join("triage-cache.json.tmp").exists());
+    }
+
+    /// scaffold-config.json 读写 roundtrip（脚本中心启停名单）：缺文件 = 全部
+    /// 启用、写入后读回一致、坏 JSON 当全部启用（配置损坏不能让脚本库整体
+    /// 消失）、tmp 文件不残留。
+    #[test]
+    fn scaffold_config_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        assert!(read_disabled_ids(dir).is_empty(), "缺文件应得空名单");
+        write_scaffold_config(dir, &["foo".into(), "bar".into()]).unwrap();
+        let disabled = read_disabled_ids(dir);
+        assert!(disabled.contains("foo") && disabled.contains("bar"));
+        // 启停名单是全量覆写：再次启用（移出名单）后只剩一个。
+        write_scaffold_config(dir, &["bar".into()]).unwrap();
+        let disabled = read_disabled_ids(dir);
+        assert!(!disabled.contains("foo") && disabled.contains("bar"));
+        assert!(!dir.join("scaffold-config.json.tmp").exists());
+        // 坏 JSON 按全部启用处理，不上抛。
+        std::fs::write(dir.join("scaffold-config.json"), "{not json").unwrap();
+        assert!(read_disabled_ids(dir).is_empty());
+    }
+
+    /// 导入校验：合法 TOML 放行；lint 的两条规则（parse 失败 / 零 scope）与
+    /// id 落盘安全（路径分隔符、Windows 保留名、首尾点号）各拦一道。
+    #[test]
+    fn import_validation_gates() {
+        let good = r#"
+id = "demo"
+name = "Demo"
+risk = "low"
+disclaimer = "test"
+detect = ["**/Demo"]
+[[scope]]
+id = "s1"
+label = "S1"
+glob = "**/demo/cache/**"
+mode = "recycle"
+"#;
+        assert!(validate_import_toml(good).is_ok());
+
+        // parse 失败（scaffold-lint 的 FAIL 条件）。
+        assert!(validate_import_toml("id = ").is_err());
+        // 空 scopes（lint 只 WARN，导入场景升级为拒绝）。
+        let no_scopes = good.replace(
+            "[[scope]]\nid = \"s1\"\nlabel = \"S1\"\nglob = \"**/demo/cache/**\"\nmode = \"recycle\"\n",
+            "",
+        );
+        assert!(validate_import_toml(&no_scopes).is_err());
+
+        for bad_id in [
+            ("../evil", "路径分隔符"),
+            ("a b", "空格"),
+            ("con", "保留名"),
+            (".hidden", "首点号"),
+            ("trailing.", "尾点号"),
+            ("", "空 id"),
+        ] {
+            let toml = good.replace("id = \"demo\"", &format!("id = \"{}\"", bad_id.0));
+            assert!(
+                validate_import_toml(&toml).is_err(),
+                "id {:?}（{}）必须被拒绝",
+                bad_id.0,
+                bad_id.1
+            );
+        }
+    }
+
+    /// 导出→导入闭环：内存结构体重序列化出的 TOML 必须能被 parse_toml 原样
+    /// 读回（serde rename 的 `[[scopes]]` + alias 是闭环成立的关键），且
+    /// prompt / match / category 等可选结构在 roundtrip 后语义不变。
+    #[test]
+    fn export_import_roundtrip() {
+        let original = r#"
+id = "demo-rt"
+name = "Demo Roundtrip"
+homepage = "https://example.com"
+risk = "low"
+disclaimer = "test"
+detect = ["**/Demo"]
+[match]
+name_contains = ["demo"]
+must_have_child = ["cache"]
+[[scope]]
+id = "s1"
+label = "S1"
+glob = "**/demo/cache/**"
+mode = "recycle"
+category = "cache"
+[scope.prompt]
+kind = "days"
+default = 30
+"#;
+        let parsed = parse_toml(original).unwrap();
+        let exported = toml::to_string_pretty(&parsed).unwrap();
+        let back = validate_import_toml(&exported).unwrap();
+        assert_eq!(parsed.id, back.id);
+        assert_eq!(parsed.name, back.name);
+        assert_eq!(parsed.matcher.name_contains, back.matcher.name_contains);
+        assert_eq!(parsed.scopes.len(), back.scopes.len());
+        let (a, b) = (&parsed.scopes[0], &back.scopes[0]);
+        assert_eq!(a.id, b.id);
+        assert_eq!(a.glob, b.glob);
+        assert_eq!(a.category, b.category);
+        match (&a.prompt, &b.prompt) {
+            (
+                Some(pinkbin_scaffold::Prompt::Days { default: da, .. }),
+                Some(pinkbin_scaffold::Prompt::Days { default: db, .. }),
+            ) => assert_eq!(da, db),
+            other => panic!("prompt roundtrip 失败: {other:?}"),
+        }
+    }
+
+    /// list_scaffolds 的过滤语义：名单里的 id 消失、其余按 id 序保留。
+    #[test]
+    fn list_filter_drops_only_disabled() {
+        let mk = |id: &str| {
+            parse_toml(&format!(
+                "id = \"{id}\"\nname = \"{id}\"\nrisk = \"low\"\ndisclaimer = \"t\"\ndetect = []\n"
+            ))
+            .unwrap()
+        };
+        let all = [mk("a"), mk("b"), mk("c")];
+        let disabled: HashSet<String> = ["b"].iter().map(|s| s.to_string()).collect();
+        let kept: Vec<String> = all
+            .iter()
+            .filter(|s| !disabled.contains(&s.id))
+            .map(|s| s.id.clone())
+            .collect();
+        assert_eq!(kept, vec!["a".to_string(), "c".to_string()]);
     }
 }

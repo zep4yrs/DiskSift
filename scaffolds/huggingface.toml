@@ -1,0 +1,109 @@
+# Hugging Face 缓存清理 scaffold —— 2026-05-05 被裁撤的 legacy huggingface
+# scaffold（无 safety test，glob 边界没人验过，见 docs/scaffold-requirements/
+# STATUS.md 历史）按 14-phase 流程重做。设计参照 research
+# （docs/research/python-dev-cleanup-landscape.md）的社区共识方法：模型/数据集
+# 缓存 = "包缓存" 同类（npm _cacache / pip http / conda pkgs），按官方
+# manage-cache 文档的桶结构点名，不是全盘猜名。research §1/§2 不覆盖 Hugging
+# Face；§3 产品哲学（保守 80%）决定不碰 token / modules 等小而敏感的位置。
+#
+# 2026-09-28 勘测（Windows 11，只 ls 目录名，未读文件内容）：本机无 Hugging Face
+# 缓存——%USERPROFILE%/.cache/huggingface、~/.huggingface（legacy）、
+# %LOCALAPPDATA%/%APPDATA% 下均不存在，.cache/ 只有无关工具（autopen-go、
+# codex-runtimes、fontconfig、gem、opencode、scapy、starship）；HF_HOME /
+# HF_HUB_CACHE / HUGGINGFACE_HUB_CACHE / TRANSFORMERS_CACHE / XDG_CACHE_HOME
+# 全部未设置；D: 盘根无 *hugging* / *hf* 目录。目录布局依据 huggingface_hub /
+# datasets 官方文档（不是本机实测）：
+#   - Windows 默认  %USERPROFILE%/.cache/huggingface/hub（与 POSIX 同布局）
+#   - hub/ 一级     models--<org>--<name>/{blobs,snapshots,refs}、
+#                   datasets--<org>--<name>/、version.txt、.locks/
+#   - datasets/ 一级 datasets 库的 Arrow 处理缓存（<ns>___<name>/<config>/
+#                   <version>/<hash>/*.arrow）+ downloads/（原始下载件）
+#   - 登录凭据      token（hf auth login 写入；stored_tokens 为新格式候选位）
+#   - modules/      datasets_modules 数据集加载脚本缓存（小，本卡不碰）
+# CLAUDE.md "实测回环" 缺口：装机的机器上复核 hub/ 桶名与 token 文件名后，按
+# Phase 7 回填 docs/scaffold-requirements/（dev-tool 类需求文档当前不存在，
+# STATUS.md Dev tools 表也未含本卡）。
+#
+# 为什么按整仓目录清（models--* 单元，directory 粒度）：hub 缓存的真实数据在
+# blobs/，snapshots/<rev>/ 里是指向 blobs 的符号链接（Windows 无符号链接权限时
+# 成对复制）。只删 blobs/ 会断链 snapshots，只删 snapshots/ 会留孤儿 blobs——
+# 唯一一致的单元是整个 models--*/datasets--* 目录（回收站一条记录代替上千文件，
+# 理由同 conda.toml pkgs）。datasets/ 的 Arrow 缓存按 <ns>___<name> 整数据集清，
+# downloads/ 整目录清（HF 官方论坛认可两者皆可再生：重新 load_dataset 会重新
+# 下载并重新处理）。
+#
+# 为什么 [match] 兜底放行（name_contains=huggingface + must_have_child=hub）：
+# 模型缓存的 HF_HOME 重定位比 npm/pip 更常见（几十 GB 的模型用户普遍搬到数据盘
+# ——搬完根名常仍叫 huggingface）。误标代价分析同 pip.toml：随便一个含
+# "huggingface" 的目录若没有 hub/ 子目录不会标；误标的目录也只被 scope glob
+# 命中 hub/models--* / datasets/* 形态的路径——名字长成这样的目录只可能是
+# HF 缓存本身。
+#
+# glob 层已知边界：`**/{.cache/huggingface,huggingface}/hub/models--*` 对任何
+# 叫 huggingface/hub/models--* 的路径都成立（如用户项目 huggingface/hub/）——
+# 运行时不可达：没有 hub/ 子目录的目录不会被 [match] 标成扫描根，见
+# tests/huggingface_safety.rs 的 huggingface_detect_and_match。
+#
+# lint:  cargo run -p pinkbin-scaffold-lint -- scaffolds/huggingface.toml
+# test:  cargo test -p pinkbin-scaffold --test huggingface_safety
+
+id          = "huggingface"
+name        = "Hugging Face 缓存"
+homepage    = "https://huggingface.co/docs/huggingface_hub/guides/manage-cache"
+# medium：不是日志类缓存——删掉后下次 load 要按需重新下载（大模型重新下载的
+# 耗时/流量可观；gated 模型还需账号有访问权限）。与 npm.toml / pip.toml /
+# conda.toml（包缓存同评 medium）一致。
+risk        = "medium"
+disclaimer  = """\
+清理 Hugging Face 的 hub 下载缓存（models--* / datasets--* 整仓，含 blobs、\
+snapshots、refs）与 datasets 库的处理缓存（Arrow 文件与 downloads/ 原始下载件）。\
+删除后下次 load_model / load_dataset 会按需重新下载并重新处理；大模型的重新下载\
+耗时耗流量，gated 模型需要你的账号具备访问权限才能重新拉取。\
+绝不删：登录令牌（token / stored_tokens——hf auth login 的凭据，本卡永不触碰，\
+删了所有工具都要重新登录）、modules/ 数据集加载脚本缓存、legacy ~/.huggingface、\
+hub/ 直下的 version.txt 与 .locks/（下载进行中的锁文件）。\
+hub 缓存按整仓目录清——blobs 与 snapshots 是符号链接/成对内容，pinkbin 不会拆开\
+只删一半（那会留下孤儿 blob 或断链的快照）。\
+HF_HOME / HF_HUB_CACHE 指到名字不含 huggingface 的自定义路径时检测不到；\
+缓存根直下的其它未点名文件与目录一律不碰。下载进行中清理可能因文件占用失败，\
+重跑即可。所有删除走系统回收站，可还原。\
+"""
+
+# 默认根两种写法：Windows 用 %USERPROFILE%（生产扫描主路径），POSIX 用 ${HOME}。
+# huggingface_hub 不读 XDG_CACHE_HOME（默认恒为 ~/.cache/huggingface），不设
+# XDG 分支；重定位走 [match] 兜底（见下）。
+detect = [
+  "%USERPROFILE%/.cache/huggingface",
+  "${HOME}/.cache/huggingface",
+]
+
+# 重定位兜底：HF_HOME 搬到任意盘后根名常仍叫 huggingface。必须有 hub/ 子目录
+# 才标（token-only 的同名目录不标）；误标代价见文件头分析。
+[match]
+name_contains   = ["huggingface"]
+must_have_child = ["hub"]
+
+# 两个 scope 都锚 {,.cache/}huggingface 根名两段，覆盖默认位与重定位位；directory
+# 粒度整仓/整数据集 recycle。`*` 跨段（literal_separator(false)）会连仓内深层路径
+# 一起命中，运行时 find_matching_dirs 剪枝到最浅匹配（每个仓只入队一次），理由同
+# python-tmp.toml。
+
+# hub 下载缓存：真实单元是 models--*/datasets--* 整仓（blobs+snapshots+refs 成套）。
+[[scope]]
+id                  = "hub-cache"
+label               = "Hub 模型/数据集下载缓存（models--* / datasets--* 整仓）"
+glob                = "**/{.cache/huggingface,huggingface}/hub/{models--*,datasets--*}"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "days", default = 30, label = "保留最近多少天" }
+recycle_granularity = "directory"
+
+# datasets 库的 Arrow 处理缓存：按 <ns>___<name> 整数据集 + downloads/ 整目录。
+[[scope]]
+id                  = "arrow-datasets"
+label               = "datasets 处理缓存（Arrow + downloads，重新 load 再生成）"
+glob                = "**/{.cache/huggingface,huggingface}/datasets/*"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "days", default = 30, label = "保留最近多少天" }
+recycle_granularity = "directory"

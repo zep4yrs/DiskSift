@@ -22,6 +22,11 @@
 | Scaffold | Req doc | TOML | Safety test | UI 验证 | 备注 |
 |---|:---:|:---:|:---:|:---:|---|
 | conda | ⏳ | ✅ | ✅ | ⏳ | env 卡片专用 UI；整目录 recycle |
+| cargo | ⏳ | ✅ | ✅ | ⏳ | registry/git 缓存 + 项目 target/{debug,release}（CACHEDIR.TAG 判别）；2026-09-28 重做（见 2026-05-05 清理） |
+| go-mod | ⏳ | ✅ | ✅ | ⏳ | pkg/mod 整树 directory 粒度（= go clean -modcache）+ sumdb + go-build hex 对象 30 天；2026-09-28 重做（见 2026-05-05 清理） |
+| gradle | ⏳ | ✅ | ✅ | ⏳ | caches 整树 directory 粒度（= 删 ~/.gradle/caches）；wrapper/dists·daemon·native 红线；2026-09-28 重做（见 2026-05-05 清理） |
+| maven | ⏳ | ✅ | ✅ | ⏳ | repository 整树 directory 粒度（= 删 ~/.m2/repository）；settings.xml·wrapper/dists·项目 target/ 红线；本机无 Maven，路径按官方布局（文件头声明）；2026-09-28 重做（见 2026-05-05 清理） |
+| nuget | ⏳ | ✅ | ✅ | ⏳ | 三桶 directory 粒度（global-packages / v3-cache / plugins-cache，= dotnet nuget locals）；NuGet.Config·Migrations 红线；2026-09-28 重做（见 2026-05-05 清理） |
 
 ---
 

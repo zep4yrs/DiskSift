@@ -38,7 +38,7 @@ import { cacheHitFor, pickAiTriageTargets, runAiTriage, FREE_AI_PATHS } from './
 
 // 版本规则（2026-09-27 用户定）：年份后两位.破坏性+1.新功能+1.补丁+1
 // Cargo/tauri 只认三段 semver，第四位补丁段仅在用户可见处展示。
-const APP_VERSION = '26.1.2.0';
+const APP_VERSION = '26.1.3.0';
 
 function isDriveRoot(p: string): boolean {
   // C: / C:\ / C:/  — anything beyond is a subfolder
@@ -262,7 +262,15 @@ export default function App() {
     api.listScaffolds()
       .then((scs) => {
         setScaffolds(scs);
-        pushOut('info', `脚本库已加载：${scs.length} 个清理脚本`);
+        // 启停留档对账：本地留档里已回到生效名单的 id（比如在配置文件里手工
+        // 启用过）从留档剔除，剩下的才是真正仍停用的。
+        const enabledIds = new Set(scs.map((s) => s.id));
+        const st = useStore.getState();
+        const stillDisabled = st.disabledScaffolds.filter((d) => !enabledIds.has(d.id));
+        if (stillDisabled.length !== st.disabledScaffolds.length) {
+          st.setDisabledScaffolds(stillDisabled);
+        }
+        pushOut('info', `脚本库已加载：${scs.length} 个清理脚本${stillDisabled.length ? ` · 另有 ${stillDisabled.length} 个已停用` : ''}`);
       })
       .catch(() => pushOut('warn', '脚本库加载失败（可稍后重扫）'));
     // eslint-disable-next-line react-hooks/exhaustive-deps

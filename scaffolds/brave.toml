@@ -1,0 +1,174 @@
+# Brave 清理 scaffold —— Chromium 通用桶设计，结构对齐 scaffolds/chrome.toml。
+# 设计依据：docs/research/python-dev-cleanup-landscape.md §2.2 的桶分级
+# （DIPS / SharedStorage 等拿不准目录划红线的先例）+ §3 产品哲学；红线继承 CLAUDE.md Hard rule 1。
+#
+# 实测回环（2026-09-28，Windows 11，只 ls 目录名、未 Read 任何内容）：
+# - 本机未安装 Brave：`ls %LOCALAPPDATA% | grep -i brave` 无命中，
+#   %LOCALAPPDATA%/BraveSoftware、%APPDATA% 下无 brave 命名目录、
+#   Program Files / Program Files (x86) / %USERPROFILE% 下均无 BraveSoftware。
+# - Brave 与 Chrome 同属 Chromium 上游，桶名一致。桶名证据来自同机真实存在的
+#   两棵 Chromium 树（见 chrome.toml 头注）：%LOCALAPPDATA%/Quark/User Data（Chromium
+#   fork，完整布局）+ %LOCALAPPDATA%/CEF/User Data：
+#   * User Data 顶层可清桶：GrShaderCache / GraphiteDawnCache / ShaderCache /
+#     Crashpad / component_crx_cache / extensions_crx_cache
+#   * profile 级可清桶：Cache（内含 Cache_Data）/ Code Cache / GPUCache /
+#     DawnGraphiteCache / DawnWebGPUCache / Service Worker（内含 Database、ScriptCache）/
+#     blob_storage
+#   * 同批实测划红线的目录（disclaimer + brave_safety.rs 断言）：Bookmarks(.bak)、
+#     History(-journal)、Login Data(-j)、Login Data For Account、Web Data(-j)、
+#     Favicons(-j)、Preferences / Secure Preferences、Network、Local Storage、
+#     Session Storage、IndexedDB、WebStorage、Sessions、Sync Data、Extension State、
+#     Local Extension Settings、Extension Rules、Extension Scripts、GCM Store、
+#     Shortcuts、Top Sites、Local State、Safe Browsing、First Run、Last Browser、
+#     Last Version、WidevineCdm、DIPS(-wal)、SharedStorage(-wal)、Shared Dictionary、
+#     BrowsingTopics*、BudgetDatabase、chrome_cart_db、discounts_db、
+#     commerce_subscription_db、parcel_tracking_db、heavy_ad_intervention_opt_out.db、
+#     optimization_guide_hint_cache_store、ClientCertificates、MediaDeviceSalts、
+#     passkey_enclave_state、trusted_vault.pb、Account Web Data、Affiliation Database
+# - Brave 专属目录（上游文档知名、本机无法勘测，进红线不进 scope）：
+#   BraveWallet/（钱包助记词/私钥 = **/key/** 加密物料家族，绝不触碰）、
+#   Rewards/（Brave Rewards/BAT 账本）、Tor Profile/（Tor 窗口 profile）。
+#   断言 zero-match 对不存在的目录天然成立，风险只在 glob 放宽时显形。
+# - 品牌与 channel 数据根名（BraveSoftware/Brave-Browser[-Beta|-Nightly|-Dev]）为
+#   上游文档知名命名，本机未验证（Brave 未安装）；scope 的 /User Data/ 段要求 +
+#   桶名实测是本 scaffold 的真实安全边界。
+#
+# scope 锚定 **/BraveSoftware/Brave-Browser*/User Data/...：
+# - Brave-Browser* 一个前缀通配覆盖 Brave-Browser / Brave-Browser-Beta /
+#   Brave-Browser-Nightly / Brave-Browser-Dev 四个 channel。
+# - macOS（~/Library/Application Support/BraveSoftware/Brave-Browser）与 Linux
+#   （~/.config/BraveSoftware/Brave-Browser）保持同款两段式结构——Windows 锚对
+#   三平台同构（与 edge.toml 的单段 Microsoft Edge 不同，此处三平台都能命中）。
+# - 不用裸 **/User Data：本机实测 Quark、CEF、Tabbit Browser 都有同名 User Data 根，
+#   Chrome / Edge 树也各自存在——都不得混进 Brave 卡片。
+# - 多 profile：{Default,Profile *} 一层 alternation（同 chrome.toml）。
+#
+# granularity 取舍（按桶类型，同 chrome.toml）：
+# - 哈希文件名、单文件无意义、文件数以千计的壳层缓存桶 →
+#   recycle_granularity = "directory"，glob 锚到桶目录本身（无 /**），prompt = none。
+# - 按时间累积的文件桶（组件/扩展下载缓存、崩溃转储）→ file 粒度 + days 30。
+#
+# lint:  cargo run -p pinkbin-scaffold-lint -- scaffolds/brave.toml
+# test:  cargo test -p pinkbin-scaffold --test brave_safety
+
+id          = "brave"
+name        = "Brave"
+homepage    = "https://brave.com/"
+risk        = "low"
+disclaimer  = """\
+只清可重生的缓存与转储：网页缓存（Cache/Cache_Data）、Code Cache（JS/WASM 字节码）、\
+GPU / WebGPU 着色器缓存（GPUCache / DawnGraphiteCache / DawnWebGPUCache）、\
+顶层着色器缓存（GrShaderCache / GraphiteDawnCache / ShaderCache）、Service Worker 缓存、\
+blob_storage、组件与扩展下载缓存（component_crx_cache / extensions_crx_cache）、\
+崩溃转储（Crashpad）。删掉后 Brave 下次启动自动重建或重新下载，首次加载网页会略慢，\
+离线 Web App 的缓存资源会重新从网络下载。\
+绝不删书签（Bookmarks / Bookmarks.bak）、浏览历史（History）、密码（Login Data / \
+Login Data For Account）、自动填充（Web Data）、网站图标库（Favicons）、设置\
+（Preferences / Secure Preferences / Local State）、标签页恢复（Sessions / Last Browser）、\
+登录态（Network 目录下的 Cookies）、网站数据（Local Storage / Session Storage / \
+IndexedDB / WebStorage）、扩展状态（Extension State / Local Extension Settings / \
+GCM Store，扩展登录 token 在里面）、同步数据（Sync Data / Account Web Data）、\
+Brave 钱包（BraveWallet，助记词与私钥所在，绝不触碰）、Brave Rewards / BAT 账本\
+（Rewards）、Tor Profile、安全浏览库（Safe Browsing）、WidevineCdm、以及 DIPS、\
+SharedStorage、Shared Dictionary、ClientCertificates、MediaDeviceSalts、\
+passkey_enclave_state、trusted_vault.pb 等隐私 / 加密物料和一切 *.db / *.db-journal / \
+*.db-wal 数据库文件。\
+不覆盖 Brave 以外 Chromium 应用的数据目录（Chrome / Edge / Quark / CEF 等，虽然桶名相同）。\
+所有删除走系统回收站，可随时还原。清理前请先退出 Brave，否则运行中被占用的文件会跳过。\
+"""
+
+# ---------------------------------------------------------------------------
+# detect：Windows 默认路径（四 channel）+ macOS / Linux 默认路径（同款两段式
+# BraveSoftware/Brave-Browser 结构，Windows 锚三平台通吃）+ ** 通配兜底。
+# 仅影响 UI 显示，不影响清理边界（scope 全部要求 BraveSoftware/Brave-Browser*/
+# User Data/<桶> 两级同时出现才会命中）。
+# ---------------------------------------------------------------------------
+
+detect = [
+  "%LOCALAPPDATA%/BraveSoftware/Brave-Browser/User Data",
+  "%LOCALAPPDATA%/BraveSoftware/Brave-Browser-Beta/User Data",
+  "%LOCALAPPDATA%/BraveSoftware/Brave-Browser-Nightly/User Data",
+  "%LOCALAPPDATA%/BraveSoftware/Brave-Browser-Dev/User Data",
+  "${HOME}/Library/Application Support/BraveSoftware/Brave-Browser",
+  "${HOME}/.config/BraveSoftware/Brave-Browser",
+  "**/BraveSoftware/Brave-Browser/User Data",
+  "**/BraveSoftware/Brave-Browser-Nightly/User Data",
+]
+
+# ============================================================================
+# L1 profile 级缓存（Default / Profile N 都覆盖）
+# ============================================================================
+
+[[scope]]
+id                  = "http-cache"
+label               = "网页缓存（Cache/Cache_Data，HTTP 磁盘缓存）"
+glob                = "**/BraveSoftware/Brave-Browser*/User Data/{Default,Profile *}/Cache"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id                  = "js-bytecode-cache"
+label               = "脚本字节码缓存（Code Cache）"
+glob                = "**/BraveSoftware/Brave-Browser*/User Data/{Default,Profile *}/Code Cache"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id                  = "gpu-shader-cache"
+label               = "GPU / WebGPU 着色器缓存（GPUCache / Dawn 系列）"
+glob                = "**/BraveSoftware/Brave-Browser*/User Data/{Default,Profile *}/{GPUCache,DawnGraphiteCache,DawnWebGPUCache}"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id                  = "service-worker-cache"
+label               = "Service Worker 缓存（Database / ScriptCache）"
+glob                = "**/BraveSoftware/Brave-Browser*/User Data/{Default,Profile *}/Service Worker"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id                  = "blob-storage"
+label               = "blob 存储（blob_storage）"
+glob                = "**/BraveSoftware/Brave-Browser*/User Data/{Default,Profile *}/blob_storage"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+# ============================================================================
+# L1 User Data 顶层缓存
+# ============================================================================
+
+[[scope]]
+id                  = "shader-cache"
+label               = "顶层着色器缓存（GrShaderCache / GraphiteDawnCache / ShaderCache）"
+glob                = "**/BraveSoftware/Brave-Browser*/User Data/{GrShaderCache,GraphiteDawnCache,ShaderCache}"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id       = "component-crx-cache"
+label    = "组件 / 扩展下载缓存（component_crx_cache / extensions_crx_cache）"
+glob     = "**/BraveSoftware/Brave-Browser*/User Data/{component_crx_cache,extensions_crx_cache}/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
+
+[[scope]]
+id       = "crash-dumps"
+label    = "崩溃转储（Crashpad）"
+glob     = "**/BraveSoftware/Brave-Browser*/User Data/Crashpad/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }

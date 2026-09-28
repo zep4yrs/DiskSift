@@ -1,0 +1,122 @@
+# Go 清理 scaffold —— 覆盖 GOPATH 的模块缓存（pkg/mod）与 sumdb、以及 GOCACHE
+# 构建缓存（Windows %LOCALAPPDATA%/go-build、POSIX ~/.cache/go-build 等）。
+# 2026-05-05 被 36-scaffold 清理删掉的 legacy go-mod 没有 safety test；本文件按
+# 14-phase 流程重做（docs/scaffold-requirements/STATUS.md 历史）。
+#
+# 2026-09-28 本机实测（Windows 11，只 ls 目录名 + go env 查询，未读任何文件内容；
+# go env 查询与 npm.toml 头部 `npm config get cache` 同一先例）：
+#   go env → GOPATH=C:\Users\localuser\go，GOMODCACHE=…\go\pkg\mod，
+#   GOCACHE=…\AppData\Local\go-build（全部默认值，GOBIN 未设置）。
+#   %USERPROFILE%/go/ 一级 → { bin, pkg }；bin/ 是 go install 装的命令
+#   （dlv.exe / staticcheck.exe / govulncheck.exe / go-winres.exe）——红线。
+#   go/pkg/ 一级 → { mod, sumdb }——sumdb 校验和缓存在 GOPATH 的 pkg/ 下
+#   （新版布局）；mod/cache/download/sumdb/ 下同时还有一份旧布局的 sumdb。
+#   go/pkg/mod/ 一级 → { cache, github.com, go.starlark.net@v0.0.0-…,
+#   go.yaml.in, golang.org }——解压模块目录（<path>@<version>）与 host 命名
+#   空间目录混排，深度不定。
+#   go/pkg/mod/cache/ 一级 → { download }（本机无 lock——它在并发下载时才建）；
+#   download/ 一级 → { cnb.cool, github.com, go.starlark.net, go.yaml.in,
+#   golang.org, sumdb }，叶子是 <path>/@v/{list,*.info,*.mod,*.zip}。
+#   %LOCALAPPDATA%/go-build/ 一级 → 256 个两位 hex 目录 + { README, trim.txt,
+#   fuzz }（fuzz/ 是 go test -fuzz 的语料库，按模块路径组织）。
+#
+# 设计取舍：
+# - mod-cache 一个 scope 整树 directory 粒度（glob 精确锚定 pkg/mod 目录自身，
+#   不带尾部 /**）：pkg/mod 是数以千计的只读小文件，file-by-file recycle 会产生
+#   海量回收站条目（lib.rs Scope::recycle_granularity 文档点名的场景）；整树一条
+#   回收站记录 = `go clean -modcache` 的语义。不拆"解压源码 / 下载 zip"两个
+#   scope：解压模块目录名含 @，而 literal_separator(false) 下 `*@*` 会穿透
+#   分隔符命中 download/@v/ 深层路径，两个 scope 会互相重叠、重复计账。
+# - sumdb 单独一个 scope（pkg/sumdb 在 mod 树外）；mod/cache/download/sumdb
+#   那份旧布局随 mod-cache 整树一起清。
+# - build-cache 只点名两位 hex 目录（[0-9a-f][0-9a-f]），file 粒度 + 30 天
+#   （同 npm _cacache：每个对象独立、mtime = 编译时间，days 保留才有意义）。
+#   go-build 根下的 README / trim.txt / fuzz/ 不在 scope 内。
+# - [match] 刻意留空：没有安全的 name_contains 片段——"go" 短到撞一切项目目录，
+#   "mod" 更甚；改名的 GOPATH（如 gopath/、gomodcache/）检测不到，见 disclaimer。
+#
+# lint:  cargo run -p pinkbin-scaffold-lint -- scaffolds/go-mod.toml
+# test:  cargo test -p pinkbin-scaffold --test go-mod_safety
+
+id          = "go-mod"
+name        = "go"
+homepage    = "https://go.dev/ref/mod"
+# medium：模块缓存清掉后下次构建重新下载全部依赖；构建缓存清掉后首次构建全量
+# 重编译。与 npm / pip / pnpm / cargo（包缓存同评 medium）一致。
+risk        = "medium"
+disclaimer  = """\
+清理 Go 的模块缓存（GOPATH/pkg/mod，等同 go clean -modcache）、校验和数据库缓存\
+（sumdb）与构建缓存（go-build）。\
+模块缓存删除后，下次构建会重新下载全部依赖（需要网络，GOFLAGS=-mod=mod 的离线\
+构建不可用）；构建缓存删除后，首次构建全量重编译。\
+绝不删：go install 安装的命令（GOPATH/bin）、GOPATH 时代的源码工作区（GOPATH/src）、\
+任何项目源码与 go.mod / go.sum / vendor/ 目录、go-build 根下的 fuzz 语料库。\
+模块缓存条目带只读保护（官方 go clean -modcache 会先解除只读），个别条目可能\
+删除失败；删除进行中的 go build / go mod download 会因文件被占用而失败，重跑即可。\
+只覆盖默认位置：GOPATH / GOMODCACHE / GOCACHE 重定位到不叫 go、go-build 的路径时\
+检测不到，不在覆盖范围。\
+所有删除走系统回收站，可还原。\
+"""
+
+# ---------------------------------------------------------------------------
+# detect：三平台默认路径 + ** 通配兜底（GOPATH 搬到仍叫 go 的位置、GOCACHE 搬到
+# 仍叫 go-build 的位置同样命中）。`**/go` 刻意不用——任意项目里叫 go 的目录会被
+# 全部标成卡片（pnpm 对裸 **/store 的同一教训）；用两级深的 **/go/pkg/mod 兜底。
+# %GOPATH% / %GOCACHE% 不设分支——未设置时 shellexpand 整体回退成死分支（同
+# pip.toml 对 TMPDIR 的取舍）。
+# ---------------------------------------------------------------------------
+detect = [
+  "%USERPROFILE%/go",
+  "${HOME}/go",
+  "**/go/pkg/mod",
+  "%LOCALAPPDATA%/go-build",
+  "${HOME}/.cache/go-build",
+  "${HOME}/Library/Caches/go-build",
+  "**/go-build",
+]
+
+# 见文件头"设计取舍"：没有安全的基名片段，[match] 留空（name_contains 为空时
+# 匹配器不参与，误标风险为零）。
+[match]
+name_contains   = []
+must_have_child = []
+
+# ============================================================================
+# 模块缓存：glob 精确锚定 pkg/mod 目录自身（无尾部 /**），directory 粒度整树
+# 一条回收站记录；等同 go clean -modcache。detect 根是 GOPATH（~/go），
+# pkg/mod 是其严格后代，满足"scope 正向路径必须是某个 detect 根的严格后代"
+# 不变量（tests/pnpm_safety.rs 文件头）。注意当 **/go/pkg/mod 兜底 detect 命中
+# 把 pkg/mod 自身当扫描根时，find_matching_dirs 丢弃 path == root，该卡片零
+# 命中——改名的 GOPATH 本就检测不到，disclaimer 已说明。
+# ============================================================================
+
+[[scope]]
+id                  = "mod-cache"
+label               = "模块缓存 pkg/mod（解压源码 + 下载包，等同 go clean -modcache）"
+glob                = "**/go/pkg/mod"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"
+
+# 校验和数据库缓存（新版布局 pkg/sumdb/<db>；glob 尾部 * 命中 sum.golang.org
+# 目录，literal_separator(false) 下深层文件也命中，运行时 find_matching_dirs
+# 剪枝祖先/后代，实际回收单元是每个 <db> 目录——同 npm _npx 的取舍）。
+[[scope]]
+id                  = "sumdb"
+label               = "校验和数据库缓存 sumdb"
+glob                = "**/go/pkg/sumdb/*"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"
+
+# 构建缓存：只点名两位 hex 对象目录，file 粒度 + 30 天（对象 mtime = 编译时间，
+# 30 天内编译过的对象保留）。go-build 根下的 README / trim.txt / fuzz/ 不匹配。
+[[scope]]
+id       = "build-cache"
+label    = "构建缓存 go-build（30 天未用）"
+glob     = "**/go-build/[0-9a-f][0-9a-f]/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }

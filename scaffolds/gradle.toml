@@ -1,0 +1,96 @@
+# Gradle 清理 scaffold —— 只覆盖 GRADLE_USER_HOME 下的 caches/ 一棵树；wrapper
+# 发行版、daemon、native、android、.tmp 与项目级 .gradle 全部不动。
+# 2026-05-05 被 36-scaffold 清理删掉的 legacy gradle 没有 safety test（docs/
+# scaffold-requirements/STATUS.md 历史），本文件按 14-phase 流程重做。
+#
+# 2026-09-28 本机实测（Windows 11，Gradle 8.14.3，GRADLE_USER_HOME 未设置，
+# 只 ls 目录名，未读任何文件内容）：
+#   %USERPROFILE%/.gradle/ 一级 → { .tmp, android, caches, daemon, native,
+#     wrapper }（本机无 gradle.properties——按需创建的配置，红线仍保留 glob 外）。
+#   caches/ 一级 → { 8.14.3, CACHEDIR.TAG, jars-9, journal-1, modules-2 }：
+#     - modules-2/ → { files-2.1, gc.properties, metadata-2.107, modules-2.lock }
+#       ——依赖产物 CAS（jar/pom 按 sha1 寻址），数以万计小文件；
+#     - 8.14.3/ → { dependencies-accessors, file-changes, fileContent,
+#       fileHashes, gc.properties, generated-gradle-jars, groovy-dsl,
+#       javaCompile, jvms, md-rule, md-supplier, transforms }——新版 Gradle 把
+#       transforms 等派生缓存放进版本号目录（旧版的顶层 transforms-3/4 不存在
+#       于 8.14）；版本号随 Gradle 升级更换（8.14.3 → 9.x），glob 不能锚版本号；
+#     - jars-9/ → hash 命名的转换产物目录；journal-1/ → { file-access.bin,
+#       file-access.properties, journal-1.lock }；
+#     - CACHEDIR.TAG：头部自述 "cache directory tag created by Gradle"。
+#   daemon/8.14.3/ → daemon-<pid>.out.log（运行中 daemon 持有，删除会失败）。
+#   wrapper/dists/ → { CACHEDIR.TAG, gradle-8.14.3-bin }——当前在用的发行版。
+#   native/ → { 0.2.7, jansi, <sha256> }；android/ → { FakeDependency.jar }；
+#   .tmp/ → 空。
+#
+# 设计取舍：
+# - caches 整树一个 scope、directory 粒度（glob 精确锚定 caches 目录自身，不带
+#   尾部 /**）：modules-2 是 CAS 小文件海（conda pkgs / pnpm store 同形），且
+#   派生缓存的桶名随 Gradle 大版本漂移（顶层 transforms-3/4 → 版本目录内
+#   transforms；jars-9 的前辈是 jars-8）——按桶逐个点名维护不过来，而"删掉
+#   ~/.gradle/caches"本身就是社区对 Gradle 各种缓存问题的标准修复动作。整树
+#   一条回收站记录，下次构建重新下载依赖并重建派生缓存。
+# - [match] 刻意留空："gradle" 片段会命中克隆的 gradle 源码仓库与任意 gradle-*
+#   目录；GRADLE_USER_HOME 改名（gradle-home/）即使被 name_contains 标中，
+#   scope 锚定 .gradle 段也无法命中——改名的 home 检测不到，见 disclaimer。
+# - wrapper/dists 是当前在用的 Gradle 发行版（本机实测 gradle-8.14.3-bin 在
+#   其中），删除会打断现有构建——红线，不用更新请走 gradle wrapper 任务。
+#
+# lint:  cargo run -p pinkbin-scaffold-lint -- scaffolds/gradle.toml
+# test:  cargo test -p pinkbin-scaffold --test gradle_safety
+
+id          = "gradle"
+name        = "gradle"
+homepage    = "https://docs.gradle.org/current/userguide/directory_layout.html"
+# medium：caches 清掉后下次构建重新下载全部依赖（modules-2）并重建全部派生
+# 缓存与 transform（首次构建显著变慢）。与 npm / pip / pnpm / cargo / go-mod
+# （包缓存同评 medium）一致。
+risk        = "medium"
+disclaimer  = """\
+清理 Gradle 的用户级缓存树（GRADLE_USER_HOME/caches，含已下载依赖 modules-2、\
+按版本号组织的派生缓存与 transform、jars-9、journal-1），等同删除 ~/.gradle/caches。\
+删除后下次构建会重新下载全部依赖并重建派生缓存（需要网络，首次构建明显变慢）。\
+绝不删：Gradle 发行版（wrapper/dists，当前构建正在使用，要清理旧版本请用 \
+gradle wrapper 任务更新 wrapper 配置）、daemon 目录（运行中/历史 daemon 日志）、\
+native 与 android 目录、用户配置 gradle.properties（代理与发布凭据）、任何项目 \
+源码与 build.gradle / settings.gradle / gradlew / gradle/wrapper、项目级 .gradle \
+目录与项目 build 输出目录。\
+只覆盖默认位置：GRADLE_USER_HOME 重定位到不叫 .gradle 的路径时检测不到。\
+删除进行中的构建会因文件被占用而失败，先停止 daemon（gradle --stop）再清理。\
+所有删除走系统回收站，可还原。\
+"""
+
+# ---------------------------------------------------------------------------
+# detect：默认 GRADLE_USER_HOME（Windows 与 POSIX 同为 ~/.gradle）+ ** 通配
+# 兜底（home 搬到仍叫 .gradle 的位置同样命中；项目自带的 .gradle 目录也会被
+# 标成零命中的空卡片——scope 锚定 .gradle/caches 两段，误标不会多删东西，
+# 同 pip.toml 对 name_contains 短片段的取舍）。%GRADLE_USER_HOME% 不设分支
+# ——未设置时 shellexpand 整体回退成死分支（同 pip.toml 对 TMPDIR 的取舍）。
+# ---------------------------------------------------------------------------
+detect = [
+  "%USERPROFILE%/.gradle",
+  "${HOME}/.gradle",
+  "**/.gradle",
+]
+
+# 见文件头"设计取舍"：没有安全的基名片段，[match] 留空（name_contains 为空时
+# 匹配器不参与，误标风险为零）。
+[match]
+name_contains   = []
+must_have_child = []
+
+# ============================================================================
+# 唯一 scope：caches 整树，directory 粒度一条回收站记录。glob 精确锚定
+# .gradle/caches 目录自身（无尾部 /**）——树内文件在 glob 层零命中，不是红线
+# 候选，而是随整树一起走。detect 根 ~/.gradle 是它的严格父目录，满足"scope
+# 正向路径必须是某个 detect 根的严格后代"不变量（tests/pnpm_safety.rs 文件头）。
+# ============================================================================
+
+[[scope]]
+id                  = "caches"
+label               = "用户级缓存 caches（依赖 + 派生缓存，等同删 ~/.gradle/caches）"
+glob                = "**/.gradle/caches"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"
