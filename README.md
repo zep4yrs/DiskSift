@@ -145,17 +145,6 @@ DiskSift 站在 [Pinkbin](https://github.com/cccyd2003-qwq/pinkbin) 的肩膀上
 
 ---
 
-## 赞助商 · Sponsor
-
-<div align="center">
-
-<a href="https://api.novadiffusion.com/"><img src="docs/sponsors/novadiffusion.png" alt="NovaDiffusion API — 全网最靠谱、最安全、几乎最实惠的满血 Claude / GPT" width="640"></a>
-
-**全网最靠谱、最安全、几乎最实惠的满血 Claude / GPT** · 👉 **[api.novadiffusion.com](https://api.novadiffusion.com/)**
-
-</div>
-
----
 
 ## License
 
