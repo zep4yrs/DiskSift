@@ -38,7 +38,7 @@ import { cacheHitFor, pickAiTriageTargets, runAiTriage, FREE_AI_PATHS } from './
 
 // 版本规则（2026-09-27 用户定）：年份后两位.破坏性+1.新功能+1.补丁+1
 // Cargo/tauri 只认三段 semver，第四位补丁段仅在用户可见处展示。
-const APP_VERSION = '26.1.3.0';
+const APP_VERSION = '26.1.3.1';
 
 function isDriveRoot(p: string): boolean {
   // C: / C:\ / C:/  — anything beyond is a subfolder
@@ -81,6 +81,14 @@ const DEFAULT_BOTTOM = 150;
 const MIN_BOTTOM = 90;
 const MAX_BOTTOM = 420;
 const MIN_CENTER = 360;
+// f5-0 × f0-2 坐标系统一（独立复核项）：非默认字号档下 .app-v2 带 CSS zoom
+// （styles.css：sm 0.88 / lg 1.04 / xl 1.12），侧板宽度状态是 zoom 子树内的
+// 逻辑 px，而 window.innerWidth 是视觉像素——侧板钳制（dragSidebar/dragAI/
+// clampPanels/初值）必须先把视口换算成逻辑 px，MIN_CENTER=360 的「窄窗不把
+// 中央区压成细条」才在所有字号档严格成立（缺省档 zoom=1 无影响）。
+const FS_ZOOM: Record<string, number> = { sm: 0.88, lg: 1.04, xl: 1.12 };
+const viewportLogical = () =>
+  window.innerWidth / (FS_ZOOM[document.documentElement.dataset.fs ?? ''] ?? 1);
 
 // 操作记录筛选（第三波增量，spec §2 侧栏 records 面板 = 筛选分段控件）
 const RECORD_ACTIONS: { id: 'all' | UndoEntry['action']; label: string; icon: string }[] = [
@@ -126,6 +134,7 @@ export default function App() {
   const walkIndex = useStore((s) => s.walkIndex);
   const walkThresholdGB = useStore((s) => s.walkThresholdGB);
   const reclaimedBytes = useStore((s) => s.reclaimedBytes);
+  const quarantinedCount = useStore((s) => s.quarantinedCount);
   const setWalk = useStore((s) => s.setWalk);
   const setThreshold = useStore((s) => s.setThreshold);
   // tab 床（spec §3）
@@ -159,6 +168,18 @@ export default function App() {
   }, [fsTier]);
   const cycleFsTier = () =>
     setFsTier((t) => (t === 'md' ? 'sm' : t === 'sm' ? 'lg' : t === 'lg' ? 'xl' : 'md'));
+
+  // ── 「只看可清理」聚焦模式（triage-overlay-spec §2.1.2，pinkbin.focusClean） ──
+  // 状态提升在 App：图例（地图 tab 工具行）与空间图/树视图分处不同子树，经 props
+  // 下传；开启后非可清理块/行淡至 12%（判定读 applyCache 合并索引：user-ignored
+  // 条目在 applyCache 被跳过、回落规则判定，isFocusDimmed 只读合并结果）。
+  const [focusClean, setFocusClean] = useState<boolean>(
+    () => localStorage.getItem('pinkbin.focusClean') === '1',
+  );
+  useEffect(() => {
+    localStorage.setItem('pinkbin.focusClean', focusClean ? '1' : '0');
+  }, [focusClean]);
+  const toggleFocusClean = () => setFocusClean((v) => !v);
 
   // ── 区域三开关（spec §2：侧栏/底面板/右 AI 面板任意组合，Trae 五态全可达） ──
   const [regions, setRegions] = useState<{ sidebar: boolean; bottom: boolean; ai: boolean }>(() => {
@@ -195,11 +216,17 @@ export default function App() {
   // ── 区域几何（Splitter 拖拽 + 双击重置；持久化键为 v2 新键） ──
   const [sidebarW, setSidebarW] = useState<number>(() => {
     const v = Number(localStorage.getItem('pinkbin.sidebarW'));
-    return Number.isFinite(v) && v >= MIN_SIDEBAR ? v : DEFAULT_SIDEBAR;
+    const raw = Number.isFinite(v) && v >= MIN_SIDEBAR ? v : DEFAULT_SIDEBAR;
+    // f0-2：历史持久值可能比当前窗口宽——同 resize 钳制（留出 AI 侧板最小宽），
+    // 逻辑视口换算见 viewportLogical。
+    const budget = Math.max(MIN_SIDEBAR, viewportLogical() - 48 - 8 - MIN_CENTER);
+    return Math.min(raw, Math.max(MIN_SIDEBAR, budget - MIN_AI));
   });
   const [aiW, setAiW] = useState<number>(() => {
     const v = Number(localStorage.getItem('pinkbin.aiW'));
-    return Number.isFinite(v) && v >= MIN_AI ? v : DEFAULT_AI;
+    const raw = Number.isFinite(v) && v >= MIN_AI ? v : DEFAULT_AI;
+    const budget = Math.max(MIN_AI, viewportLogical() - 48 - 8 - MIN_CENTER);
+    return Math.min(raw, Math.max(MIN_AI, budget - MIN_SIDEBAR));
   });
   const [bottomH, setBottomH] = useState<number>(() => {
     const v = Number(localStorage.getItem('pinkbin.bottomH'));
@@ -208,17 +235,34 @@ export default function App() {
   useEffect(() => { localStorage.setItem('pinkbin.sidebarW', String(sidebarW)); }, [sidebarW]);
   useEffect(() => { localStorage.setItem('pinkbin.aiW', String(aiW)); }, [aiW]);
   useEffect(() => { localStorage.setItem('pinkbin.bottomH', String(bottomH)); }, [bottomH]);
+  // f0-2：窄窗约束——侧板是固定宽，窗口缩窄后会把中央 treemap 压扁。两侧板
+  // 共享 budget = winW - 48(活动栏) - 8(splitter) - MIN_CENTER，只缩不放大；
+  // 各自给对方留最小宽度。localStorage 初值（懒初始化）走同一钳制。
+  useEffect(() => {
+    const clampPanels = () => {
+      const budget = Math.max(MIN_SIDEBAR, viewportLogical() - 48 - 8 - MIN_CENTER);
+      setSidebarW((w) => Math.min(w, Math.max(MIN_SIDEBAR, budget - (regions.ai ? MIN_AI : 0))));
+      setAiW((w) => Math.min(w, Math.max(MIN_AI, budget - (regions.sidebar ? MIN_SIDEBAR : 0))));
+    };
+    window.addEventListener('resize', clampPanels);
+    return () => window.removeEventListener('resize', clampPanels);
+    // f5-0：字号档位切换改变 zoom 但不触发 resize——fsTier 入 deps 让换档
+    // 后立即按新逻辑视口重钳（dataset.fs 由前面的 effect 先行更新）。
+  }, [regions.ai, regions.sidebar, fsTier]);
   const dragSidebar = (dx: number) => {
     setSidebarW((w) => {
-      const winW = window.innerWidth;
-      const others = 48 + (regions.ai ? aiW : 0);
+      // f5-0 × f0-2：逻辑视口（见 viewportLogical 注释）
+      const winW = viewportLogical();
+      // f5-1：others 补 +8（两条 splitter 宽度），与 dragAI 口径对称——
+      // 缺 8px 时侧栏可比理论最大值多占 8px，挤压中央区。
+      const others = 48 + (regions.ai ? aiW : 0) + 8;
       const maxSide = Math.max(MIN_SIDEBAR, winW - others - MIN_CENTER);
       return Math.max(MIN_SIDEBAR, Math.min(maxSide, w + dx));
     });
   };
   const dragAI = (dx: number) => {
     setAiW((w) => {
-      const winW = window.innerWidth;
+      const winW = viewportLogical();
       const others = 48 + (regions.sidebar ? sidebarW : 0) + 8 /* 两条 splitter */;
       const maxAi = Math.max(MIN_AI, winW - others - MIN_CENTER);
       return Math.max(MIN_AI, Math.min(maxAi, w - dx));
@@ -326,12 +370,16 @@ export default function App() {
 
   const drillTo = (tabId: string, n: Node) => {
     select(n.path);
-    if (n.children?.length) setMapRoots((m) => ({ ...m, [tabId]: n }));
+    // 换根判定用 is_dir 而非 children?.length：空目录（mock 的 ProgramData/
+    // Eastmoney 叶子、真实扫描里的空文件夹）也是合法图根——按 children 判会
+    // 跳过 setMapRoots，表现为「选中态变了、图停在上一个根」（2d-19 残留）。
+    // 文件仍不换根（is_dir=false），只同步选中与树聚焦。
+    if (n.is_dir) setMapRoots((m) => ({ ...m, [tabId]: n }));
     setTreeFocusPath(n.path); // 资源管理器跟随：展开祖先链并滚动定位
   };
 
-  // TreeView 专用选中：普通选中之外，若活动 tab 是空间图且目标目录在其当前
-  // 子树内，300ms 防抖后自动下钻（拖动选择不狂跳）；跨盘/不在子树内/非目录不动。
+  // TreeView 专用选中：普通选中之外，若活动 tab 是空间图，300ms 防抖后自动
+  // 下钻跟随（拖动选择不狂跳）；跨盘/非目录不动。目标从整棵扫描根解析。
   const selectFromTree = (p: string) => {
     select(p);
     if (mapFollowTimer.current !== null) window.clearTimeout(mapFollowTimer.current);
@@ -340,11 +388,13 @@ export default function App() {
       const cur = navRef.current;
       const tab = cur.activeTabId ? cur.openTabs.find((t) => t.id === cur.activeTabId) : null;
       if (!tab || tab.kind !== 'map' || !cur.root) return;
-      if (tab.crumb && tab.crumb !== driveOf(cur.root.path)) return; // 该 tab 属其他盘
+      if (tab.crumb && driveOf(tab.crumb) !== driveOf(cur.root.path)) return; // 该 tab 属其他盘
       const mapNode = cur.mapRoots[tab.id] ?? cur.root;
       if (p === mapNode.path) return; // 已是当前空间图根
-      const target = findNodeByPath(mapNode, p);
-      if (target && target.is_dir) drillTo(tab.id, target); // 子树内目录才跟随
+      // 从整棵扫描根解析目标——只查当前图根子树会让手动下钻后的图
+      // 永久卡死（点子树外目录静默失效，换目录看图的主路径被堵）。
+      const target = findNodeByPath(cur.root, p);
+      if (target && target.is_dir) drillTo(tab.id, target); // 目录才跟随（换根即图跟着走）
     }, 300);
   };
 
@@ -434,7 +484,18 @@ export default function App() {
     if (!root) return;
     const items: WalkItem[] = buildWalkQueue(root, walkThresholdBytes)
       .map((w) => ({ ...w, status: 'pending' as const }));
+    // f2-1：空队列不再静默开 tab——此前照样 openTab('walk')，页面只有
+    // 「巡查待启动」零反馈。给出原因与出路（调阈值）后留在原地。
+    if (items.length === 0) {
+      pushOut('warn', `没有大于阈值 ${walkThresholdGB} GB 的目录，调低阈值再试`);
+      return;
+    }
     const idx = jumpTo ? items.findIndex((w) => w.node.path === jumpTo) : -1;
+    // f2-1：jumpTo 不在队列（低于阈值 / never-touch 过滤）不再静默回退队首，
+    // 至少给一条可见提示。
+    if (jumpTo && idx < 0) {
+      pushOut('warn', `「${jumpTo}」不在巡查队列（可能低于阈值或属系统保护区），已从队首开始`);
+    }
     setWalk(items, idx >= 0 ? idx : 0);
     if (jumpTo) select(jumpTo);
     // spec §3 侧栏联动：开巡查 tab
@@ -558,8 +619,24 @@ export default function App() {
       return (
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           <div className="crumb">
-            {mapNode
-              ? segs.map((seg, i) => {
+            {/* 2c-13：面包屑段包进弹性容器（.crumb-path），深路径时自身收缩、
+                overflow 裁浅层保最深段，右侧 AI 按钮/图例/统计不再被顶出。
+                title 给完整路径兜底（段被裁时悬停可读全路径）。 */}
+            {mapNode ? (
+              <span className="crumb-path" title={mapNode.path}>
+                {/* f0-1：深路径（>4 段）裁剪后浅层段不可点——行首给「⌂」一键
+                    回扫描根，免逐段点面包屑或重扫。 */}
+                {segs.length > 4 && root && (
+                  <>
+                    <button
+                      className="crumb-link"
+                      title={`回到扫描根：${root.path}`}
+                      onClick={() => drillTo(tab.id, root)}
+                    >⌂</button>
+                    <span className="crumb-sep">›</span>
+                  </>
+                )}
+                {segs.map((seg, i) => {
                   acc = i === 0 ? seg + '\\' : (acc.endsWith('\\') ? acc + seg : acc + '\\' + seg);
                   const n = findNodeByPath(root, acc) ?? findNodeByPath(root, seg);
                   return (
@@ -572,9 +649,14 @@ export default function App() {
                       {i < segs.length - 1 && <span className="crumb-sep">›</span>}
                     </span>
                   );
-                })
-              : <span className="path-clip">{tab.crumb ?? tab.title}</span>}
-            <div className="grow" />
+                })}
+              </span>
+            ) : (
+              <>
+                <span className="path-clip">{tab.crumb ?? tab.title}</span>
+                <div className="grow" />
+              </>
+            )}
             {/* AI 批量分诊（spec §6/§7：半自动确认 + 串行可停 + 未配置走免费接入引导） */}
             {aiPhase === 'running' ? (
               <span className="ai-triage-strip">
@@ -603,8 +685,9 @@ export default function App() {
                 <Icon name="sparkles" size={12} /> AI 分诊
               </button>
             )}
-            {/* 分诊图例（triage-overlay-spec §3：图例条常驻 tab 工具行） */}
-            <TriageLegend />
+            {/* 分诊图例（triage-overlay-spec §3：图例条常驻 tab 工具行）；
+                聚焦开关状态提升在 App，经 props 下传（§2.1.2） */}
+            <TriageLegend focusClean={focusClean} onToggleFocusClean={toggleFocusClean} />
             {mapNode && (
               <span className="sz">{formatBytes(mapNode.size)} · {mapNode.file_count.toLocaleString()} 文件</span>
             )}
@@ -620,6 +703,7 @@ export default function App() {
                   selectedPath={selectedPath}
                   verdicts={verdicts.verdicts}
                   cleanableUnder={verdicts.cleanableUnder}
+                  focusClean={focusClean}
                   onOpen={(p) => {
                     const n = findNodeByPath(root, p);
                     if (n) drillTo(tab.id, n);
@@ -675,6 +759,7 @@ export default function App() {
               <TriageView
                 root={root}
                 thresholdBytes={walkThresholdBytes}
+                verdicts={verdicts.verdicts}
                 onJumpToWalk={(it: Triaged) => startWalk(it.node.path)}
                 onSelect={select}
               />
@@ -698,7 +783,7 @@ export default function App() {
       return (
         <div className="center-body">
           <ErrorBoundary fallbackLabel="脚本详情渲染失败">
-            <Studio focusId={sc?.id} />
+            <Studio key={tab.id} focusId={sc?.id} />
           </ErrorBoundary>
         </div>
       );
@@ -770,7 +855,8 @@ export default function App() {
           <span className="path-clip" style={{ maxWidth: 320 }} title={pickedPath || undefined}>
             {pickedPath || '选择磁盘或文件夹'}
           </span>
-          <button className="btn ghost" onClick={() => void pickDirectory()}>选择…</button>
+          {/* §2b-9：次级按钮归一为标准 .btn（有边框），与右侧 primary 扫描成对 */}
+          <button className="btn" onClick={() => void pickDirectory()}>选择…</button>
           <button className="btn primary" onClick={() => void scan()} disabled={!pickedPath || scanning}>
             <Icon name="scan-line" size={13} /> {scanning ? '扫描中…' : '扫描'}
           </button>
@@ -798,6 +884,8 @@ export default function App() {
             onSelect={selectFromTree}
             focusPath={treeFocusPath}
             verdicts={verdicts.verdicts}
+            cleanableUnder={verdicts.cleanableUnder}
+            focusClean={focusClean}
           />
         ) : (
           <div className="side-info">
@@ -817,6 +905,14 @@ export default function App() {
               <span className="side-line-name">本次已释放</span>
               <span className="side-line-meta">{formatBytes(reclaimedBytes)}</span>
             </div>
+            {/* f2-3：隔离不释放空间，单独计件数展示（不再混入已释放字节） */}
+            {quarantinedCount > 0 && (
+              <div className="side-line">
+                <Icon name="archive-restore" size={14} />
+                <span className="side-line-name">已隔离</span>
+                <span className="side-line-meta">{quarantinedCount} 项</span>
+              </div>
+            )}
             <div className="side-line">
               <Icon name="gauge" size={14} />
               <span className="side-line-name">大小阈值</span>
@@ -828,7 +924,12 @@ export default function App() {
                 value={walkThresholdGB}
                 onChange={(e) => {
                   const v = Number(e.target.value);
-                  if (Number.isFinite(v) && v >= 1) setThreshold(v);
+                  if (!Number.isFinite(v) || v < 1) return;
+                  // f2-1：上限钳到 100 GB（与输入框 max 一致；超大阈值只会造出
+                  // 空队列），钳制时给出可见提示。
+                  const clamped = Math.min(v, 100);
+                  if (v > 100) pushOut('warn', '巡查阈值上限 100 GB，已自动调整');
+                  setThreshold(clamped);
                 }}
                 title="巡查只审阅大于该体积的目录"
               />
@@ -930,7 +1031,9 @@ export default function App() {
           title={theme === 'dark' ? '切换到浅色' : '切换到深色'}
           aria-label="切换主题"
         >
-          {theme === 'dark' ? '☀' : '☾'}
+          {/* 主题切换：sun/moon 均 docs/_icons.json 已提取键（Icon.tsx 渲染），
+              替换原文本字符方案（§1-D 图标纪律） */}
+          <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={14} />
         </button>
       </header>
 

@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { ChevronRight, Pause } from 'lucide-react';
 import { api } from '../api';
 import { useStore } from '../store';
+import { isNeverTouch } from '../triage';
 import { AdvisorCard } from './AdvisorCard';
 import { ScaffoldPanel } from './ScaffoldPanel';
 import { formatBytes } from '../format';
@@ -13,6 +14,7 @@ export function AutoWalk() {
   const advance = useStore((s) => s.advanceWalk);
   const patch = useStore((s) => s.patchWalkItem);
   const reclaimed = useStore((s) => s.reclaimedBytes);
+  const quarantinedCount = useStore((s) => s.quarantinedCount);
   const addReclaimed = useStore((s) => s.addReclaimed);
   const scaffolds = useStore((s) => s.scaffolds);
 
@@ -21,6 +23,9 @@ export function AutoWalk() {
 
   useEffect(() => {
     if (!item || scaffold || item.advice || item.status === 'done') return;
+    // v26.1.2 高危修复：NEVER_TOUCH 保护区不发起 advise（元数据也不外发），
+    // 卡片由 AdvisorCard 的 protected 分支接管。
+    if (isNeverTouch(item.node.path)) return;
     let cancelled = false;
     // 为什么不在请求前 patch status = 'advising'：那会改掉 walkQueue[i] 的对象
     // 身份，触发本 effect 重跑并把在途请求 cleanup 掉（cancelled = true），
@@ -66,6 +71,8 @@ export function AutoWalk() {
       <div className="walk-bar">
         <div>正在审阅 <strong>{progress}</strong></div>
         <div>已释放 <strong>{formatBytes(reclaimed)}</strong></div>
+        {/* f2-3：隔离不释放空间，按件数单独展示 */}
+        {quarantinedCount > 0 && <div>已隔离 <strong>{quarantinedCount}</strong> 项</div>}
         <button className="ghost" onClick={() => advance()} title="Skip">
           <Pause size={14} /> 跳过
         </button>

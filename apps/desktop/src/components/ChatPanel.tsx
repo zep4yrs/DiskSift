@@ -14,6 +14,13 @@ function uid() {
   return Math.random().toString(36).slice(2);
 }
 
+// 未配置引导文案（v26.1.2 复核：三条触发路径共用一份，同会话只出一次）。
+// 两个锚点串：判定锚 = advisorClient 抛错前缀含「未配置」（advisorClient.ts
+// runChatRaw 的 throw，§2c-16 约定不能动）；气泡锚 = 本文案前缀「AI 还没配置」
+// （unconfiguredGuidedRef 惰性初值扫历史用，改文案前缀须同步）。
+const UNCONFIGURED_GUIDANCE =
+  'AI 还没配置：点活动栏底部的「设置」，填一个 API key（或本地 Ollama）后，扫描总览与提问就能用了。';
+
 function findNodeByPath(root: Node | null, path: string): Node | null {
   if (!root) return null;
   if (root.path === path) return root;
@@ -57,6 +64,7 @@ export function ChatPanel() {
   const chat = useStore((s) => s.chat);
   const pushTurn = useStore((s) => s.pushChatTurn);
   const patchTurn = useStore((s) => s.patchChatTurn);
+  const removeChatTurn = useStore((s) => s.removeChatTurn);
   const setBusy = useStore((s) => s.setChatBusy);
   const resetChat = useStore((s) => s.resetChat);
   const scaffolds = useStore((s) => s.scaffolds);
@@ -71,9 +79,37 @@ export function ChatPanel() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const overviewFiredFor = useRef<string | null>(null);
-  // 未配置报错去重用：读最新 turns（闭包里的 chat.turns 会过期）
-  const turnsRef = useRef(chat.turns);
-  turnsRef.current = chat.turns;
+  // 「未配置」引导去重（v26.1.2 复核）：会话内只引导一次，配置好可再引导。
+  // - 惰性初值扫历史：AI 面板折叠会卸载本组件（App regions.ai 条件渲染），
+  //   重挂后从 turns 恢复「已引导」记忆，避免重开面板又引导一遍；
+  // - 会话清空（turns 空，resetChat）= 新会话，复位可再引导；
+  // - 任一次 AI 调用成功即复位：成功证明配置已好，之后再坏是新情况。
+  const unconfiguredGuidedRef = useRef(false);
+  {
+    const guidedInHistory = chat.turns.some(
+      (t) => t.role === 'assistant' && t.text.includes('AI 还没配置'),
+    );
+    if (chat.turns.length === 0) unconfiguredGuidedRef.current = false;
+    else if (guidedInHistory) unconfiguredGuidedRef.current = true;
+  }
+
+  /** 抛错文案是否属「未配置引导」类：advisorClient 的两个配置类 throw——
+   *  「AI 未配置 — …」与「API key 读取失败（加密存储里没有或已失效）…」
+   *  （后者用户视角同样是去设置重配，一并走引导去重）。 */
+  const isUnconfiguredError = (msg: string) =>
+    msg.includes('未配置') || msg.includes('API key 读取失败');
+
+  /** 未配置失败的统一收场：首见给引导气泡，其后同类失败直接删掉占位轮
+   *  （f4-1：旧实现 patch text:'' 只清不删，空白灰卡留在面板里，面板开关
+   *  一次还能看到 +1 张）。三条路径（总览/手动提问/Studio 卡片）共用。 */
+  const patchUnconfigured = (turnId: string) => {
+    if (unconfiguredGuidedRef.current) {
+      removeChatTurn(turnId);
+    } else {
+      unconfiguredGuidedRef.current = true;
+      patchTurn(turnId, { text: UNCONFIGURED_GUIDANCE, pending: false });
+    }
+  };
 
   const node = chat.node;
 
@@ -181,9 +217,15 @@ export function ChatPanel() {
         `用户在 Studio 里点了【${sc.name}】这张卡片。下面是这个清理脚本的元数据，以及本次扫描中匹配到的所有位置（每个位置含 top children + 抽样路径）。请按位置分别说明里面是什么、哪些可以删、用什么方式删——不要只挑一个位置说：\n${JSON.stringify(ctx, null, 2)}`,
         userText,
       );
+      unconfiguredGuidedRef.current = false; // 成功 = 配置已好，之后可再引导
       patchTurn(turnId, { text: reply, pending: false });
     } catch (e) {
-      patchTurn(turnId, { text: `AI 调用失败：${String(e)}`, pending: false });
+      const msg = String(e);
+      if (isUnconfiguredError(msg)) {
+        patchUnconfigured(turnId);
+      } else {
+        patchTurn(turnId, { text: `AI 调用失败：${msg}`, pending: false, error: true });
+      }
     } finally {
       setBusy(false);
     }
@@ -201,26 +243,18 @@ export function ChatPanel() {
     try {
       const summary = buildOverviewSummary(r);
       const reply = await overviewChat(summary);
+      unconfiguredGuidedRef.current = false; // 成功 = 配置已好，之后可再引导
       patchTurn(turnId, { text: reply, pending: false });
     } catch (e) {
       const msg = String(e);
       // AI 未配置的失败每次扫描都重发 = 面板里刷屏重复报错：
-      // 只在首次给出引导文案，后续扫描以空文本收场（不新增气泡）。
-      if (msg.includes('未配置')) {
-        const already = turnsRef.current.some(
-          (t) => t.role === 'assistant' && t.text.includes('AI 还没配置'),
-        );
-        patchTurn(turnId, {
-          text: already
-            ? ''
-            : 'AI 还没配置：点右上角 ⚙ 填一个 API key（或本地 Ollama）后，扫描完成会自动生成整体解析。',
-          pending: false,
-        });
+      // 统一走 patchUnconfigured（首见引导，其后空文本收场）。
+      if (isUnconfiguredError(msg)) {
+        patchUnconfigured(turnId);
       } else {
-        patchTurn(turnId, {
-          text: `（AI 总览失败：${msg}）\n你可以从左边把任意文件夹/文件拖进来问。`,
-          pending: false,
-        });
+        // f4-2：错误轮打 error 标——多轮 history 排除，避免错误文本被塞进
+        // 后续每次请求带偏模型；渲染不变。
+        patchTurn(turnId, { text: `（AI 总览失败：${msg}）\n你可以从左边把任意文件夹/文件拖进来问。`, pending: false, error: true });
       }
     } finally {
       setBusy(false);
@@ -240,11 +274,11 @@ export function ChatPanel() {
     const dropDesc = drops.length > 0 ? `（关于：${drops.map((d) => d.path).join('、')}）` : '';
     const imgDesc = images.length > 0 ? `（带 ${images.length} 张图片）` : '';
     const userText = [text, dropDesc, imgDesc].filter(Boolean).join('\n');
-    // 多轮上下文：只带已完成的 user/assistant 轮（system 通知、pending 占位不进
-    // 历史），最多取最近 20 轮控制 token。在 push 当前消息之前取，保证当前这条
-    // 不算在历史里。
+    // 多轮上下文：只带已完成的 user/assistant 轮（system 通知、pending 占位、
+    // error 错误轮不进历史——错误文本回灌只会带偏下一轮），最多取最近 20 轮
+    // 控制 token。在 push 当前消息之前取，保证当前这条不算在历史里。
     const history: ChatHistoryTurn[] = chat.turns
-      .filter((t) => !t.pending && t.role !== 'system')
+      .filter((t) => !t.pending && t.role !== 'system' && !t.error)
       .slice(-20)
       .map((t) => ({ role: t.role as ChatHistoryTurn['role'], text: t.text }));
     pushTurn({ id: uid(), role: 'user', text: userText });
@@ -273,9 +307,17 @@ export function ChatPanel() {
         images.length > 0 ? images.map((i) => ({ dataUrl: i.dataUrl, mimeType: i.mimeType })) : undefined,
         history,
       );
+      unconfiguredGuidedRef.current = false; // 成功 = 配置已好，之后可再引导
       patchTurn(turnId, { text: reply, pending: false });
     } catch (e) {
-      patchTurn(turnId, { text: `AI 调用失败：${String(e)}`, pending: false });
+      const msg = String(e);
+      // 手动提问此前未做去重：未配置时每发一条就刷一个「AI 调用失败」气泡，
+      // 现与总览/Studio 同走 patchUnconfigured（同会话引导一次）。
+      if (isUnconfiguredError(msg)) {
+        patchUnconfigured(turnId);
+      } else {
+        patchTurn(turnId, { text: `AI 调用失败：${msg}`, pending: false, error: true });
+      }
     } finally {
       setBusy(false);
     }
@@ -494,7 +536,8 @@ export function ChatPanel() {
 
 function AdviceCard({ advice }: { advice: AdvisorResponse }) {
   const Icon = advice.risk === 'low' ? ShieldCheck : advice.risk === 'medium' ? ShieldAlert : ShieldX;
-  const color = advice.risk === 'low' ? '#5fcf95' : advice.risk === 'medium' ? '#ffb37a' : '#ff5d7a';
+  // §1-B：风险色走语义令牌（--risk-* 桥 --ok/--warn/--danger）
+  const color = advice.risk === 'low' ? 'var(--risk-low)' : advice.risk === 'medium' ? 'var(--risk-med)' : 'var(--risk-high)';
   return (
     <div className="advice-pill" style={{ borderColor: color }}>
       <Icon size={14} style={{ color }} />

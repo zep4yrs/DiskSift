@@ -216,6 +216,19 @@ function extractAnthropicText(data: unknown): string {
   return text;
 }
 
+// response_format 兼容判定：免费接入三路径（GLM-4-Flash 官方免费档、硅基流动
+// 部分免费模型、Ollama 本地/其 OpenAI 兼容层）都不支持 json_object，首发带该
+// 参数会直接 4xx。判定规则：任何 4xx 一律视为「参数被拒」（鉴权/限流类误伤
+// 只是多一次注定失败的重试，第二次的错误原样抛出，语义不变）；5xx 等其余
+// 状态码兜底看错误文本是否点名该参数（各网关措辞不一，response_format /
+// json_object / json mode / json_mode 都算命中）。导出便于纯逻辑单测；
+// Rust 侧 crates/advisor 的 is_response_format_rejection 与此处保持同规则。
+export function isResponseFormatRejection(status: number, errText: string): boolean {
+  if (status >= 400 && status < 500) return true;
+  const t = errText.toLowerCase();
+  return ['response_format', 'json_object', 'json mode', 'json_mode'].some((k) => t.includes(k));
+}
+
 // 契约：settings.apiKey 必须已解析（调用方先 await ensureApiKey 再把明文塞回
 // settings）。本函数不自己去解密，因为浏览器/内存两条来源的取值时机在调用方手里。
 export async function callAdvisor(
@@ -227,21 +240,40 @@ export async function callAdvisor(
 
   if (settings.provider === 'openai') {
     const url = (settings.baseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
-    const r = await fetch(`${url}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${settings.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: settings.model,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userPrompt },
-        ],
-      }),
-    });
+    const send = (withFormat: boolean) =>
+      fetch(`${url}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${settings.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: settings.model,
+          // response_format 兼容：① 首选仍带（主流网关靠它保证纯 JSON）；
+          // ② 被上游拒绝（4xx / 错误文本点名 json mode，见
+          // isResponseFormatRejection）→ 去掉该字段原样重试一次；
+          // ③ 目标判定为 ollama（11434 //api/chat 本地模型）→ 首发就不带，
+          // 免一次注定失败的请求。retry 计数防循环：最多回退一次。
+          ...(withFormat ? { response_format: { type: 'json_object' as const } } : {}),
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: userPrompt },
+          ],
+        }),
+      });
+    const firstWithFormat = detectProvider(url) !== 'ollama';
+    let formatRetries = 0;
+    let r = await send(firstWithFormat);
+    if (!r.ok && firstWithFormat && formatRetries < 1) {
+      // errText 只读一次（fetch body 不可重读），重试不成立时用它直接抛。
+      const errText = await r.text().catch(() => '');
+      if (isResponseFormatRejection(r.status, errText)) {
+        formatRetries += 1;
+        r = await send(false);
+      } else {
+        throw new Error(`OpenAI ${r.status}: ${errText}`);
+      }
+    }
     if (!r.ok) throw new Error(`OpenAI ${r.status}: ${await r.text()}`);
     const data = await r.json();
     raw = data?.choices?.[0]?.message?.content ?? '';
@@ -396,7 +428,9 @@ async function runChatRaw(
 ): Promise<string> {
   const settings = loadSettings();
   if (!isConfigured(settings)) {
-    throw new Error('AI 未配置 — 在右上角的设置里填一个 API key');
+    // §2c-16：指路改活动栏底部（设置按钮实际位置）；「未配置」前缀是
+    // ChatPanel 防刷屏去重的判定串（msg.includes('未配置')），不能动。
+    throw new Error('AI 未配置 — 点活动栏底部的「设置」，填一个 API key');
   }
   // key 取值是 async（可能要走一次 DPAPI IPC），所以整条取 key 路径改 await。
   const apiKey = (await ensureApiKey(settings)) ?? '';

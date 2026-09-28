@@ -58,6 +58,18 @@ export const VERDICT_META: Record<Verdict, { label: string; color: string; descr
 
 const SYSTEM_REASON = '系统目录或用户文档，绝对不动';
 
+/** 五判定 → TriageView 五桶桥（v26.1.2 复核 ①：列表分组与图层判定同口径）。
+ *  decide / migrate 同归 heavy（「要不要清你说了算」族，非一键回收面）；
+ *  uncertain 即未定 → unknown（继续留在「AI 不确定」组）；system 对 system。
+ *  只对 entry.source === 'ai' 的条目使用——规则条目与 classify 同构，重排反而
+ *  会丢 heavy/stale/unknown 的桶内区分（decide 判定不携带这个信息）。 */
+export function verdictToBucket(v: Verdict): 'safe' | 'heavy' | 'system' | 'unknown' {
+  if (v === 'safe') return 'safe';
+  if (v === 'system') return 'system';
+  if (v === 'uncertain') return 'unknown';
+  return 'heavy';
+}
+
 const CACHE_VERSION = 1;
 
 // ── 判定缓存文件（triage-cache.json）读写 ────────────────────────────────
@@ -155,7 +167,15 @@ export function buildVerdicts(root: Node, scaffolds: Scaffold[], thresholdBytes:
  *  不再下钻（n.size 已含整个子树，再叠加 safe 子目录的聚合会重复计数：
  *  P=10GB safe、子 C=2GB safe → 徽标会虚显示 12GB）。被封顶跳过的嵌套
  *  safe 子目录不产生徽标条目——不可见：徽标（pill）与详情卡「内含可清理」
- *  行对 verdict=safe 的目录本就不展示。 */
+ *  行对 verdict=safe 的目录本就不展示。
+ *  口径（v26.1.2 复核 ①）：入参 verdicts 必须是 applyCache 合并后的索引——
+ *  一路径恰一 entry（applyCache 优先级：scaffold/system 规则终审 > AI 覆盖
+ *  占位），user-ignored 条目被跳过即回落规则判定；safe 封顶不下钻保证嵌套
+ *  safe 不重复计数 → 缓存判定/规则判定/user-ignored 三来源不重不漏。与
+ *  TriageView 分组计数的口径差仅两处、均为有意保留：① 列表保持 ≥ 巡查阈值
+ *  门（空态文案「没找到大于阈值的目录」），徽标额外收录阈值以下的 scaffold
+ *  命中 safe（发现面，spec §2.1.1「看到徽标 = 下面有货」）；② 列表 safe 桶
+ *  经 verdictToBucket 桥接后与徽标同以「最终判定 = safe」为可清理口径。 */
 export function aggregateCleanable(root: Node, verdicts: Map<string, VerdictEntry>): Map<string, number> {
   const out = new Map<string, number>();
   const visit = (n: Node): number => {
@@ -173,6 +193,22 @@ export function aggregateCleanable(root: Node, verdicts: Map<string, VerdictEntr
   };
   visit(root);
   return out;
+}
+
+/** 「只看可清理」聚焦模式的淡化判定（spec §2.1.2：非可清理块淡至 12% 透明度）。
+ *  判定来源 = applyCache 合并后的索引（规则 + AI + 忽略语义）：user-ignored 条目
+ *  在 applyCache 里被跳过（triage-cache.ts §applyCache 注释：不上 AI 色、回落
+ *  规则判定/无判定），本函数只读合并结果，忽略语义天然正确。
+ *  可清理 = 自身判定 safe；祖先块虽非 safe 但子树内含可清理字节
+ *  （cleanableUnder > 0，挂 🟢 聚合徽标的发现面，spec §2.1.1）同样保持可见——
+ *  spec 本节的落点是「深层缓存目录一眼全可见」，把祖先链也压暗会让徽标一起
+ *  消失，发现路径反而断掉。其余（含无判定的小目录/文件）淡显。 */
+export function isFocusDimmed(
+  entry: VerdictEntry | null | undefined,
+  cleanableUnder: number | undefined,
+): boolean {
+  if (entry?.verdict === 'safe') return false;
+  return (cleanableUnder ?? 0) === 0;
 }
 
 /** 缓存/AI 判定并入规则判定 Map（同一张 Map，渲染层无感知，spec §2「规则先行，AI 兜底」）。

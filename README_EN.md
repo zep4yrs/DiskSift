@@ -23,12 +23,12 @@ Open-source disk cleaner. Scan a whole drive in seconds to see where the bytes w
 ## Download
 
 <p align="center">
-  <a href="https://github.com/cccyd2003-qwq/pinkbin/releases/latest"><img src="https://img.shields.io/badge/⬇_Download_Latest_(Windows)-ff69b4?style=for-the-badge&logo=windows&logoColor=white" height="42"></a>
+  <a href="https://github.com/Map1eBr1dge/DiskSift/releases/latest"><img src="https://img.shields.io/badge/⬇_Download_Latest_(Windows)-ff69b4?style=for-the-badge&logo=windows&logoColor=white" height="42"></a>
 </p>
 
 | Platform | File | Notes |
 |---|---|---|
-| **Windows 10 / 11 (x64)** | [`Pinkbin_x.x.x_x64-setup.exe`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) (NSIS)<br>[`Pinkbin_x.x.x_x64_en-US.msi`](https://github.com/cccyd2003-qwq/pinkbin/releases/latest) (MSI) | First launch: SmartScreen will block — click "More info" → "Run anyway". NTFS MFT direct read needs admin; the installer ships a manifest that auto-elevates via UAC. |
+| **Windows 10 / 11 (x64)** | [`Pinkbin_x.x.x_x64-setup.exe`](https://github.com/Map1eBr1dge/DiskSift/releases/latest) (NSIS)<br>[`Pinkbin_x.x.x_x64_en-US.msi`](https://github.com/Map1eBr1dge/DiskSift/releases/latest) (MSI) | First launch: SmartScreen will block — click "More info" → "Run anyway". NTFS MFT direct read needs admin; the installer ships a manifest that auto-elevates via UAC. |
 
 > No prebuilt macOS / Linux binaries yet (no signing cert for macOS, and we haven't validated the Linux build on real hardware). You can build them yourself with `pnpm tauri build`. The release matrix will be expanded once we have signing + real-hardware validation — PRs welcome.
 
@@ -146,7 +146,7 @@ Full workflow: [`.claude/commands/add-scaffold.md`](.claude/commands/add-scaffol
 ### Development
 
 ```bash
-git clone https://github.com/cccyd2003-qwq/pinkbin.git && cd pinkbin
+git clone https://github.com/Map1eBr1dge/DiskSift.git && cd DiskSift
 pnpm install
 pnpm tauri dev            # desktop app (first build compiles Rust deps, 5-15 min)
 pnpm -C apps/desktop dev  # frontend only, browser-based debugging, mock backend

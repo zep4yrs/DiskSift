@@ -19,7 +19,7 @@
 | `--accent-fg` | `#FFFFFF` | `#FFFFFF` | |
 | `--hover` | `rgba(0,0,0,.05)` | `rgba(255,255,255,.06)` | hover 单属性变化 |
 
-字体：`"Segoe UI",system-ui,"Microsoft YaHei",sans-serif`；mono: `Consolas,"Cascadia Mono"`。**禁止在线字体 CDN**。
+字体：`"Segoe UI",system-ui,"Microsoft YaHei",sans-serif`；mono: `Consolas,"Cascadia Mono","Microsoft YaHei",monospace`（中文落雅黑，与 styles.css §1 同步）。**禁止在线字体 CDN**。
 图标：Lucide 提取（见硬约束）；语义色（ok/warn/danger/info）只用于状态，禁止装饰。
 
 ## 2. 骨架与行为（五区独立折叠）
@@ -72,3 +72,5 @@ openTab(kind,title) 去重→激活；closeTab(id)；activateTab(id)
 ## 7. 豁免清单
 
 （沿用第三波登记；新增残留在此登记）
+
+- §7.2 风险梯度硬编码色 **已消灭**（2026-09-28）：AdvisorCard / ScaffoldPanel / ChatPanel / triage.ts(BUCKET_META.tone) / TriageView 原先四套互不相同的风险 hex（#ffa3c7/#ffb37a/#ff5d7a/#a17a8d、#5fcf95、#16a34a/#d97706/#ca8a04、#5fc88a/#ff9f5e/#ffd166/#7a6675/#5b8def）全部收敛到 styles.css §1 的 `--risk-low/--risk-med/--risk-high`（桥 --ok/--warn/--danger）与既有 `--fg-muted/--info` 令牌，不再需要豁免登记。

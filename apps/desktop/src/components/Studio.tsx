@@ -131,7 +131,7 @@ export function Studio({ focusId }: { focusId?: string }) {
     return (
       <div className="studio">
         <div className="studio-head">
-          <span>Studio</span>
+          <span>脚本库</span>
           <span className="muted small">已隐藏（pinkbin.hideStudio=1）</span>
         </div>
       </div>
@@ -222,7 +222,7 @@ export function Studio({ focusId }: { focusId?: string }) {
   return (
     <div className="studio">
       <div className="studio-head">
-        <span>Studio</span>
+        <span>脚本库</span>
         <span className="muted small">
           {allCards.length} 个脚本{disabledCards.length > 0 ? ` · 停用 ${disabledCards.length}` : ''}
         </span>

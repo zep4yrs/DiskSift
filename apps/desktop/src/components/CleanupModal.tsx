@@ -157,7 +157,14 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
   const wxidFilterArg = wxids.length > 0 && selectedWxids.size < wxids.length
     ? [...selectedWxids]
     : undefined;
-  const wxidKey = wxidFilterArg ? wxidFilterArg.slice().sort().join('|') : '';
+  // v26.1.2 高危修复②：wxidKey 必须区分「全选（不过滤）」与「零勾选（空列表
+  // fail-closed）」——旧实现 undefined→'' 与 []→'' 同键，单账号场景取消唯一
+  // 勾选后 wxidKey 不变，尺寸 effect 不重取，执行按钮带着旧尺寸照旧可用。
+  const wxidKey = wxidFilterArg === undefined
+    ? 'all'
+    : selectedWxids.size === 0
+      ? 'none'
+      : wxidFilterArg.slice().sort().join('|');
 
   // ── Conda: env picker ──
   const [condaEnvs, setCondaEnvs] = useState<CondaEnv[] | null>(null);
@@ -227,6 +234,14 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [isConda, matchKey, sc.id, (sc.scopes ?? []).length, daysKey, wxidKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // v26.1.2 高危修复②补充：账号勾选一变即作废旧预览。此前 []→'' 同键使该
+  // 转换根本不触发；现在 key 真会变了，残留的旧口径预览若不撤下，用户会按
+  // 「全账号」的预览确认一次「零账号」的执行。
+  useEffect(() => {
+    setPreview(null);
+    setArmed(false);
+  }, [wxidKey]);
+
   // Bytes / files for a scope from current sizes. `bytes` and `filesForScope`
   // honor the days filter (i.e. they describe what would actually be cleaned).
   // `totalBytes` / `totalFiles` ignore the days filter — used to show users
@@ -253,13 +268,20 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
     });
   };
 
+  // f3-1：全选口径只统计「可勾选」行（bytes>0）——空行/全部在保留期行的
+  // bytes=0，渲染态 checked（renderScopeRow）永远为 false，旧实现 allOn 用
+  // 全部 id 判定导致含此类行的组「全选↔全不选」卡死。两处口径统一为
+  // selectableIds，「全选↔全不选」正常切换。
+  const selectableIds = (group: Scope[]) =>
+    group.filter((s) => bytesForScope(s.id) > 0).map((s) => s.id);
+
   const toggleScopeGroup = (group: Scope[]) => {
-    const ids = group.map((s) => s.id);
-    const allOn = ids.every((id) => selectedScopes.has(id));
+    const ids = selectableIds(group);
+    const allOn = ids.length > 0 && ids.every((id) => selectedScopes.has(id));
     setSelectedScopes((prev) => {
       const next = new Set(prev);
       if (allOn) ids.forEach((id) => next.delete(id));
-      else ids.forEach((id) => { if (bytesForScope(id) > 0) next.add(id); });
+      else ids.forEach((id) => next.add(id));
       return next;
     });
   };
@@ -361,7 +383,9 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
       }
 
       if (totalFiles === 0) {
-        setErr('预览结果为空 · 没有可清理的文件（可能都在保留期内）');
+        // v26.1.2 高危修复③：空预览按「当前勾选下」表述——可能是保留期、
+        // 也可能是账号勾选把文件全滤掉了，不再替用户归因为「都在保留期内」。
+        setErr('当前勾选下无可清文件');
         return;
       }
 
@@ -504,8 +528,9 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
 
   const renderScopeGroup = (label: string, group: Scope[]) => {
     if (group.length === 0) return null;
-    const allOn = group.every((s) => selectedScopes.has(s.id));
-    const someOn = !allOn && group.some((s) => selectedScopes.has(s.id));
+    // f3-1：与 toggleScopeGroup 同一口径（只统计可勾选行）。
+    const ids = selectableIds(group);
+    const allOn = ids.length > 0 && ids.every((id) => selectedScopes.has(id));
     return (
       <section className="cleanup-section">
         <div className="cleanup-section-head">
@@ -514,9 +539,9 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
             type="button"
             className="ghost cleanup-toggle-all"
             onClick={() => toggleScopeGroup(group)}
-            disabled={running}
+            disabled={running || ids.length === 0}
           >
-            {allOn ? '全不选' : someOn ? '全选' : '全选'}
+            {allOn ? '全不选' : '全选'}
           </button>
         </div>
         <ul className="cleanup-rows">
@@ -529,7 +554,10 @@ export function CleanupModal({ scaffold: sc, matches, onClose, onCleaned }: Prop
   const userEnvs = (condaEnvs ?? []).filter((e) => !e.is_base);
   const baseEnv = (condaEnvs ?? []).find((e) => e.is_base);
 
-  const canExecute = !running && !previewing && !preview && totalSelected.count > 0;
+  // v26.1.2 高危修复①：存在账号时至少勾选一个——「取消全部账号」不允许执行。
+  // 后端已同步 fail-closed（path_passes_wxid 空列表 → false），这是前端第一道。
+  const wxidGuardOk = wxids.length === 0 || selectedWxids.size > 0;
+  const canExecute = !running && !previewing && !preview && totalSelected.count > 0 && wxidGuardOk;
 
   // ── Coverage breakdown: helps users understand "13 GB total but only 4 GB
   // in scopes" — the rest is red-line content (chat DBs, favorites, account

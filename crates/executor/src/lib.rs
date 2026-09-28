@@ -40,6 +40,42 @@ pub struct UndoEntry {
     pub bytes: Option<u64>,
 }
 
+/// NEVER_TOUCH 系统保护区段表（v26.1.2 高危修复 · Rust 兜底层）。
+/// 段边界匹配：path 与保护名都按 `\` / `/` 切段后做 ASCII 不区分大小写的
+/// 整段比较——`C:\Windows` 命中 `windows`；`C:\WindowsExcl`（段
+/// `windowsexcl`）不误命中；带空格段（`program files (x86)`）整段比较不受
+/// 分隔符差异影响。与前端 apps/desktop/src/triage.ts 的 isNeverTouch 同规则，
+/// 构成双层防线：前端层只影响判定/队列，本层在 execute() 里拒绝执行。
+/// 自 auto_patrol.rs 的同名单提升而来（补 recovery / windows.old，
+/// 原表缺失 C:\Recovery 曾被巡查放行）。documents 等用户内容段一并在此，
+/// 保护语义只收紧不放松。
+pub const NEVER_TOUCH_SEGMENTS: &[&str] = &[
+    "windows",
+    "program files",
+    "program files (x86)",
+    "programdata",
+    "$recycle.bin",
+    "system volume information",
+    "$extend",
+    "boot",
+    "recovery",
+    "windows.old",
+    "documents",
+    "pictures",
+    "music",
+    "videos",
+    "desktop",
+    "downloads",
+];
+
+/// path 是否命中 NEVER_TOUCH 保护区（任一路径段整段等于保护名）。
+pub fn is_never_touch(path: &str) -> bool {
+    path.to_ascii_lowercase()
+        .split(['\\', '/'])
+        .filter(|s| !s.is_empty())
+        .any(|seg| NEVER_TOUCH_SEGMENTS.contains(&seg))
+}
+
 /// 递归统计路径字节数。文件 = len；目录 = 逐项累加，符号链接/联接跳过
 /// （既不进入也不计大小——联接指向的字节不属于本次操作）。
 fn path_bytes(p: &Path) -> u64 {
@@ -76,6 +112,25 @@ pub fn execute(
     undo_log: &Path,
     quarantine_root: &Path,
 ) -> anyhow::Result<Vec<UndoEntry>> {
+    // v26.1.2 高危修复：执行前对 plan.paths 逐条核对 NEVER_TOUCH 保护区。
+    // 整单 fail-closed 拒绝（不做部分执行——混入受保护路径的计划一旦部分
+    // 执行，用户会误以为整单通过了安全校验）；Err 逐条列出命中路径，经调用
+    // 方既有错误面直达用户（TriageView err / 巡查卡 err / ChatPanel 回收失败），
+    // 不静默跳过。Recycle / Quarantine / Delete 全动作覆盖；dry-run 一并拒绝
+    // （真实执行必被拒的计划，预览没有意义）。
+    let hits: Vec<String> = plan
+        .paths
+        .iter()
+        .filter(|p| is_never_touch(&p.to_string_lossy()))
+        .map(|p| format!("{}（命中系统保护区）", p.to_string_lossy()))
+        .collect();
+    if !hits.is_empty() {
+        anyhow::bail!(
+            "拒绝执行：计划包含 NEVER_TOUCH 系统保护路径（Windows/ProgramData/用户文档/Recovery 等），整单拦截：{}",
+            hits.join("；")
+        );
+    }
+
     let mut out: Vec<UndoEntry> = Vec::new();
     let now = || chrono::Utc::now().to_rfc3339();
 
@@ -278,5 +333,66 @@ mod tests {
         assert!(line.contains("\"bytes\":127") || line.contains("\"bytes\": 127"));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── v26.1.2 高危修复：NEVER_TOUCH 双层防线 · Rust 兜底层用例 ──
+
+    #[test]
+    fn never_touch_segment_boundary() {
+        // 根级路径（无尾分隔符）必须命中——旧版 is_never_touch 无此问题，
+        // 但前端旧片段表有；此处锁死共享表语义。
+        assert!(is_never_touch(r"C:\Windows"));
+        assert!(is_never_touch(r"C:\ProgramData"));
+        assert!(is_never_touch(r"C:\Users\90740\Documents"));
+        assert!(is_never_touch(r"C:\Recovery"));
+        assert!(is_never_touch(r"C:\Windows.old"));
+        assert!(is_never_touch(r"C:\Windows\Temp"));
+        assert!(is_never_touch(r"C:\Program Files (x86)\X"));
+        assert!(is_never_touch("C:/Users/u/Documents/archive"));
+        // 段边界：前缀相像但整段不同的目录不误命中
+        assert!(!is_never_touch(r"C:\WindowsExcl"));
+        assert!(!is_never_touch(r"C:\ProgramDataExcl"));
+        assert!(!is_never_touch(r"C:\tools\windows-cleaner\cache"));
+        assert!(!is_never_touch("C:/cache/reboot-helper"));
+        assert!(!is_never_touch(r"D:\DocumentsOld\stuff"));
+    }
+
+    #[test]
+    fn execute_rejects_never_touch_plan_wholesale() {
+        // 混入受保护路径 → 整单拒绝（连 safe 路径也不执行），Err 带命中路径
+        // 与保护语义说明，用户可见。
+        let plan = Plan {
+            action: Action::Recycle,
+            paths: vec![PathBuf::from(r"C:\Windows"), PathBuf::from(r"C:\safe-cache")],
+            reason: "test".into(),
+        };
+        let err = execute(&plan, true, Path::new("unused.jsonl"), Path::new("unused-q"))
+            .expect_err("never-touch plan must be refused");
+        let msg = format!("{err}");
+        assert!(msg.contains(r"C:\Windows"), "错误需点名命中路径：{msg}");
+        assert!(msg.contains("NEVER_TOUCH"), "错误需说明保护语义：{msg}");
+        // Quarantine / Delete 同样被拒（全动作覆盖）
+        for action in [Action::Quarantine, Action::Delete] {
+            let plan = Plan {
+                action,
+                paths: vec![PathBuf::from(r"C:\Windows")],
+                reason: "test".into(),
+            };
+            assert!(
+                execute(&plan, false, Path::new("unused.jsonl"), Path::new("unused-q")).is_err(),
+                "{action:?} 也必须被拒"
+            );
+        }
+    }
+
+    #[test]
+    fn execute_allows_clean_plan() {
+        let plan = Plan {
+            action: Action::Recycle,
+            paths: vec![PathBuf::from(r"C:\safe-cache")],
+            reason: "test".into(),
+        };
+        let out = execute(&plan, true, Path::new("unused.jsonl"), Path::new("unused-q")).unwrap();
+        assert_eq!(out.len(), 1);
     }
 }
