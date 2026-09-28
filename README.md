@@ -100,7 +100,7 @@ Windows 计划任务无头运行：只动「安全」桶、移入回收站、写
 
 ## 快速开始
 
-1. 从 [Releases](https://github.com/Map1eBr1dge/DiskSift/releases/latest) 下载 `DiskSift_x.x.x_x64-setup.exe`（或 MSI）。SmartScreen 拦截时点"更多信息 → 仍要运行"；MFT 直读需要管理员，安装包已带 manifest 自动 UAC
+1. 从 [Releases](https://github.com/zep4yrs/DiskSift/releases/latest) 下载 `DiskSift_x.x.x_x64-setup.exe`（或 MSI）。SmartScreen 拦截时点"更多信息 → 仍要运行"；MFT 直读需要管理员，安装包已带 manifest 自动 UAC
 2. 左侧活动栏底部 **⚙** 配 AI——或按引导接免费模型（不配也能用规则分诊，功能不瘫）
 3. 入口页选磁盘 → **扫描**
 4. 图上探索，巡查页按桶清理，删错去操作记录页还原
@@ -112,7 +112,7 @@ Windows 计划任务无头运行：只动「安全」桶、移入回收站、写
 ## 从源码构建
 
 ```bash
-git clone https://github.com/Map1eBr1dge/DiskSift.git && cd DiskSift
+git clone https://github.com/zep4yrs/DiskSift.git && cd DiskSift
 pnpm install
 pnpm tauri dev            # 桌面 app（首次编译 Rust 依赖 5-15 分钟）
 pnpm -C apps/desktop dev  # 仅前端，浏览器调试，mock 后端
