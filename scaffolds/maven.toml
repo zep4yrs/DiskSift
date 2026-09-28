@@ -1,0 +1,85 @@
+# Maven 清理 scaffold —— 只覆盖本地仓库 ~/.m2/repository 一棵树；settings.xml、
+# wrapper 发行版与项目目录全部不动。
+# 2026-05-05 被 36-scaffold 清理删掉的 legacy maven 没有 safety test（docs/
+# scaffold-requirements/STATUS.md 历史），本文件按 14-phase 流程重做。
+#
+# 2026-09-28 本机实测（Windows 11）：**未找到 Maven 安装**——%USERPROFILE%/.m2
+# 不存在，两块盘无 maven 命名目录（ls -d /d/*maven* /d/*/.m2 /c/Users/*/.m2
+# 均为空），%APPDATA% / %LOCALAPPDATA% 无 maven 项，PATH 上无 mvn。因此本文件
+# 的路径以 Apache Maven 官方目录布局为准（`mvn` 文档：默认 Local Repository
+# 为 ~/.m2/repository；用户配置 settings.xml / settings-security.xml 与
+# maven-wrapper 的 wrapper/dists 同在 ~/.m2 下），正向路径是官方布局的合成
+# 样例，非本机实测——同 cargo.toml 的 git scope（本机无 git 依赖仍保留官方
+# 布局 glob）的先例。官方布局要点：
+#   ~/.m2/repository/<group 路径>/<artifactId>/<version>/ → jar/pom + sha1 校验
+#   文件 + _remote.repositories 来源标记 + *.lastUpdated 下载失败标记——
+#   数以万计小文件的构件仓库，无中间粒度可言；
+#   ~/.m2/settings.xml → 镜像 / 代理 / 服务器凭据（用户配置，红线）；
+#   ~/.m2/settings-security.xml → settings.xml 主口令的加密载体（红线）；
+#   ~/.m2/wrapper/dists/<dist>-bin/<hash>/ → mvnw 下载的发行版（当前项目
+#   wrapper 在用，红线——同 gradle.toml 对 wrapper/dists 的取舍）。
+#
+# 设计取舍（同 gradle.toml）：
+# - repository 整树一个 scope、directory 粒度（glob 精确锚定 .m2/repository
+#   目录自身，不带尾部 /**）：构件仓库是小文件海（jar+pom+sha1 每构件四五件），
+#   "删掉 ~/.m2/repository 重新下载"就是社区对本地仓库损坏的标准修复动作；
+#   整树一条回收站记录，下次构建按 pom 重新解析下载。
+# - [match] 刻意留空："m2" 片段无歧义性可言；-Dmaven.repo.local 改名的仓库
+#   （如 maven-repo/）即使被 name_contains 标中，scope 锚定 .m2 段也无法命中
+#   ——改名仓库检测不到，见 disclaimer。
+# - 项目 target/ 是 Maven 的构建输出目录（不是缓存），红线不动。
+#
+# lint:  cargo run -p pinkbin-scaffold-lint -- scaffolds/maven.toml
+# test:  cargo test -p pinkbin-scaffold --test maven_safety
+
+id          = "maven"
+name        = "maven"
+homepage    = "https://maven.apache.org/guides/introduction/introduction-to-repositories.html"
+# medium：repository 清掉后下次构建按 pom 重新解析并下载全部依赖（需要网络，
+# 首次构建明显变慢）。与 npm / pip / pnpm / cargo / go-mod / gradle（包缓存
+# 同评 medium）一致。
+risk        = "medium"
+disclaimer  = """\
+清理 Maven 本地仓库（~/.m2/repository），等同删除本地仓库让 Maven 重新下载。\
+删除后下次构建会按 pom 重新解析并下载全部依赖（需要网络，首次构建明显变慢）。\
+绝不删：用户配置 settings.xml 与 settings-security.xml（镜像 / 代理 / 服务器\
+凭据）、maven-wrapper 下载的发行版（wrapper/dists，当前项目 mvnw 正在使用）、\
+任何项目源码与 pom.xml / .mvn/、项目 target/ 构建输出目录。\
+只覆盖默认位置：-Dmaven.repo.local / settings.xml 把本地仓库指到不叫 .m2 的\
+路径时检测不到，不在覆盖范围。\
+删除进行中的 mvn 构建会因文件被占用而失败，重跑即可。\
+所有删除走系统回收站，可还原。\
+"""
+
+# ---------------------------------------------------------------------------
+# detect：默认 ~/.m2（Windows 与 POSIX 同）+ ** 通配兜底（本地仓库仍叫 .m2 时
+# 同样命中；个别项目自带的 .m2 目录会被标成零命中的空卡片——scope 锚定
+# .m2/repository 两段，误标不会多删东西，同 pip.toml 对短片段的取舍）。
+# ---------------------------------------------------------------------------
+detect = [
+  "%USERPROFILE%/.m2",
+  "${HOME}/.m2",
+  "**/.m2",
+]
+
+# 见文件头"设计取舍"：没有安全的基名片段，[match] 留空（name_contains 为空时
+# 匹配器不参与，误标风险为零）。
+[match]
+name_contains   = []
+must_have_child = []
+
+# ============================================================================
+# 唯一 scope：repository 整树，directory 粒度一条回收站记录。glob 精确锚定
+# .m2/repository 目录自身（无尾部 /**）——树内文件在 glob 层零命中，不是红线
+# 候选，而是随整树一起走。detect 根 ~/.m2 是它的严格父目录，满足"scope 正向
+# 路径必须是某个 detect 根的严格后代"不变量（tests/pnpm_safety.rs 文件头）。
+# ============================================================================
+
+[[scope]]
+id                  = "repository"
+label               = "本地仓库 repository（已下载依赖，等同删 ~/.m2/repository）"
+glob                = "**/.m2/repository"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"

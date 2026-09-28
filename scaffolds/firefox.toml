@@ -1,0 +1,165 @@
+# Mozilla Firefox 清理 scaffold —— Gecko 布局（与 Chromium 的 chrome/edge 不同源）。
+# 设计依据：docs/research/python-dev-cleanup-landscape.md §2.2 的桶分级方法论
+# （拿不准目录划红线）+ §3 产品哲学；红线继承 CLAUDE.md Hard rule 1。
+#
+# 实测回环（2026-09-28，Windows 11，只 ls 目录名、未 Read 任何内容）——本机装有
+# Firefox，以下全部为真实目录名：
+# - 漫游根 %APPDATA%/Mozilla/Firefox/：Background Tasks Profiles、Crash Reports、
+#   Pending Pings、Profile Groups、Profiles、installs.ini、profiles.ini
+# - 本地根 %LOCALAPPDATA%/Mozilla/Firefox/：Profiles、SkeletonUILock-082abfe3
+#   （Gecko 双根布局：用户数据漫游、缓存在本地——scope glob 不含根前缀，双根天然都覆盖）
+# - 实测两个 profile：ddrlwxs8.default 和 6uqnofos.zap-client-profile——profile 段
+#   后缀任意（可自定义），glob 必须用单段 Profiles/*，不能枚举 .default/.default-release
+# - 漫游 profile 实测可清桶：minidumps/、saved-telemetry-pings/、shader-cache/
+#   （shader-cache 在本机位于漫游 profile；glob 不锚根，出现在本地 profile 也覆盖）
+# - 本地 profile 实测可清桶：cache2/（内含 doomed、entries、index）、startupCache/
+#   （scriptCache*.bin、startupCache.8.little、urlCache*.bin、webext.sc.lz4）、
+#   thumbnails/、jumpListCache/
+# - 漫游根实测可清桶：Crash Reports/pending/（uuid.dmp + uuid.extra 实测存在）、
+#   Pending Pings/
+# - 实测划红线的目录/文件（disclaimer + firefox_safety.rs 断言）：places.sqlite(-shm,-wal)、
+#   bookmarkbackups/、sessionstore-backups/、sessionCheckpoints.json、cookies.sqlite*、
+#   formhistory.sqlite、key4.db、logins.json、logins-backup.json、logins.db、
+#   favicons.sqlite*、storage/、storage.sqlite*、webappsstore.sqlite*、
+#   storage-sync-v2.sqlite*、synced-tabs.db*、tabnotes.sqlite*、containers.json、
+#   handlers.json、search.json.mozlz4、prefs.js、xulstore.json、signedInUser.json、
+#   downloads.json、extensions/、extensions.json、extension-preferences.json、
+#   extension-store、extension-store-menus、addons.json、cert9.db、pkcs11.txt、
+#   cert_override.txt、weave/（同步）、datareporting/、settings/（双根都有）、
+#   features/、gmp-widevinecdm/、gmp-gmpopenh264/（DRM/编解码插件，重下代价高）、
+#   safebrowsing/（本地根）、taskbartabs/、crashes/、breach-alerts.db*、
+#   chat-store.sqlite*、content-prefs.sqlite*、permissions.sqlite、protections.sqlite、
+#   bounce-tracking-protection.sqlite、domain_to_categories.sqlite*、profiles.ini、
+#   installs.ini、Profile Groups/、Background Tasks Profiles/、Crash Reports/ 下
+#   pending 以外的一切（events、glean、crashreporter_settings.json、*.log）
+# - 已知但本机未出现、不进 scope 的路径：提交过的崩溃报告目录（Crash Reports/
+#   submitted，本机无此目录，glob 会覆盖它但 scope 不单独声明）
+#
+# 已知取舍（写死在此，防未来误改宽）：
+# - scope glob 一律 **/Mozilla/Firefox/Profiles/*/<桶> 或 **/Mozilla/Firefox/<桶>，
+#   不锚 %APPDATA%/%LOCALAPPDATA%——Gecko 双根布局靠 glob 根无关性同时覆盖。
+# - literal_separator(false) 下 Profiles/* 的 * 可跨段：profile 内若有嵌套同名桶
+#   （本机实测无）理论上会命中——与 vscode.toml `**/Code` 同款已接受的松弛度。
+# - 已知限制：macOS 根是 `Caches/Firefox`（无 Mozilla 段）、Linux 根是
+#   `.mozilla/firefox`（.mozilla ≠ Mozilla），与 Windows 锚 `Mozilla/Firefox`
+#   结构性不同——scope 均为 Windows 布局锚定，不覆盖这两者（与 edge.toml
+#   "detect 宽、scope Windows 锚定"同款取舍）；这两个平台 UI 能看到卡片但清理为空。
+#
+# lint:  cargo run -p pinkbin-scaffold-lint -- scaffolds/firefox.toml
+# test:  cargo test -p pinkbin-scaffold --test firefox_safety
+
+id          = "firefox"
+name        = "Mozilla Firefox"
+homepage    = "https://www.mozilla.org/firefox/"
+risk        = "low"
+disclaimer  = """\
+只清可重生的缓存与转储：网页缓存（cache2）、启动缓存（startupCache）、\
+着色器缓存（shader-cache）、页面缩略图与跳表缓存（thumbnails / jumpListCache）、\
+崩溃转储（profile 内 minidumps、Crash Reports/pending）、遥测数据包\
+（saved-telemetry-pings / Pending Pings）。删掉后 Firefox 下次启动自动重建，\
+首次加载网页会略慢。\
+绝不删浏览历史与书签（places.sqlite 及其 -wal/-shm、bookmarkbackups、\
+sessionstore-backups）、密码与证书（key4.db、logins.json、logins.db、cert9.db、\
+pkcs11.txt、cert_override.txt）、Cookie 与表单历史（cookies.sqlite、\
+formhistory.sqlite）、网站数据（storage、storage.sqlite、webappsstore.sqlite、\
+storage-sync-v2.sqlite、favicons.sqlite）、扩展本体与状态（extensions、addons.json、\
+extensions.json、extension-preferences.json、extension-store）、同步数据（weave、\
+synced-tabs.db、signedInUser.json）、设置（prefs.js、containers.json、handlers.json、\
+search.json.mozlz4、xulstore.json、profiles.ini、installs.ini、settings）、\
+DRM / 编解码插件（gmp-widevinecdm、gmp-gmpopenh264）、安全浏览库（safebrowsing）、\
+以及一切 *.db / *.sqlite / *.db-wal / *.db-shm 数据库文件和 DIPS 类隐私沙箱物料。\
+不覆盖 Thunderbird / SeaMonkey / 其它应用的数据目录。\
+所有删除走系统回收站，可随时还原。清理前请先退出 Firefox，否则运行中被占用的文件会跳过。\
+"""
+
+# ---------------------------------------------------------------------------
+# detect：Windows 双根（漫游 + 本地）+ ** 通配兜底（profile 可整体重定位）+
+# macOS / Linux 默认路径。仅影响 UI 显示，不影响清理边界（scope 要求
+# Firefox/Profiles/<profile>/<桶> 或 Firefox/<桶> 同时出现才会命中）。
+# ---------------------------------------------------------------------------
+
+detect = [
+  "%APPDATA%/Mozilla/Firefox",
+  "%LOCALAPPDATA%/Mozilla/Firefox",
+  "${HOME}/Library/Application Support/Firefox",
+  "${HOME}/Library/Caches/Firefox",
+  "${HOME}/.mozilla/firefox",
+  "${HOME}/.cache/mozilla/firefox",
+  "**/Mozilla/Firefox",
+]
+
+# ============================================================================
+# L1 profile 级缓存（本地根实测桶；glob 根无关，漫游根若出现同名桶同样覆盖）
+# ============================================================================
+
+[[scope]]
+id                  = "http-cache"
+label               = "网页缓存（cache2，HTTP 磁盘缓存）"
+glob                = "**/Mozilla/Firefox/Profiles/*/cache2"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id                  = "startup-cache"
+label               = "启动缓存（startupCache）"
+glob                = "**/Mozilla/Firefox/Profiles/*/startupCache"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id                  = "shader-cache"
+label               = "着色器缓存（shader-cache）"
+glob                = "**/Mozilla/Firefox/Profiles/*/shader-cache"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id                  = "thumbnail-cache"
+label               = "页面缩略图 / 跳表缓存（thumbnails / jumpListCache）"
+glob                = "**/Mozilla/Firefox/Profiles/*/{thumbnails,jumpListCache}"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+# ============================================================================
+# L1 崩溃转储 / 遥测（按时间累积的文件桶，file 粒度 + days 30）
+# ============================================================================
+
+[[scope]]
+id       = "crash-minidumps"
+label    = "崩溃转储（profile 内 minidumps）"
+glob     = "**/Mozilla/Firefox/Profiles/*/minidumps/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
+
+[[scope]]
+id       = "telemetry-pings"
+label    = "遥测数据包（saved-telemetry-pings）"
+glob     = "**/Mozilla/Firefox/Profiles/*/saved-telemetry-pings/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
+
+[[scope]]
+id       = "crash-reports-pending"
+label    = "待提交崩溃报告（Crash Reports/pending）"
+glob     = "**/Mozilla/Firefox/Crash Reports/pending/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
+
+[[scope]]
+id       = "pending-pings"
+label    = "待上传遥测（Pending Pings）"
+glob     = "**/Mozilla/Firefox/Pending Pings/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }

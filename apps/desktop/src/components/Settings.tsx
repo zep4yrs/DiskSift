@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { X, CheckCircle2, Info, Eye, EyeOff, Settings2 } from 'lucide-react';
-import { api } from '../api';
+import { X, CheckCircle2, Info, Eye, EyeOff, Settings2, CalendarClock } from 'lucide-react';
+import { api, type AutoPatrolFrequency, type AutoPatrolStatus } from '../api';
 import { isTauri } from '../env';
 import {
   loadSettings,
@@ -32,6 +32,26 @@ const PROVIDER_LABEL_SHORT: Record<Provider, string> = {
   gemini: 'Gemini',
   ollama: 'Ollama',
 };
+
+// 定时巡查频率档位（auto_patrol.rs schedule_args 四档的实测时刻）：
+// 档位名要短（四个塞一行），完整时刻放 title 与开启回显里。
+const PATROL_FREQS: { id: AutoPatrolFrequency; label: string }[] = [
+  { id: 'hourly', label: '每小时' },
+  { id: 'daily', label: '每天' },
+  { id: 'weekly', label: '每周日' },
+  { id: 'monthly', label: '每月' },
+];
+
+const PATROL_FREQ_FULL: Record<AutoPatrolFrequency, string> = {
+  hourly: '每小时（00:30 起）',
+  daily: '每天 03:00',
+  weekly: '每周日 03:00',
+  monthly: '每月 1 日 04:00',
+};
+
+function isPatrolFreq(v: string): v is AutoPatrolFrequency {
+  return v === 'hourly' || v === 'daily' || v === 'weekly' || v === 'monthly';
+}
 
 export function Settings({ onClose, prefill }: Props) {
   const [baseUrl, setBaseUrl] = useState('');
@@ -69,6 +89,66 @@ export function Settings({ onClose, prefill }: Props) {
   const provider = providerOverride ?? detectProvider(baseUrl);
   const needsKey = provider !== 'ollama';
 
+  // ── 定时自动巡查（auto-patrol）：注册状态只读自系统（Task Scheduler），
+  // 开关/换档直接落 schtasks，不走「保存」——保存只管 AI 配置。 ──
+  const [patrol, setPatrol] = useState<AutoPatrolStatus | null>(null);
+  const [patrolFreq, setPatrolFreq] = useState<AutoPatrolFrequency>('weekly');
+  const [patrolBusy, setPatrolBusy] = useState(false);
+  const [patrolMsg, setPatrolMsg] = useState<string | null>(null);
+  const [patrolErr, setPatrolErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.autoPatrolStatus()
+      .then((st) => {
+        setPatrol(st);
+        // 状态里带生效档位（未注册 = ''，识别不了 = 'unknown'），有合法档位才回填
+        if (st.registered && isPatrolFreq(st.frequency)) setPatrolFreq(st.frequency);
+      })
+      .catch(() => setPatrol(null));
+  }, []);
+
+  const refreshPatrol = () =>
+    api.autoPatrolStatus()
+      .then(setPatrol)
+      .catch(() => setPatrol(null));
+
+  const patrolToggle = async () => {
+    if (patrolBusy || patrol === null) return;
+    setPatrolBusy(true); setPatrolErr(null); setPatrolMsg(null);
+    try {
+      if (patrol.registered) {
+        await api.autoPatrolUnregister();
+        setPatrolMsg('已关闭定时巡查');
+      } else {
+        // 后端回显生效档位（字符串）；非四档字面量时不带时刻后缀
+        const f = await api.autoPatrolRegister(patrolFreq);
+        setPatrolMsg(`已开启定时巡查${isPatrolFreq(f) ? ` · ${PATROL_FREQ_FULL[f]}` : ''}`);
+      }
+      await refreshPatrol();
+    } catch (e) {
+      setPatrolErr(String(e));
+    } finally {
+      setPatrolBusy(false);
+    }
+  };
+
+  const patrolFreqChange = async (f: AutoPatrolFrequency) => {
+    if (patrolBusy) return;
+    setPatrolFreq(f);
+    if (patrol?.registered !== true) return; // 未注册时只记档位，注册时生效
+    // 已注册状态下换档 = /F 覆盖同名任务（auto_patrol_register 幂等改频）
+    setPatrolBusy(true); setPatrolErr(null); setPatrolMsg(null);
+    try {
+      await api.autoPatrolRegister(f);
+      setPatrolMsg(`巡查频率已改为${PATROL_FREQ_FULL[f]}`);
+      await refreshPatrol();
+    } catch (e) {
+      setPatrolErr(String(e));
+    } finally {
+      setPatrolBusy(false);
+    }
+  };
+
   const save = async () => {
     setErr(null); setMsg(null);
     if (!baseUrl.trim()) { setErr('请填 Base URL'); return; }
@@ -103,7 +183,7 @@ export function Settings({ onClose, prefill }: Props) {
     <div className="modal-bg" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <div>AI 顾问设置 {saved && <CheckCircle2 size={16} style={{ verticalAlign: 'middle', marginLeft: 6, color: 'var(--pink-deep)' }} />}</div>
+          <div>设置 {saved && <CheckCircle2 size={16} style={{ verticalAlign: 'middle', marginLeft: 6, color: 'var(--pink-deep)' }} />}</div>
           <button className="ghost icon" onClick={onClose}><X size={16} /></button>
         </div>
 
@@ -190,6 +270,64 @@ export function Settings({ onClose, prefill }: Props) {
 
         {msg && <div className="ok">{msg}</div>}
         {err && <div className="error">{err}</div>}
+
+        <div className="settings-divider" role="separator" />
+        <div className="settings-section-head">
+          <CalendarClock size={13} />
+          <span>定时自动巡查</span>
+          <span className="patrol-state">
+            {patrol === null
+              ? '状态未知'
+              : patrol.registered
+                ? (patrol.enabled ? '已开启' : '已开启 · 任务被禁用')
+                : '未开启'}
+          </span>
+        </div>
+        <p className="hint">
+          <Info size={12} />
+          <span>
+            按档位在后台无头巡查：扫描系统盘 → 只把判定缓存里「可安全清理」（safe）的目录移入回收站（可还原）→ 写入操作记录后退出。注册的是 Windows 计划任务 {patrol?.task_name ?? 'DiskSiftAutoPatrol'}，指向本程序，随时可关闭。
+          </span>
+        </p>
+        <div className="patrol-row">
+          <button
+            type="button"
+            className={patrol?.registered ? 'primary' : 'ghost'}
+            disabled={patrolBusy || patrol === null}
+            title={patrol?.registered
+              ? '注销 Windows 计划任务（未注册时幂等）'
+              : '注册 Windows 计划任务并按所选档位定时巡查'}
+            onClick={() => void patrolToggle()}
+          >
+            {patrolBusy ? '处理中…' : patrol === null ? '读取中…' : patrol.registered ? '关闭定时巡查' : '开启定时巡查'}
+          </button>
+          <div className="seg seg-4 patrol-freq" role="group" aria-label="巡查频率">
+            {PATROL_FREQS.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                className={'seg-opt' + (patrolFreq === f.id ? ' active' : '')}
+                title={PATROL_FREQ_FULL[f.id] + (patrol?.registered ? ' · 点击立即生效' : ' · 注册时生效')}
+                onClick={() => void patrolFreqChange(f.id)}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {patrol !== null && patrol.registered && (
+          <div className="patrol-status muted small" title={patrol.status ?? undefined}>
+            已注册 {patrol.task_name} · 下次运行：{patrol.next_run ?? '—'}
+            {!patrol.enabled && ' · 任务当前被禁用（可在任务计划程序中重新启用）'}
+          </div>
+        )}
+        {patrolMsg && <div className="ok">{patrolMsg}</div>}
+        {patrolErr && <div className="error">{patrolErr}</div>}
+        {!isTauri && (
+          <p className="muted small" style={{ margin: 0 }}>
+            浏览器预览模式没有系统计划任务语义，以上操作不会生效。
+          </p>
+        )}
 
         <div className="modal-actions">
           {saved && <button className="ghost" onClick={wipe}>清除</button>}

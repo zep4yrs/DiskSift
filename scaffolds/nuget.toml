@@ -1,0 +1,113 @@
+# NuGet 清理 scaffold —— 覆盖 .NET 包缓存的三个官方桶：global-packages
+# （~/.nuget/packages）、http-cache（%LOCALAPPDATA%/NuGet/v3-cache）、
+# plugins-cache。项目目录全部不动。
+# 2026-05-05 被 36-scaffold 清理删掉的 legacy nuget 没有 safety test（docs/
+# scaffold-requirements/STATUS.md 历史），本文件按 14-phase 流程重做。
+#
+# 2026-09-28 本机实测（Windows 11，.NET SDK 装有 Godot 工作负载，只 ls 目录名，
+# 未读任何文件内容）：
+#   %USERPROFILE%/.nuget/ 一级 → { packages }；packages/ 一级 → 小写包名目录
+#   （godot.net.sdk / godot.sourcegenerators / godotsharp / godotsharpeditor）；
+#   packages/<id>/<version>/ → { <id>.<ver>.nupkg, <id>.<ver>.nupkg.sha512,
+#   <id>.nuspec, lib } —— 解压内容 + 浅拷贝 nupkg + 清单（官方布局）。
+#   %LOCALAPPDATA%/NuGet/ 一级 → { Migrations, v3-cache }：
+#     v3-cache/ 一级 → <40hex>$<source> 形态的扁平缓存文件（每源一个）；
+#     Migrations/ 是 NuGet 内部簿记（未点名，红线）。
+#   %APPDATA%/NuGet/ 一级 → { NuGet.Config }——用户配置（镜像 / 凭据，红线）。
+#   plugins-cache/ 本机没有——凭据插件按需创建，官方布局 glob 保留（cargo
+#   git scope 同先例）。
+#
+# 设计取舍（同 gradle.toml / maven.toml）：
+# - global-packages 整树一个 scope、directory 粒度（glob 精确锚定 packages
+#   目录自身，不带尾部 /**）：等价 `dotnet nuget locals global-packages --clear`；
+#   包版本目录是天然单元但整树数千小文件，整树一条回收站记录。不按包拆——
+#   restore 是 .NET 构建的第一步，缺什么补什么，部分保留没有用户价值。
+# - http-cache / plugins-cache 各一个 scope、directory 粒度，等价
+#   `dotnet nuget locals http-cache|plugins-cache --clear`。glob 用 NuGet 段
+#   锚定（case_insensitive 编译，大小写变体同样命中）；POSIX 的
+#   ~/.local/share/NuGet/v3-cache 同一 glob 形态。
+# - [match] 刻意留空："nuget" 片段会命中解决方案里常见的本地源目录 nuget/
+#   （存放自制 .nupkg）与克隆的 NuGet 客户端仓库；NUGET_PACKAGES /
+#   NUGET_HTTP_CACHE_PATH 改名的路径即使标中也锚不上 .nuget / NuGet 段——
+#   改名检测不到，见 disclaimer。
+# - packages.config 时代的项目内 packages/ 目录（旧版还原产物）不在覆盖范围：
+#   裸 **/packages 无歧义性可言（pnpm 对 **/store 的同一教训）。
+#
+# lint:  cargo run -p pinkbin-scaffold-lint -- scaffolds/nuget.toml
+# test:  cargo test -p pinkbin-scaffold --test nuget_safety
+
+id          = "nuget"
+name        = "nuget"
+homepage    = "https://learn.microsoft.com/dotnet/core/tools/dotnet-nuget-locals"
+# medium：global-packages 清掉后下次 restore 重新下载全部包；http-cache 清掉
+# 后重新走源。与 npm / pip / pnpm / cargo / go-mod / gradle / maven（包缓存
+# 同评 medium）一致。
+risk        = "medium"
+disclaimer  = """\
+清理 NuGet 包缓存：全局包目录（~/.nuget/packages，等同 dotnet nuget locals \
+global-packages --clear）、HTTP 缓存（NuGet/v3-cache）与凭据插件缓存\
+（plugins-cache）。\
+删除后下次 dotnet build / msbuild 的 restore 步骤会按项目文件重新下载所需包\
+（需要网络，首次构建明显变慢）。\
+绝不删：用户配置 NuGet.Config（镜像源与凭据，%APPDATA%/NuGet 与 ~/.nuget/NuGet \
+两处）、NuGet 内部簿记（Migrations）、任何项目源码与 .csproj / .sln / \
+packages.config / obj/ / bin/、packages.config 时代还原进项目目录的 packages/、\
+解决方案里存放自制 nupkg 的本地源目录（常见名 nuget/）。\
+只覆盖默认位置：NUGET_PACKAGES / NUGET_HTTP_CACHE_PATH 重定位到不叫 .nuget / \
+NuGet 的路径时检测不到，不在覆盖范围。\
+删除进行中的 restore / build 会因文件被占用而失败，重跑即可。\
+所有删除走系统回收站，可还原。\
+"""
+
+# ---------------------------------------------------------------------------
+# detect：三大平台默认路径 + **/.nuget 通配兜底（缓存根搬到仍叫 .nuget 的位置
+# 同样命中）。%NUGET_PACKAGES% 等环境变量不设分支——未设置时 shellexpand 整体
+# 回退成死分支（同 pip.toml 对 TMPDIR 的取舍）。
+# ---------------------------------------------------------------------------
+detect = [
+  "%USERPROFILE%/.nuget",
+  "${HOME}/.nuget",
+  "%LOCALAPPDATA%/NuGet",
+  "${HOME}/.local/share/NuGet",
+  "**/.nuget",
+]
+
+# 见文件头"设计取舍"：没有安全的基名片段，[match] 留空（name_contains 为空时
+# 匹配器不参与，误标风险为零）。
+[match]
+name_contains   = []
+must_have_child = []
+
+# ============================================================================
+# 三个官方桶（= dotnet nuget locals 的三个 locals），全部 directory 粒度、
+# 整桶一条回收站记录。glob 精确锚定桶目录自身（无尾部 /**）——桶内文件在
+# glob 层零命中，随整桶一起走。NuGet 段由大小写不敏感编译覆盖 nuget 变体；
+# ~/.local/share/NuGet/v3-cache 与 %LOCALAPPDATA%/NuGet/v3-cache 同一形态。
+# ============================================================================
+
+[[scope]]
+id                  = "global-packages"
+label               = "全局包目录 packages（等同 dotnet nuget locals global-packages --clear）"
+glob                = "**/.nuget/packages"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"
+
+[[scope]]
+id                  = "http-cache"
+label               = "HTTP 缓存 v3-cache"
+glob                = "**/NuGet/v3-cache"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"
+
+[[scope]]
+id                  = "plugins-cache"
+label               = "凭据插件缓存 plugins-cache"
+glob                = "**/NuGet/plugins-cache"
+mode                = "recycle"
+category            = "cache"
+prompt              = { kind = "none" }
+recycle_granularity = "directory"

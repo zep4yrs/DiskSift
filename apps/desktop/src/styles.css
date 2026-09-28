@@ -2092,15 +2092,18 @@ input:focus, select:focus {
 }
 .studio-card-wrap.detected { background: linear-gradient(180deg, var(--pink-bg) 0%, var(--card) 100%); }
 .studio-card-wrap.risk-high { border-color: var(--err); }
-.studio-card-wrap > .studio-card {
+.studio-card-wrap > .studio-card,
+.studio-card-topline > .studio-card {
   border: 0;
   border-radius: 0;
   box-shadow: none;
   background: transparent;
   width: 100%;
 }
-.studio-card-wrap > .studio-card:hover { background: var(--pink-bg); transform: none; }
-.studio-card-wrap > .studio-card:active { transform: none; box-shadow: none; }
+.studio-card-wrap > .studio-card:hover,
+.studio-card-topline > .studio-card:hover { background: var(--pink-bg); transform: none; }
+.studio-card-wrap > .studio-card:active,
+.studio-card-topline > .studio-card:active { transform: none; box-shadow: none; }
 .studio-caret { color: var(--ink-3); flex-shrink: 0; }
 
 .studio-card-expanded {
@@ -4286,7 +4289,8 @@ section.center > .tabs { padding: 0 10px; border-bottom: 1px solid var(--border)
 }
 .app-v2 .studio-card-wrap { border: 1px solid var(--border); border-radius: 8px; box-shadow: none; }
 .app-v2 .studio-card-wrap.detected { border-color: var(--border); }
-.app-v2 .studio-card-wrap > .studio-card { background: transparent; }
+.app-v2 .studio-card-wrap > .studio-card,
+.app-v2 .studio-card-topline > .studio-card { background: transparent; }
 
 /* 12.2 AI 窄栏 markdown 溢出防护（300px 里表格/代码必然爆） */
 .app-v2 .aipanel .chat-bubble table { display: block; overflow-x: auto; font-size: 11.5px; }
@@ -4318,3 +4322,100 @@ section.center > .tabs { padding: 0 10px; border-bottom: 1px solid var(--border)
 
 /* 12.6 tab 床细节：滚动条细化 + tab 关闭钮 hover 红 */
 .app-v2 .tabbar::-webkit-scrollbar { height: 0; }
+
+/* ── 脚本中心（Studio 卡片启停 + TOML 导入导出）────────────────────────── */
+
+/* 卡片头行：主卡按钮 + 右侧启停工具钮（禁绝对定位重叠，名字长也不被盖） */
+.studio-card-topline {
+  display: flex;
+  align-items: center;
+}
+.studio-card-topline > .studio-card { flex: 1; min-width: 0; }
+.studio-card-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 8px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.studio-card-tool:hover { background: var(--pink-bg); color: var(--ink); }
+.app-v2 .studio-card-tool { color: var(--fg-muted); }
+.app-v2 .studio-card-tool:hover { background: var(--hover); color: var(--fg); }
+
+/* 展开态操作行三列：清理 / 问 AI / 导出 */
+.studio-card-actions.has-export { grid-template-columns: 1fr auto auto; }
+.studio-export-btn { padding-left: 10px; padding-right: 10px; }
+
+/* Studio 头部：导入按钮 + 操作回显 */
+.studio-head-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.studio-import-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 3px 8px;
+}
+.studio-op-msg {
+  font-size: 11.5px;
+  color: var(--ink-2);
+  background: var(--paper-2);
+  border-radius: 6px;
+  padding: 5px 9px;
+  margin: 4px 0 2px;
+}
+.app-v2 .studio-op-msg { color: var(--fg-muted); background: var(--secondary); }
+
+/* 停用卡：整卡置灰（灰 + 降饱和），不参与扫描所以无任何检测态 */
+.studio-card-wrap.scaffold-disabled { opacity: .55; filter: grayscale(1); }
+.studio-card-wrap.scaffold-disabled > .studio-card-topline > .studio-card,
+.studio-card-wrap.scaffold-disabled > .studio-card-topline > .studio-card:hover {
+  cursor: default;
+  background: transparent;
+}
+.scaffold-disabled-row {
+  display: flex;
+  gap: 6px;
+  padding: 0 var(--space-3) var(--space-3);
+}
+.scaffold-disabled-row .ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+
+/* ── 设置弹窗：定时自动巡查区 ── */
+.settings-divider { border-top: 1px solid var(--line, rgba(0,0,0,.12)); margin: 14px 0 10px; }
+.app-v2 .settings-divider { border-top-color: var(--border); }
+.settings-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: var(--fw-strong);
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.patrol-state {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: var(--fw-strong);
+  color: var(--ink-3);
+}
+.patrol-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 2px;
+}
+.patrol-row > button { flex-shrink: 0; white-space: nowrap; }
+.seg-4 { grid-template-columns: repeat(4, 1fr); flex: 1; }
+.seg-4 .seg-opt { padding: var(--space-2) 4px; font-size: 10.5px; text-align: center; }
+.patrol-status { margin-top: 2px; }

@@ -1,8 +1,11 @@
 import { useMemo, useState } from 'react';
-import { ChevronRight, ChevronDown, Sparkles, MessageSquare, Trash2, FolderOpen, Copy, ExternalLink, Gamepad2 } from 'lucide-react';
+import { ChevronRight, ChevronDown, Sparkles, MessageSquare, Trash2, FolderOpen, Copy, ExternalLink, Gamepad2, Power, Download, FileUp } from 'lucide-react';
+import { open, save } from '@tauri-apps/plugin-dialog';
+import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { useStore } from '../store';
 import { formatBytes } from '../format';
 import { api } from '../api';
+import { isTauri } from '../env';
 import type { Node, Scaffold } from '../types';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
@@ -82,15 +85,31 @@ export function buildScaffoldCards(root: Node | null, scaffolds: Scaffold[]): Ca
   return items;
 }
 
+/// 启停落地：scaffold_set_enabled → 重拉 list_scaffolds（后端滤掉停用项后的
+/// 生效名单）→ 按「id 是否还在名单里」的实测结果更新前端启停留档，而不是
+/// 想当然写本地：预览模式两个命令都 no-op、名单里仍有该 id，这里自然退化为
+/// 无操作；桌面模式名单为准，localStorage 只负责停用对象的可视留档。
+export async function applyScaffoldEnabled(sc: Scaffold, enabled: boolean): Promise<void> {
+  await api.scaffoldSetEnabled(sc.id, enabled);
+  const st = useStore.getState();
+  const list = await api.listScaffolds().catch(() => st.scaffolds);
+  st.setScaffolds(list);
+  const rest = st.disabledScaffolds.filter((d) => d.id !== sc.id);
+  st.setDisabledScaffolds(list.some((s) => s.id === sc.id) ? rest : [...rest, sc]);
+}
+
 export function Studio({ focusId }: { focusId?: string }) {
   const root = useStore((s) => s.root);
   const scaffolds = useStore((s) => s.scaffolds);
+  const disabledScaffolds = useStore((s) => s.disabledScaffolds);
   const requestStudio = useStore((s) => s.requestStudio);
 
   // v2（spec §4 脚本详情 tab）：focusId = 从侧栏脚本卡片点进来的脚手架 id，
   // 该卡片初始即展开（检测详情 / CleanupModal 入口都还在卡片里，逻辑不动）。
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(focusId ? [focusId] : []));
   const [openTool, setOpenTool] = useState<null | 'steam-inspector'>(null);
+  // 导入/导出/启停的结果回显（Studio 内局部提示，不进底面板输出）
+  const [opMsg, setOpMsg] = useState<string | null>(null);
 
   const hidden = (() => {
     try { return localStorage.getItem('pinkbin.hideStudio') === '1'; } catch { return false; }
@@ -99,6 +118,13 @@ export function Studio({ focusId }: { focusId?: string }) {
   const allCards: CardData[] = useMemo(
     () => (hidden ? [] : buildScaffoldCards(root, scaffolds)),
     [root, scaffolds, hidden],
+  );
+
+  // 启停期间本地留档可能与生效名单短暂重叠（预览模式 list 恒含全部 id）：
+  // 以生效名单为准，已在名单里的不再重复渲染灰色卡。
+  const disabledCards = useMemo(
+    () => disabledScaffolds.filter((d) => !allCards.some((c) => c.scaffold.id === d.id)),
+    [disabledScaffolds, allCards],
   );
 
   if (hidden) {
@@ -124,12 +150,93 @@ export function Studio({ focusId }: { focusId?: string }) {
     });
   };
 
+  const toggleEnabled = (sc: Scaffold, enabled: boolean) => {
+    setOpMsg(null);
+    applyScaffoldEnabled(sc, enabled)
+      .then(() => {
+        // 以生效名单实测结果回显：预览模式 no-op 后名单不变，如实说明
+        const inList = useStore.getState().scaffolds.some((s) => s.id === sc.id);
+        if (inList !== enabled) {
+          setOpMsg('浏览器预览模式无后端，启停不生效——请在桌面应用中使用');
+          return;
+        }
+        setOpMsg(enabled
+          ? `已启用「${sc.name}」，下次扫描起参与检测`
+          : `已停用「${sc.name}」，不再参与扫描与检测`);
+      })
+      .catch((e) => setOpMsg(`${enabled ? '启用' : '停用'}失败：${String(e)}`));
+  };
+
+  const exportScaffold = async (sc: Scaffold) => {
+    setOpMsg(null);
+    if (!isTauri) {
+      setOpMsg('浏览器预览模式不支持导出，请在桌面应用中使用');
+      return;
+    }
+    try {
+      const toml = await api.scaffoldExport(sc.id);
+      const path = await save({
+        defaultPath: `${sc.id}.toml`,
+        filters: [{ name: 'TOML', extensions: ['toml'] }],
+      });
+      if (!path) return;
+      await writeTextFile(path, toml);
+      setOpMsg(`已导出 ${sc.id}.toml`);
+    } catch (e) {
+      setOpMsg(`导出失败：${String(e)}`);
+    }
+  };
+
+  const importScaffold = async () => {
+    setOpMsg(null);
+    if (!isTauri) {
+      setOpMsg('浏览器预览模式不支持导入，请在桌面应用中使用');
+      return;
+    }
+    try {
+      const picked = await open({
+        multiple: false,
+        filters: [{ name: 'TOML', extensions: ['toml'] }],
+      });
+      if (typeof picked !== 'string') return;
+      const toml = await readTextFile(picked);
+      const id = await api.scaffoldImport(toml);
+      const st = useStore.getState();
+      const list = await api.listScaffolds().catch(() => st.scaffolds);
+      st.setScaffolds(list);
+      const imported = list.find((s) => s.id === id);
+      const rest = st.disabledScaffolds.filter((d) => d.id !== id);
+      if (imported) {
+        st.setDisabledScaffolds(rest);
+        setOpMsg(`已导入「${imported.name}」（${id}）`);
+      } else {
+        // 导入同名 id 但它躺在后端停用名单里：scaffold_import 不动名单，
+        // 留档里也没有它的完整对象，如实提示去名单里启用。
+        setOpMsg(`已导入 ${id}，但它在停用名单里——在下方「已停用」区启用后才会显示`);
+      }
+    } catch (e) {
+      setOpMsg(`导入失败：${String(e)}`);
+    }
+  };
+
   return (
     <div className="studio">
       <div className="studio-head">
         <span>Studio</span>
-        <span className="muted small">{allCards.length} 个脚本</span>
+        <span className="muted small">
+          {allCards.length} 个脚本{disabledCards.length > 0 ? ` · 停用 ${disabledCards.length}` : ''}
+        </span>
+        <span className="studio-head-actions">
+          <button
+            className="ghost studio-import-btn"
+            onClick={() => void importScaffold()}
+            title="从 .toml 文件导入清理脚本（后端会校验红线与 scope）"
+          >
+            <FileUp size={12} /> 导入 TOML
+          </button>
+        </span>
       </div>
+      {opMsg && <div className="studio-op-msg">{opMsg}</div>}
 
       <div className="studio-section-label">推荐</div>
       <div className="studio-grid">
@@ -143,7 +250,14 @@ export function Studio({ focusId }: { focusId?: string }) {
         </ErrorBoundary>
         {featured.map((c) => (
           <ErrorBoundary key={c.scaffold.id} fallbackLabel={`${c.scaffold.name} 卡片渲染失败`}>
-            <Card card={c} expanded={expanded.has(c.scaffold.id)} onToggle={() => toggle(c.scaffold.id)} onAsk={() => requestStudio(c.scaffold.id)} />
+            <Card
+              card={c}
+              expanded={expanded.has(c.scaffold.id)}
+              onToggle={() => toggle(c.scaffold.id)}
+              onAsk={() => requestStudio(c.scaffold.id)}
+              onDisable={() => toggleEnabled(c.scaffold, false)}
+              onExport={() => void exportScaffold(c.scaffold)}
+            />
           </ErrorBoundary>
         ))}
       </div>
@@ -154,8 +268,31 @@ export function Studio({ focusId }: { focusId?: string }) {
           <div className="studio-grid">
             {others.map((c) => (
               <ErrorBoundary key={c.scaffold.id} fallbackLabel={`${c.scaffold.name} 卡片渲染失败`}>
-                <Card card={c} expanded={expanded.has(c.scaffold.id)} onToggle={() => toggle(c.scaffold.id)} onAsk={() => requestStudio(c.scaffold.id)} />
+                <Card
+                  card={c}
+                  expanded={expanded.has(c.scaffold.id)}
+                  onToggle={() => toggle(c.scaffold.id)}
+                  onAsk={() => requestStudio(c.scaffold.id)}
+                  onDisable={() => toggleEnabled(c.scaffold, false)}
+                  onExport={() => void exportScaffold(c.scaffold)}
+                />
               </ErrorBoundary>
+            ))}
+          </div>
+        </>
+      )}
+
+      {disabledCards.length > 0 && (
+        <>
+          <div className="studio-section-label">已停用 · 不参与扫描</div>
+          <div className="studio-grid">
+            {disabledCards.map((d) => (
+              <DisabledCard
+                key={d.id}
+                sc={d}
+                onEnable={() => toggleEnabled(d, true)}
+                onExport={() => void exportScaffold(d)}
+              />
             ))}
           </div>
         </>
@@ -198,7 +335,16 @@ function ToolCard({
   );
 }
 
-function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: boolean; onToggle: () => void; onAsk: () => void }) {
+function Card({
+  card, expanded, onToggle, onAsk, onDisable, onExport,
+}: {
+  card: CardData;
+  expanded: boolean;
+  onToggle: () => void;
+  onAsk: () => void;
+  onDisable: () => void;
+  onExport: () => void;
+}) {
   const sc = card.scaffold;
   const matches = card.matches;
   const detected = matches.length > 0;
@@ -242,22 +388,32 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
 
   return (
     <div className={'studio-card-wrap risk-' + sc.risk + (detected ? ' detected' : '')}>
-      <button
-        className="studio-card"
-        onClick={onToggle}
-        title={sc.disclaimer}
-      >
-        <Caret size={14} className="studio-caret" />
-        <div className="studio-card-icon"><Icon name="package" size={18} /></div>
-        <div className="studio-card-body">
-          <div className="studio-card-name">{sc.name}</div>
-          <div className="studio-card-meta">
-            {detected
-              ? <><Sparkles size={10} /> {formatBytes(card.totalSize)}{matches.length > 1 && <> · {matches.length} 个位置</>}</>
-              : <>未扫到 · 用脚本默认路径</>}
+      <div className="studio-card-topline">
+        <button
+          className="studio-card"
+          onClick={onToggle}
+          title={sc.disclaimer}
+        >
+          <Caret size={14} className="studio-caret" />
+          <div className="studio-card-icon"><Icon name="package" size={18} /></div>
+          <div className="studio-card-body">
+            <div className="studio-card-name">{sc.name}</div>
+            <div className="studio-card-meta">
+              {detected
+                ? <><Sparkles size={10} /> {formatBytes(card.totalSize)}{matches.length > 1 && <> · {matches.length} 个位置</>}</>
+                : <>未扫到 · 用脚本默认路径</>}
+            </div>
           </div>
-        </div>
-      </button>
+        </button>
+        <button
+          className="studio-card-tool"
+          onClick={onDisable}
+          title={`停用「${sc.name}」——不再参与扫描与检测，可随时在「已停用」区启用`}
+          aria-label={`停用 ${sc.name}`}
+        >
+          <Power size={13} />
+        </button>
+      </div>
 
       {expanded && (
         <div className="studio-card-expanded">
@@ -335,7 +491,7 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
                 </>
               )}
 
-              <div className="studio-card-actions">
+              <div className="studio-card-actions has-export">
                 <button
                   className="primary studio-cleanup-btn"
                   onClick={() => setShowCleanup(true)}
@@ -344,6 +500,13 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
                 </button>
                 <button className="secondary studio-ask-btn" onClick={onAsk}>
                   <MessageSquare size={12} /> 问 AI
+                </button>
+                <button
+                  className="ghost studio-export-btn"
+                  onClick={onExport}
+                  title={`导出「${sc.name}」的 TOML 到本地文件`}
+                >
+                  <Download size={12} /> 导出
                 </button>
               </div>
             </>
@@ -372,6 +535,32 @@ function Card({ card, expanded, onToggle, onAsk }: { card: CardData; expanded: b
         />
       )}
       <ContextMenu state={ctx} onClose={() => setCtx(null)} />
+    </div>
+  );
+}
+
+/// 停用脚本的灰色卡：list_scaffolds 已把它滤掉（不参与扫描与检测），这里只
+/// 依赖本地留档渲染名字与启停操作；检测态一概不显示——停用后前端根本拿不到。
+function DisabledCard({ sc, onEnable, onExport }: { sc: Scaffold; onEnable: () => void; onExport: () => void }) {
+  return (
+    <div className="studio-card-wrap scaffold-disabled">
+      <div className="studio-card-topline">
+        <div className="studio-card scaffold-disabled-head" title={sc.disclaimer}>
+          <div className="studio-card-icon"><Icon name="package" size={18} /></div>
+          <div className="studio-card-body">
+            <div className="studio-card-name">{sc.name}</div>
+            <div className="studio-card-meta">已停用 · 不参与扫描与检测</div>
+          </div>
+        </div>
+      </div>
+      <div className="scaffold-disabled-row">
+        <button className="ghost" onClick={onEnable} title="重新启用：下次扫描起恢复检测">
+          <Power size={12} /> 启用
+        </button>
+        <button className="ghost" onClick={onExport} title="导出该脚本的 TOML 到本地文件">
+          <Download size={12} /> 导出 TOML
+        </button>
+      </div>
     </div>
   );
 }

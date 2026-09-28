@@ -114,6 +114,10 @@ interface AppState {
   // ── 既有能力（零删除）──
   root: Node | null;
   scaffolds: Scaffold[];
+  /** 已停用 scaffold 的前端留档：后端 list_scaffolds 直接过滤掉停用项，
+   *  没有命令能再枚举它们，这里留副本让 Studio 渲染灰色卡片并支持重新
+   *  启用；localStorage 持久化，跨重启仍可启用回来。 */
+  disabledScaffolds: Scaffold[];
   selectedPath: string | null;
   walkQueue: WalkItem[];
   walkIndex: number;
@@ -124,6 +128,7 @@ interface AppState {
 
   setRoot: (n: Node | null) => void;
   setScaffolds: (s: Scaffold[]) => void;
+  setDisabledScaffolds: (s: Scaffold[]) => void;
   selectPath: (p: string | null) => void;
   setWalk: (q: WalkItem[], startIndex?: number) => void;
   advanceWalk: () => void;
@@ -141,6 +146,35 @@ interface AppState {
 }
 
 const restoredTabs = loadTabs();
+
+// ── 已停用 scaffold 留档（脚本中心启停）──────────────────────────────────
+// 后端 scaffold_set_enabled 只维护 disabled 名单，list_scaffolds 把停用项
+// 整个滤掉——前端拿不到任何「已停用清单」，所以停用时把 Scaffold 对象留在
+// localStorage，重启后灰色卡片仍可渲染、仍可重新启用。
+const DISABLED_KEY = 'pinkbin.disabledScaffolds';
+
+function loadDisabledScaffolds(): Scaffold[] {
+  try {
+    const raw = localStorage.getItem(DISABLED_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (s): s is Scaffold =>
+        !!s && typeof s === 'object' && typeof (s as Scaffold).id === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+function persistDisabledScaffolds(list: Scaffold[]) {
+  try {
+    localStorage.setItem(DISABLED_KEY, JSON.stringify(list));
+  } catch {
+    /* 忽略持久化失败（隐私模式 / 配额） */
+  }
+}
 
 export const useStore = create<AppState>((set, get) => ({
   openTabs: restoredTabs,
@@ -184,6 +218,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   root: null,
   scaffolds: [],
+  disabledScaffolds: loadDisabledScaffolds(),
   selectedPath: null,
   walkQueue: [],
   walkIndex: 0,
@@ -194,6 +229,10 @@ export const useStore = create<AppState>((set, get) => ({
 
   setRoot: (root) => set({ root }),
   setScaffolds: (scaffolds) => set({ scaffolds }),
+  setDisabledScaffolds: (disabledScaffolds) => {
+    persistDisabledScaffolds(disabledScaffolds);
+    set({ disabledScaffolds });
+  },
   selectPath: (selectedPath) => set({ selectedPath }),
   setWalk: (walkQueue, startIndex = 0) => set({ walkQueue, walkIndex: startIndex }),
   advanceWalk: () => set((s) => ({ walkIndex: Math.min(s.walkIndex + 1, s.walkQueue.length) })),

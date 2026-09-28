@@ -1,0 +1,174 @@
+# Microsoft Edge 清理 scaffold —— Chromium 通用桶设计，结构对齐 scaffolds/chrome.toml。
+# 设计依据：docs/research/python-dev-cleanup-landscape.md §2.2 的桶分级
+# （DIPS / SharedStorage 等拿不准目录划红线的先例）+ §3 产品哲学；红线继承 CLAUDE.md Hard rule 1。
+#
+# 实测回环（2026-09-28，Windows 11，只 ls 目录名、未 Read 任何内容）：
+# - 本机 Edge 已被彻底移除：`ls %LOCALAPPDATA%/Microsoft` 无 Edge 条目，
+#   `ls -d %LOCALAPPDATA%/Microsoft/Edge*` → No such file or directory；
+#   %APPDATA%/Microsoft、%USERPROFILE%、Documents 下无任何 *edge* 命名目录；
+#   Program Files / Program Files (x86) 下无 Microsoft/Edge 安装目录。
+# - Edge 与 Chrome 同属 Chromium 上游，桶名一致。桶名证据来自同机真实存在的
+#   两棵 Chromium 树（见 chrome.toml 头注）：%LOCALAPPDATA%/Quark/User Data（Chromium
+#   fork，完整布局）+ %LOCALAPPDATA%/CEF/User Data：
+#   * User Data 顶层可清桶：GrShaderCache / GraphiteDawnCache / ShaderCache /
+#     Crashpad / component_crx_cache / extensions_crx_cache
+#   * profile 级可清桶：Cache（内含 Cache_Data）/ Code Cache / GPUCache /
+#     DawnGraphiteCache / DawnWebGPUCache / Service Worker（内含 Database、ScriptCache）/
+#     blob_storage
+#   * 同批实测划红线的目录（disclaimer + edge_safety.rs 断言）：Bookmarks(.bak)、
+#     History(-journal)、Login Data(-j)、Login Data For Account、Web Data(-j)、
+#     Favicons(-j)、Preferences / Secure Preferences、Network、Local Storage、
+#     Session Storage、IndexedDB、WebStorage、Sessions、Sync Data、Extension State、
+#     Local Extension Settings、Extension Rules、Extension Scripts、GCM Store、
+#     Shortcuts、Top Sites、Local State、Safe Browsing、First Run、Last Browser、
+#     Last Version、WidevineCdm、DIPS(-wal)、SharedStorage(-wal)、Shared Dictionary、
+#     BrowsingTopics*、BudgetDatabase、chrome_cart_db、discounts_db、
+#     commerce_subscription_db、parcel_tracking_db、heavy_ad_intervention_opt_out.db、
+#     optimization_guide_hint_cache_store、ClientCertificates、MediaDeviceSalts、
+#     passkey_enclave_state、trusted_vault.pb、Account Web Data、Affiliation Database
+# - Edge 的 Collections（集锦）是用户数据，不在任何 scope 内（scaffold 无法验证其
+#   具体落盘文件名，整树不碰）。
+# - Edge 更新器缓存 %LOCALAPPDATA%/Microsoft/EdgeUpdate/（Download 子目录含安装包）
+#   本机不存在无法勘测，明确不进 scope，避免按文档想象路径。
+#
+# scope 锚定 **/Microsoft/Edge*/User Data/...：
+# - Edge* 一个前缀通配覆盖 Edge / Edge Beta / Edge Dev / Edge SxS(Canary) / Edge Core。
+# - 要求 /User Data/ 段存在，所以 Microsoft/EdgeUpdate 等兄弟目录不会被命中。
+# - 不用裸 **/User Data：本机实测 Quark、CEF、Tabbit Browser 都有同名 User Data 根，
+#   Chrome 树也在 **/Google/Chrome 下——都不得混进 Edge 卡片。
+# - 多 profile：{Default,Profile *} 一层 alternation（同 chrome.toml，globset brace
+#   分支支持内部通配，crates/scaffold/src/lib.rs make_globset literal_separator(false)）。
+#
+# granularity 取舍（按桶类型，同 chrome.toml）：
+# - 哈希文件名、单文件无意义、文件数以千计的壳层缓存桶 → recycle_granularity =
+#   "directory"，glob 锚到桶目录本身（无 /**），prompt = none。
+# - 按时间累积的文件桶（组件/扩展下载缓存、崩溃转储）→ file 粒度 + days 30。
+#
+# lint:  cargo run -p pinkbin-scaffold-lint -- scaffolds/edge.toml
+# test:  cargo test -p pinkbin-scaffold --test edge_safety
+
+id          = "edge"
+name        = "Microsoft Edge"
+homepage    = "https://www.microsoft.com/edge"
+risk        = "low"
+disclaimer  = """\
+只清可重生的缓存与转储：网页缓存（Cache/Cache_Data）、Code Cache（JS/WASM 字节码）、\
+GPU / WebGPU 着色器缓存（GPUCache / DawnGraphiteCache / DawnWebGPUCache）、\
+顶层着色器缓存（GrShaderCache / GraphiteDawnCache / ShaderCache）、Service Worker 缓存、\
+blob_storage、组件与扩展下载缓存（component_crx_cache / extensions_crx_cache）、\
+崩溃转储（Crashpad）。删掉后 Edge 下次启动自动重建或重新下载，首次加载网页会略慢，\
+离线 Web App 的缓存资源会重新从网络下载。\
+绝不删收藏夹（Bookmarks / Bookmarks.bak）、浏览历史（History）、密码（Login Data / \
+Login Data For Account）、自动填充（Web Data）、网站图标库（Favicons）、集锦（Collections）、\
+设置（Preferences / Secure Preferences / Local State）、标签页恢复（Sessions / Last Browser）、\
+登录态（Network 目录下的 Cookies）、网站数据（Local Storage / Session Storage / \
+IndexedDB / WebStorage）、扩展状态（Extension State / Local Extension Settings / \
+GCM Store，扩展登录 token 在里面）、同步数据（Sync Data / Account Web Data）、\
+安全浏览库（Safe Browsing）、WidevineCdm、以及 DIPS、SharedStorage、Shared Dictionary、\
+ClientCertificates、MediaDeviceSalts、passkey_enclave_state、trusted_vault.pb 等\
+隐私 / 加密物料和一切 *.db / *.db-journal / *.db-wal 数据库文件。\
+不覆盖 Edge 以外 Chromium 应用的数据目录（Chrome / Quark / CEF 等，虽然桶名相同），\
+也不碰 EdgeUpdate 更新器目录。\
+所有删除走系统回收站，可随时还原。清理前请先退出 Edge，否则运行中被占用的文件会跳过。\
+"""
+
+# ---------------------------------------------------------------------------
+# detect：Windows 默认路径（Edge / Beta / Dev / SxS）+ macOS / Linux 默认路径 +
+# ** 通配兜底（兼容改盘符 / 重定位）。仅影响 UI 显示，不影响清理边界
+# （scope 全部要求 Microsoft/Edge*/User Data/<桶> 两级同时出现才会命中）。
+# 已知限制：macOS 根是 `Microsoft Edge`（空格、单段，与 Windows 两段式
+# Microsoft/Edge 结构性不同），Linux 根是小写 microsoft-edge——scope 均为
+# Windows 布局锚定，不覆盖这两者（与 vscode.toml "detect 宽、scope Windows 锚定"
+# 同款取舍）；在这两个平台 UI 能看到卡片但清理为空。
+# ---------------------------------------------------------------------------
+
+detect = [
+  "%LOCALAPPDATA%/Microsoft/Edge/User Data",
+  "%LOCALAPPDATA%/Microsoft/Edge Beta/User Data",
+  "%LOCALAPPDATA%/Microsoft/Edge Dev/User Data",
+  "%LOCALAPPDATA%/Microsoft/Edge SxS/User Data",
+  "${HOME}/Library/Application Support/Microsoft Edge",
+  "${HOME}/.config/microsoft-edge",
+  "${HOME}/.config/microsoft-edge-beta",
+  "${HOME}/.config/microsoft-edge-dev",
+  "**/Microsoft/Edge/User Data",
+  "**/Microsoft/Edge SxS/User Data",
+]
+
+# ============================================================================
+# L1 profile 级缓存（Default / Profile N 都覆盖）
+# ============================================================================
+
+[[scope]]
+id                  = "http-cache"
+label               = "网页缓存（Cache/Cache_Data，HTTP 磁盘缓存）"
+glob                = "**/Microsoft/Edge*/User Data/{Default,Profile *}/Cache"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id                  = "js-bytecode-cache"
+label               = "脚本字节码缓存（Code Cache）"
+glob                = "**/Microsoft/Edge*/User Data/{Default,Profile *}/Code Cache"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id                  = "gpu-shader-cache"
+label               = "GPU / WebGPU 着色器缓存（GPUCache / Dawn 系列）"
+glob                = "**/Microsoft/Edge*/User Data/{Default,Profile *}/{GPUCache,DawnGraphiteCache,DawnWebGPUCache}"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id                  = "service-worker-cache"
+label               = "Service Worker 缓存（Database / ScriptCache）"
+glob                = "**/Microsoft/Edge*/User Data/{Default,Profile *}/Service Worker"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id                  = "blob-storage"
+label               = "blob 存储（blob_storage）"
+glob                = "**/Microsoft/Edge*/User Data/{Default,Profile *}/blob_storage"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+# ============================================================================
+# L1 User Data 顶层缓存
+# ============================================================================
+
+[[scope]]
+id                  = "shader-cache"
+label               = "顶层着色器缓存（GrShaderCache / GraphiteDawnCache / ShaderCache）"
+glob                = "**/Microsoft/Edge*/User Data/{GrShaderCache,GraphiteDawnCache,ShaderCache}"
+mode                = "recycle"
+category            = "cache"
+recycle_granularity = "directory"
+prompt              = { kind = "none" }
+
+[[scope]]
+id       = "component-crx-cache"
+label    = "组件 / 扩展下载缓存（component_crx_cache / extensions_crx_cache）"
+glob     = "**/Microsoft/Edge*/User Data/{component_crx_cache,extensions_crx_cache}/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
+
+[[scope]]
+id       = "crash-dumps"
+label    = "崩溃转储（Crashpad）"
+glob     = "**/Microsoft/Edge*/User Data/Crashpad/**"
+mode     = "recycle"
+category = "cache"
+prompt   = { kind = "days", default = 30, label = "保留最近多少天" }
