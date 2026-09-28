@@ -1,2 +1,17 @@
 packages:
   - "apps/*"
+
+# packageManager 仍锁 pnpm@9.12.0（lockfile v9.0 按它写；corepack 环境会精确跑
+# 这个版本）。但构建环境可能用更新的 pnpm 直跑（如 corepack shim 解析到 11.x，
+# 它不能自行切版本）——pmOnFail: warn 让「运行版本 ≠ packageManager 锁定版本」
+# 从硬错误降级为警告，构建不炸，漂移仍在日志里可见。
+pmOnFail: warn
+# 11.x 的 verify-deps-before-run 会把「9.12 装的 node_modules」判成过期，在跑
+# 脚本前自动 pnpm install；无 TTY 的 gate 里 purge node_modules 还会
+# ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY 直接失败。两个开关：
+# - verifyDepsBeforeRun: false —— 跑脚本前不做依赖状态检查/自动安装，构建按
+#   现有 node_modules 直接执行（本仓 build=tsc+vite，不依赖重装）；
+# - confirmModulesPurge: false —— 即便真要 purge（显式 install），无 TTY 也
+#   不弹确认，CI 下不再 ABORTED_REMOVE_MODULES_DIR。
+verifyDepsBeforeRun: false
+confirmModulesPurge: false

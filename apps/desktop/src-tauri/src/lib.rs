@@ -1488,10 +1488,36 @@ fn scaffold_set_enabled(
     write_scaffold_config(&state.data_dir, &disabled)
 }
 
+/// 导入红线路径样本：任一 scope glob 能命中其一即拒绝导入。这些是清扫类
+/// 工具的事故高发区——数据库本体（*.db/-wal/-shm）、消息库、账号与登录态、
+/// 密钥与加密物料。内嵌 scaffold 由 crates/scaffold/tests/*_safety.rs 的
+/// 红线断言看管，第三方导入的 TOML 没有这层把关，所以落盘前就地补上。
+/// 匹配配置与运行时一致（case_insensitive + literal_separator=false，同
+/// scope_sizes 的编译参数）；样本串自带 `**` 无妨——要回答的是"这个 scope
+/// glob 是否宽到能盖住这类路径"，而不是逐字匹配某个具体文件。
+const IMPORT_RED_LINE_SAMPLES: &[&str] = &[
+    "**/*.db",
+    "**/*.db-wal",
+    "**/*.db-shm",
+    "**/db_storage/**",
+    "**/Msg/**",
+    "**/MultiMsg/**",
+    "**/Accounts/**",
+    "**/All Users/**",
+    "**/login/**",
+    "**/config/**",
+    "**/Favorite*/**",
+    "**/Fav/**",
+    "**/key/**",
+    "**/crypto/**",
+];
+
 /// 导入校验。parse + 空 scopes 沿用 scaffold-lint 的规则（lint 对空 scopes
 /// 只 WARN，导入场景升级为拒绝——零 scope 的 scaffold 导进去只会渲染一张
 /// 废卡片）；再加 id 落盘安全：id 直接充当用户 scaffolds 目录下的文件名
-/// `<id>.toml`，路径分隔符与 Windows 保留名必须挡在写盘之前。
+/// `<id>.toml`，路径分隔符与 Windows 保留名必须挡在写盘之前；最后是红线
+/// glob 检查：scope glob 命中任一 [`IMPORT_RED_LINE_SAMPLES`] 即拒绝（glob
+/// 编译不了的同样拒绝——编译不了的 glob 无法证明安全）。
 fn validate_import_toml(text: &str) -> Result<Scaffold, String> {
     const WINDOWS_RESERVED: &[&str] = &[
         "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
@@ -1500,6 +1526,25 @@ fn validate_import_toml(text: &str) -> Result<Scaffold, String> {
     let s = parse_toml(text).map_err(|e| format!("TOML 校验失败: {e}"))?;
     if s.scopes.is_empty() {
         return Err("scaffold 没有任何 [[scope]]，拒绝导入".into());
+    }
+    // 红线 glob 检查：编译参数与 scope_sizes 的运行时匹配完全一致，保证
+    // "导入时放行"当且仅当"运行时扫不到红线"。报错点名 scope、原样 glob
+    // 与命中的样本，作者回去收紧 glob 而不是猜。
+    for sc in &s.scopes {
+        let glob = globset::GlobBuilder::new(&sc.glob)
+            .literal_separator(false)
+            .case_insensitive(true)
+            .build()
+            .map_err(|e| format!("scope `{}` 的 glob `{}` 无法编译: {e}", sc.id, sc.glob))?;
+        let mut b = globset::GlobSetBuilder::new();
+        b.add(glob);
+        let set = b.build().map_err(|e| e.to_string())?;
+        if let Some(hit) = IMPORT_RED_LINE_SAMPLES.iter().find(|p| set.is_match(*p)) {
+            return Err(format!(
+                "scope `{}` 的 glob `{}` 覆盖到红线路径 `{hit}`，拒绝导入——收紧 glob",
+                sc.id, sc.glob
+            ));
+        }
     }
     let id = &s.id;
     if id.is_empty() || id.len() > 64 {
@@ -2225,6 +2270,31 @@ mode = "recycle"
                 bad_id.1
             );
         }
+    }
+
+    /// 导入红线 glob 检查：窄 scope 放行；`**/*`（扫全盘）与 `*.db`
+    /// （literal_separator=false 时 `*` 跨目录分隔符，等于扫所有数据库）
+    /// 都宽到能命中红线路径样本，必须拒绝。
+    #[test]
+    fn import_redline_globs() {
+        let tmpl = r#"
+id = "demo"
+name = "Demo"
+risk = "low"
+disclaimer = "test"
+detect = ["**/Demo"]
+[[scope]]
+id = "s1"
+label = "S1"
+glob = "{g}"
+mode = "recycle"
+"#;
+        // 合法 import 不受影响：`**/demo/cache/**` 盖不住任何红线路径样本。
+        assert!(validate_import_toml(&tmpl.replace("{g}", "**/demo/cache/**")).is_ok());
+        // 全盘扫：`**/*` 必命中 `**/Msg/**` 等样本，拒绝。
+        assert!(validate_import_toml(&tmpl.replace("{g}", "**/*")).is_err());
+        // 数据库扫：`*.db` 命中样本 `**/*.db`，拒绝。
+        assert!(validate_import_toml(&tmpl.replace("{g}", "*.db")).is_err());
     }
 
     /// 导出→导入闭环：内存结构体重序列化出的 TOML 必须能被 parse_toml 原样

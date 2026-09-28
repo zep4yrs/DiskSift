@@ -14,7 +14,7 @@
 //! granularity 的一条回收站记录，所以 _remote.repositories、*.lastUpdated
 //! 等桶内文件不作为红线候选（它们不单独成为目标，而是随整树一起走）。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn workspace_root() -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -174,4 +174,86 @@ fn maven_globs_are_safe() {
         "maven.toml glob hit red lines:\n  {}",
         violations.join("\n  ")
     );
+}
+
+/// detect 层回归（docker_detect_and_match 同款结构）：detect 正负路径 + 每个
+/// scope 至少一条正向 glob 命中。[match] 刻意留空（文件头"设计取舍"：m2 片段
+/// 无歧义性可言），匹配器不参与，无落盘断言可做。
+#[test]
+fn maven_detect_and_match() {
+    // 与 maven_globs_are_safe 同一套 env fixture。
+    std::env::set_var("USERPROFILE", "C:/Users/test");
+    std::env::set_var("APPDATA", "C:/Users/test/AppData/Roaming");
+    std::env::set_var("LOCALAPPDATA", "C:/Users/test/AppData/Local");
+    std::env::set_var("HOME", "/home/test");
+
+    let scaffold = load_maven();
+    let scopes: Vec<(String, globset::GlobSet)> = scaffold
+        .scopes
+        .iter()
+        .map(|s| (s.id.clone(), build_set(&expand(&s.glob))))
+        .collect();
+    let scaffolds = vec![scaffold];
+
+    // ========================================================================
+    // detect 正向：默认 ~/.m2（Windows 与 POSIX 同）+ **/.m2 通配兜底（本地
+    // 仓库换盘仍叫 .m2）。个别项目自带的 .m2 目录也命中——maven.toml 文头
+    // 明说的取舍：标成零命中空卡片，误标不会多删东西（scope 锚定
+    // .m2/repository 两段）。glob 层红线（maven_globs_are_safe 里项目 .m2 之外
+    // 的断言）不与此冲突：那断言的是 scope glob 的命中面，这里是 detect 卡片。
+    // ========================================================================
+    for p in [
+        "C:/Users/test/.m2",
+        "/home/test/.m2",
+        "D:/maven-home/.m2",
+        "C:/Users/test/Projects/app/.m2",
+    ] {
+        assert_eq!(
+            pinkbin_scaffold::detect_for(&scaffolds, Path::new(p)).as_deref(),
+            Some("maven"),
+            "detect missed `{p}`",
+        );
+    }
+
+    // ========================================================================
+    // detect 负向：-Dmaven.repo.local 改名的仓库（检测不到，disclaimer 已
+    // 说明）、substring 邻居（segment 精确性）、repository 子目录不是 detect
+    // 根（detect 标的是 .m2 自身，扫描根由此而来）。
+    // ========================================================================
+    for p in [
+        "C:/Users/test/maven-repo",
+        "C:/Users/test/.m2x",
+        "C:/Users/test/.m2/repository",
+    ] {
+        assert_eq!(
+            pinkbin_scaffold::detect_for(&scaffolds, Path::new(p)).as_deref(),
+            None,
+            "unrelated dir `{p}` must not be tagged as maven",
+        );
+    }
+
+    // ========================================================================
+    // scope 覆盖：唯一 scope repository 至少一条正向 glob 命中（glob 精确锚定
+    // repository 目录自身，回收单元就是它）。
+    // ========================================================================
+    let positives: &[(&str, &str)] = &[
+        ("repository", "C:/Users/test/.m2/repository"),
+        ("repository", "/home/test/.m2/repository"),
+        ("repository", "D:/devTools/.m2/repository"),
+    ];
+    for (expected_id, p) in positives {
+        let hits = matching_scopes(&scopes, p);
+        assert!(
+            hits.contains(expected_id),
+            "expected scope `{expected_id}` to match `{p}`, got {hits:?}",
+        );
+    }
+    let covered: std::collections::HashSet<&str> = positives.iter().map(|(id, _)| *id).collect();
+    let all_ids: Vec<&str> = scaffolds[0].scopes.iter().map(|s| s.id.as_str()).collect();
+    for id in &all_ids {
+        assert!(
+            covered.contains(id),
+            "scope `{id}` has no positive path in the test",
+        );
+    }
 }

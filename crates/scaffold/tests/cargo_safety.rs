@@ -16,7 +16,7 @@
 //! 目录自身，深层文件**不**命中——target/debug 内部文件因此可以放心当正向
 //! 之外的路径看待，红线只放在 target/ 根下未点名位置。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn workspace_root() -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -261,4 +261,133 @@ fn cargo_globs_are_safe() {
         "cargo.toml glob hit red lines:\n  {}",
         violations.join("\n  ")
     );
+}
+
+/// detect / match 层回归（docker_detect_and_match 同款结构）：detect 正负
+/// 路径 + [match] 兜底（真实临时目录验 must_have_child）+ 每个 scope 至少
+/// 一条正向 glob 命中（防加 scope 忘测）。detect 正负均不落盘——detect 条目
+/// 本身是纯 glob；[match] 必须落盘，must_have_child 要 stat 子项。
+#[test]
+fn cargo_detect_and_match() {
+    // 与 cargo_globs_are_safe 同一套 env fixture：expand_env / detect_for 的
+    // %VAR% / ${VAR} 展开在所有平台上路径一致。
+    std::env::set_var("USERPROFILE", "C:/Users/test");
+    std::env::set_var("APPDATA", "C:/Users/test/AppData/Roaming");
+    std::env::set_var("LOCALAPPDATA", "C:/Users/test/AppData/Local");
+    std::env::set_var("HOME", "/home/test");
+
+    let scaffold = load_cargo();
+    let scopes: Vec<(String, globset::GlobSet)> = scaffold
+        .scopes
+        .iter()
+        .map(|s| (s.id.clone(), build_set(&expand(&s.glob))))
+        .collect();
+    let scaffolds = vec![scaffold];
+
+    // ========================================================================
+    // detect 正向：默认 CARGO_HOME（Windows %USERPROFILE% 与 POSIX ${HOME}）
+    // + **/.cargo 通配兜底（CARGO_HOME 搬到别的盘仍叫 .cargo）。
+    // ========================================================================
+    for p in [
+        "C:/Users/test/.cargo",
+        "/home/test/.cargo",
+        "D:/tools/rust/.cargo",
+    ] {
+        assert_eq!(
+            pinkbin_scaffold::detect_for(&scaffolds, Path::new(p)).as_deref(),
+            Some("cargo"),
+            "detect missed `{p}`",
+        );
+    }
+
+    // ========================================================================
+    // detect 负向：segment 精确性（.cargo-mirror 不是 .cargo）、detect 根的
+    // 子目录不是扫描根、无关项目目录。
+    // ========================================================================
+    for p in [
+        "C:/Users/test/.cargo-mirror",
+        "C:/Users/test/.cargo/bin",
+        "C:/Users/test/Projects/demo",
+    ] {
+        assert_eq!(
+            pinkbin_scaffold::detect_for(&scaffolds, Path::new(p)).as_deref(),
+            None,
+            "unrelated dir `{p}` must not be tagged as cargo",
+        );
+    }
+
+    // ========================================================================
+    // [match] 兜底（需真实落盘）：基名含 target + 必须真有 CACHEDIR.TAG 子项。
+    // - 有标记的项目 target/ → cargo 卡片（[match] 层是 target scope 的唯一
+    //   入口，detect 刻意不含 **/target）；
+    // - 无标记的 target/（Maven/Java 的构建目录同形态）→ 不标。
+    // ========================================================================
+    let tmp = std::env::temp_dir().join(format!(
+        "pinkbin-cargo-detect-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let tagged_target = tmp.join("myapp/target");
+    std::fs::create_dir_all(&tagged_target).unwrap();
+    std::fs::write(
+        tagged_target.join("CACHEDIR.TAG"),
+        "Signature: 8a477f597d28d172789f06886806bc55",
+    )
+    .unwrap();
+    assert_eq!(
+        pinkbin_scaffold::detect_for(&scaffolds, Path::new(&tagged_target)).as_deref(),
+        Some("cargo"),
+        "project target/ with CACHEDIR.TAG must be tagged via [match]",
+    );
+
+    let maven_target = tmp.join("maven-proj/target");
+    std::fs::create_dir_all(maven_target.join("classes")).unwrap();
+    assert_eq!(
+        pinkbin_scaffold::detect_for(&scaffolds, Path::new(&maven_target)).as_deref(),
+        None,
+        "target/ without CACHEDIR.TAG must not be tagged (Maven/Java build dir)",
+    );
+    // Cleanup — best-effort, ignore errors.
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    // ========================================================================
+    // scope 覆盖：每个 [[scope]] 至少一条正向 glob 命中（样本取 cargo.toml
+    // 头部实测布局：crates.io 与 rsproxy 两种 <host>-<hash>、git db/checkouts、
+    // target 的 profile 目录）。
+    // ========================================================================
+    let positives: &[(&str, &str)] = &[
+        // registry —— 三桶之一（directory 粒度回收单元 = <host>-<hash> 目录）
+        (
+            "registry",
+            "C:/Users/test/.cargo/registry/cache/index.crates.io-1949cf8c6b5b557f",
+        ),
+        (
+            "registry",
+            "C:/Users/test/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/tokio-1.40.0/lib.rs",
+        ),
+        // git —— 官方布局 glob（本机无 git 依赖仍保留）
+        (
+            "git",
+            "C:/Users/test/.cargo/git/checkouts/ripgrep-b2c3d4e5f6071829/11.2.3",
+        ),
+        // target —— glob 全串终结在 profile 目录自身
+        ("target", "C:/dev/myapp/target/debug"),
+    ];
+    for (expected_id, p) in positives {
+        let hits = matching_scopes(&scopes, p);
+        assert!(
+            hits.contains(expected_id),
+            "expected scope `{expected_id}` to match `{p}`, got {hits:?}",
+        );
+    }
+    let covered: std::collections::HashSet<&str> = positives.iter().map(|(id, _)| *id).collect();
+    let all_ids: Vec<&str> = scaffolds[0].scopes.iter().map(|s| s.id.as_str()).collect();
+    for id in &all_ids {
+        assert!(
+            covered.contains(id),
+            "scope `{id}` has no positive path in the test",
+        );
+    }
 }

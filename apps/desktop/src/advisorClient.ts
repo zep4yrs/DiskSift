@@ -80,9 +80,24 @@ export function loadSettings(): AdvisorSettings | null {
 function migrateLegacyPlaintextKey(legacy: AdvisorSettings): void {
   if (!isTauri || migrationStarted) return;
   migrationStarted = true;
+  // 竞态窗口起点：下面的 secureSet 是异步 IPC，await 期间用户完全可能在
+  // Settings 里点「保存」（saveSettings 重写 STORAGE_KEY）或清除设置
+  // （clearSettings 删掉 STORAGE_KEY）。先记下迁移开始时的 localStorage 原文，
+  // 完成回调里比对，判断中间有没有并发写入。
+  const legacyRaw = localStorage.getItem(STORAGE_KEY);
   void (async () => {
     try {
       await api.secureSet(SECURE_KEY, legacy.apiKey);
+      // 竞态防护：secureSet await 期间若 localStorage 已不再是起点快照，说明
+      // 用户保存/清除了设置。此时用本次的 legacy 快照覆写会把用户刚保存的新
+      // 配置回滚成旧值（甚至复活已清除的设置），必须整体跳过——包括
+      // memoryApiKey 回填，避免迁移携带的旧 key 顶掉用户新存的 key。跳过是
+      // 安全的：saveSettings 自己负责 secureSet + 落盘；若是清除，DPAPI 已被
+      // 覆写为空，不落盘正好保持清除语义。
+      if (localStorage.getItem(STORAGE_KEY) !== legacyRaw) {
+        console.warn('[pinkbin] apiKey 迁移期间设置被重新保存/清除，跳过 localStorage 覆写');
+        return;
+      }
       memoryApiKey = legacy.apiKey;
       const persist: AdvisorSettings = {
         provider: legacy.provider,

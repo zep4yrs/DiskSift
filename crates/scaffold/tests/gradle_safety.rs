@@ -14,7 +14,7 @@
 //! 所以 modules-2/modules-2.lock、CACHEDIR.TAG 等桶内文件不作为红线候选
 //! （它们不单独成为目标，而是随整树一起走）。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn workspace_root() -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -193,4 +193,87 @@ fn gradle_globs_are_safe() {
         "gradle.toml glob hit red lines:\n  {}",
         violations.join("\n  ")
     );
+}
+
+/// detect 层回归（docker_detect_and_match 同款结构）：detect 正负路径 + 每个
+/// scope 至少一条正向 glob 命中。[match] 刻意留空（文件头"设计取舍"：没有
+/// 安全的基名片段），匹配器不参与，无落盘断言可做。
+#[test]
+fn gradle_detect_and_match() {
+    // 与 gradle_globs_are_safe 同一套 env fixture。
+    std::env::set_var("USERPROFILE", "C:/Users/test");
+    std::env::set_var("APPDATA", "C:/Users/test/AppData/Roaming");
+    std::env::set_var("LOCALAPPDATA", "C:/Users/test/AppData/Local");
+    std::env::set_var("HOME", "/home/test");
+
+    let scaffold = load_gradle();
+    let scopes: Vec<(String, globset::GlobSet)> = scaffold
+        .scopes
+        .iter()
+        .map(|s| (s.id.clone(), build_set(&expand(&s.glob))))
+        .collect();
+    let scaffolds = vec![scaffold];
+
+    // ========================================================================
+    // detect 正向：默认 GRADLE_USER_HOME（Windows 与 POSIX 同为 ~/.gradle）+
+    // **/.gradle 通配兜底（重定位改名仍叫 .gradle）。项目自带的 .gradle 目录
+    // 也会命中——gradle.toml 文头明说的取舍：标成零命中空卡片，误标不会多删
+    // 东西（scope 锚定 .gradle/caches 两段）。glob 层红线（gradle_globs_are_safe
+    // 里 C:/dev/myapp/.gradle 零命中）不与此冲突：那断言的是 scope glob 不碰
+    // 项目级 .gradle 内部，这里断言的是 detect 把它标成卡片。
+    // ========================================================================
+    for p in [
+        "C:/Users/test/.gradle",
+        "/home/test/.gradle",
+        "E:/gradle-home/.gradle",
+        "C:/Users/test/Projects/app/.gradle",
+    ] {
+        assert_eq!(
+            pinkbin_scaffold::detect_for(&scaffolds, Path::new(p)).as_deref(),
+            Some("gradle"),
+            "detect missed `{p}`",
+        );
+    }
+
+    // ========================================================================
+    // detect 负向：改名的 GRADLE_USER_HOME（检测不到，disclaimer 已说明）、
+    // 克隆的 gradle 源码仓库（gradle ≠ .gradle，segment 精确性）、caches 子目录
+    // 不是 detect 根（detect 标的是 .gradle 自身，扫描根由此而来）。
+    // ========================================================================
+    for p in [
+        "C:/Users/test/gradle-home",
+        "C:/Users/test/Projects/gradle",
+        "C:/Users/test/.gradle/caches",
+    ] {
+        assert_eq!(
+            pinkbin_scaffold::detect_for(&scaffolds, Path::new(p)).as_deref(),
+            None,
+            "unrelated dir `{p}` must not be tagged as gradle",
+        );
+    }
+
+    // ========================================================================
+    // scope 覆盖：唯一 scope caches 至少一条正向 glob 命中（glob 精确锚定
+    // caches 目录自身，回收单元就是它）。
+    // ========================================================================
+    let positives: &[(&str, &str)] = &[
+        ("caches", "C:/Users/test/.gradle/caches"),
+        ("caches", "/home/test/.gradle/caches"),
+        ("caches", "D:/devTools/.gradle/caches"),
+    ];
+    for (expected_id, p) in positives {
+        let hits = matching_scopes(&scopes, p);
+        assert!(
+            hits.contains(expected_id),
+            "expected scope `{expected_id}` to match `{p}`, got {hits:?}",
+        );
+    }
+    let covered: std::collections::HashSet<&str> = positives.iter().map(|(id, _)| *id).collect();
+    let all_ids: Vec<&str> = scaffolds[0].scopes.iter().map(|s| s.id.as_str()).collect();
+    for id in &all_ids {
+        assert!(
+            covered.contains(id),
+            "scope `{id}` has no positive path in the test",
+        );
+    }
 }
